@@ -217,6 +217,7 @@ app.post('/api/users/login', async (req, res) => {
         id: user.id,
         name: user.name,
         username: user.username,
+        mobile: user.mobile,
         role: user.role,
         company,
         unreadNotifications: count || 0
