@@ -565,3 +565,99 @@ body {
   .voucher-signatures { grid-template-columns: 1fr; }
   .company-badge { display: none; }
 }
+
+/* PWA Install Banner */
+.pwa-install-banner {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: linear-gradient(135deg, var(--relish-purple), var(--relish-orange));
+  color: white;
+  padding: 1rem 1.5rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  box-shadow: 0 -4px 20px rgba(0,0,0,0.2);
+  z-index: 1000;
+  animation: slideUp 0.3s ease;
+}
+
+@keyframes slideUp {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+
+.pwa-install-content {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.pwa-install-icon {
+  background: rgba(255,255,255,0.2);
+  border-radius: 50%;
+  width: 48px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.pwa-install-title {
+  font-weight: 600;
+  font-size: 1rem;
+  margin-bottom: 0.25rem;
+}
+
+.pwa-install-text {
+  font-size: 0.85rem;
+  opacity: 0.9;
+}
+
+.pwa-install-actions {
+  display: flex;
+  gap: 0.75rem;
+}
+
+/* Page Header Enhancement */
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 2rem;
+}
+
+@media (max-width: 768px) {
+  .page-header {
+    flex-direction: column;
+    gap: 1rem;
+  }
+  
+  .page-header .btn {
+    width: 100%;
+  }
+  
+  .pwa-install-banner {
+    flex-direction: column;
+    gap: 1rem;
+    text-align: center;
+  }
+  
+  .pwa-install-actions {
+    width: 100%;
+  }
+  
+  .pwa-install-actions .btn {
+    flex: 1;
+  }
+}
+
+/* Print Styles */
+@media print {
+  body { background: white; }
+  .header, .sidebar, .btn, .modal-overlay, .toast-container, .pwa-install-banner { display: none !important; }
+  .main-content { padding: 0; }
+  .card { box-shadow: none; border: 1px solid #ddd; }
+  .voucher-preview { break-inside: avoid; }
+}

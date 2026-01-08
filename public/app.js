@@ -22,6 +22,9 @@ const Icons = {
   loader: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="spinner"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>,
   refresh: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>,
   send: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>,
+  download: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>,
+  printer: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect width="12" height="8" x="6" y="14"/></svg>,
+  calendar: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect width="18" height="18" x="3" y="4" rx="2" ry="2"/><line x1="16" x2="16" y1="2" y2="6"/><line x1="8" x2="8" y1="2" y2="6"/><line x1="3" x2="21" y1="10" y2="10"/></svg>,
 };
 
 // API Functions
@@ -31,6 +34,7 @@ const api = {
   verifyUserMobile: (userId) => fetch(`${API_BASE}/users/${userId}/verify-mobile`, { method: 'POST' }).then(r => r.json()),
   login: (data) => fetch(`${API_BASE}/users/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
   getCompanyUsers: (companyId) => fetch(`${API_BASE}/companies/${companyId}/users`).then(r => r.json()),
+  onboardUser: (data) => fetch(`${API_BASE}/admin/onboard-user`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
   sendOtp: (mobile, purpose) => fetch(`${API_BASE}/otp/send`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mobile, purpose }) }).then(r => r.json()),
   verifyOtp: (mobile, code) => fetch(`${API_BASE}/otp/verify`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mobile, code }) }).then(r => r.json()),
   addPayee: (data) => fetch(`${API_BASE}/payees`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
@@ -61,6 +65,66 @@ const Toast = ({ toasts }) => (
     ))}
   </div>
 );
+
+// PWA Install Prompt
+const PWAInstallPrompt = () => {
+  const [deferredPrompt, setDeferredPrompt] = useState(null);
+  const [showPrompt, setShowPrompt] = useState(false);
+
+  useEffect(() => {
+    const handler = (e) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+      // Check if user dismissed before
+      if (!localStorage.getItem('pwa-install-dismissed')) {
+        setShowPrompt(true);
+      }
+    };
+    
+    window.addEventListener('beforeinstallprompt', handler);
+    
+    // Check if already installed
+    if (window.matchMedia('(display-mode: standalone)').matches) {
+      setShowPrompt(false);
+    }
+    
+    return () => window.removeEventListener('beforeinstallprompt', handler);
+  }, []);
+
+  const handleInstall = async () => {
+    if (!deferredPrompt) return;
+    
+    deferredPrompt.prompt();
+    const { outcome } = await deferredPrompt.userChoice;
+    
+    console.log(`User response to install prompt: ${outcome}`);
+    setDeferredPrompt(null);
+    setShowPrompt(false);
+  };
+
+  const handleDismiss = () => {
+    localStorage.setItem('pwa-install-dismissed', Date.now());
+    setShowPrompt(false);
+  };
+
+  if (!showPrompt) return null;
+
+  return (
+    <div className="pwa-install-banner">
+      <div className="pwa-install-content">
+        <div className="pwa-install-icon">{Icons.download}</div>
+        <div>
+          <div className="pwa-install-title">Install App</div>
+          <div className="pwa-install-text">Add to home screen for quick access</div>
+        </div>
+      </div>
+      <div className="pwa-install-actions">
+        <button className="btn btn-sm btn-secondary" onClick={handleDismiss}>Later</button>
+        <button className="btn btn-sm btn-primary" onClick={handleInstall}>Install</button>
+      </div>
+    </div>
+  );
+};
 
 // OTP Input
 const OTPInput = ({ length = 6, value = '', onChange }) => {
@@ -266,10 +330,191 @@ const VoucherList = ({ filter }) => {
   const [payeeOtp, setPayeeOtp] = useState('');
   const [rejectReason, setRejectReason] = useState('');
   const [showRejectModal, setShowRejectModal] = useState(false);
+  const [showPrintModal, setShowPrintModal] = useState(false);
+  const [printDateFrom, setPrintDateFrom] = useState('');
+  const [printDateTo, setPrintDateTo] = useState('');
   const [loading, setLoading] = useState(false);
 
   const filtered = vouchers.filter(v => { if (filter === 'pending') return v.status === 'pending'; if (filter === 'approved') return ['approved', 'awaiting_payee_otp'].includes(v.status); if (filter === 'completed') return v.status === 'completed'; return true; });
+  
   const openVoucher = async (v) => { const full = await api.getVoucher(v.id); setSelectedVoucher(full); setShowModal(true); };
+  
+  const handlePrintSingle = async (voucher) => {
+    const full = voucher.company_name ? voucher : await api.getVoucher(voucher.id);
+    const printWindow = window.open('', '_blank');
+    printWindow.document.write(generateVoucherHTML([full], 'Single Voucher'));
+    printWindow.document.close();
+    setTimeout(() => printWindow.print(), 250);
+  };
+  
+  const handlePrintPeriod = () => {
+    if (!printDateFrom || !printDateTo) {
+      addToast('Select date range', 'error');
+      return;
+    }
+    
+    const from = new Date(printDateFrom);
+    const to = new Date(printDateTo);
+    to.setHours(23, 59, 59);
+    
+    const periodVouchers = vouchers.filter(v => {
+      const vDate = new Date(v.created_at);
+      return vDate >= from && vDate <= to && (filter === 'all' || 
+        (filter === 'pending' && v.status === 'pending') ||
+        (filter === 'approved' && ['approved', 'awaiting_payee_otp'].includes(v.status)) ||
+        (filter === 'completed' && v.status === 'completed'));
+    });
+    
+    if (periodVouchers.length === 0) {
+      addToast('No vouchers in selected period', 'error');
+      return;
+    }
+    
+    // Fetch full details for all vouchers
+    Promise.all(periodVouchers.map(v => api.getVoucher(v.id)))
+      .then(fullVouchers => {
+        const printWindow = window.open('', '_blank');
+        printWindow.document.write(generateVoucherHTML(fullVouchers, `Vouchers Report: ${printDateFrom} to ${printDateTo}`));
+        printWindow.document.close();
+        setTimeout(() => printWindow.print(), 250);
+        setShowPrintModal(false);
+      })
+      .catch(() => addToast('Failed to generate report', 'error'));
+  };
+  
+  const generateVoucherHTML = (vouchers, title) => {
+    const formatDate = (d) => new Date(d).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+    const formatCurrency = (a) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(a);
+    const totalAmount = vouchers.reduce((sum, v) => sum + v.amount, 0);
+    
+    return `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>${title}</title>
+  <style>
+    @page { size: A4; margin: 15mm; }
+    body { font-family: Arial, sans-serif; margin: 0; padding: 20px; font-size: 12px; }
+    .report-header { text-align: center; margin-bottom: 20px; border-bottom: 2px solid #333; padding-bottom: 10px; }
+    .report-title { font-size: 18px; font-weight: bold; margin-bottom: 5px; }
+    .report-subtitle { font-size: 12px; color: #666; }
+    .voucher { page-break-inside: avoid; margin-bottom: 30px; border: 1px solid #ddd; padding: 15px; }
+    .voucher-header { background: #f5f5f5; padding: 10px; margin: -15px -15px 15px; border-bottom: 2px solid #333; }
+    .company-name { font-size: 16px; font-weight: bold; }
+    .company-address { font-size: 10px; color: #666; margin-top: 3px; }
+    .voucher-title { font-size: 14px; font-weight: bold; text-align: center; margin-top: 8px; }
+    .voucher-meta { display: table; width: 100%; margin-bottom: 15px; }
+    .meta-row { display: table-row; }
+    .meta-label { display: table-cell; font-weight: bold; width: 150px; padding: 4px 0; }
+    .meta-value { display: table-cell; padding: 4px 0; }
+    .voucher-amount { font-size: 16px; font-weight: bold; text-align: right; margin: 15px 0; border-top: 1px solid #333; padding-top: 10px; }
+    .voucher-signatures { display: flex; justify-content: space-between; margin-top: 40px; }
+    .signature-box { text-align: center; flex: 1; }
+    .signature-line { border-top: 1px solid #000; padding-top: 5px; margin: 30px 10px 5px; font-weight: bold; }
+    .signature-label { font-size: 10px; color: #666; }
+    .summary { margin-top: 30px; padding: 15px; background: #f5f5f5; border: 1px solid #ddd; }
+    .summary-title { font-size: 14px; font-weight: bold; margin-bottom: 10px; }
+    .summary-item { display: flex; justify-content: space-between; padding: 5px 0; }
+    .summary-total { font-size: 16px; font-weight: bold; border-top: 2px solid #333; margin-top: 10px; padding-top: 10px; }
+    @media print {
+      .no-print { display: none; }
+      body { padding: 0; }
+    }
+  </style>
+</head>
+<body>
+  <div class="report-header">
+    <div class="report-title">${title}</div>
+    <div class="report-subtitle">Generated on ${new Date().toLocaleString('en-IN')}</div>
+  </div>
+  
+  ${vouchers.map(v => `
+    <div class="voucher">
+      <div class="voucher-header">
+        <div class="company-name">${v.company_name}</div>
+        <div class="company-address">${v.company_address}</div>
+        <div class="voucher-title">PAYMENT VOUCHER</div>
+      </div>
+      
+      <div class="voucher-meta">
+        <div class="meta-row">
+          <div class="meta-label">Voucher No:</div>
+          <div class="meta-value">${v.serial_number}</div>
+        </div>
+        <div class="meta-row">
+          <div class="meta-label">Date:</div>
+          <div class="meta-value">${formatDate(v.created_at)}</div>
+        </div>
+        <div class="meta-row">
+          <div class="meta-label">Payee:</div>
+          <div class="meta-value">${v.payee_name}${v.payee_alias ? ` (${v.payee_alias})` : ''}</div>
+        </div>
+        <div class="meta-row">
+          <div class="meta-label">Payment Mode:</div>
+          <div class="meta-value">${v.payment_mode}</div>
+        </div>
+        <div class="meta-row">
+          <div class="meta-label">Head of Account:</div>
+          <div class="meta-value">${v.head_of_account}</div>
+        </div>
+        ${v.narration ? `
+        <div class="meta-row">
+          <div class="meta-label">Narration:</div>
+          <div class="meta-value">${v.narration}</div>
+        </div>` : ''}
+        <div class="meta-row">
+          <div class="meta-label">Status:</div>
+          <div class="meta-value">${v.status.replace(/_/g, ' ').toUpperCase()}</div>
+        </div>
+      </div>
+      
+      <div class="voucher-amount">AMOUNT: ${formatCurrency(v.amount)}</div>
+      
+      <div class="voucher-signatures">
+        <div class="signature-box">
+          <div class="signature-line">${v.preparer_username}</div>
+          <div class="signature-label">Prepared By</div>
+        </div>
+        <div class="signature-box">
+          <div class="signature-line">${v.approver_username || '___________'}</div>
+          <div class="signature-label">Approved By</div>
+        </div>
+        <div class="signature-box">
+          <div class="signature-line">${v.payee_otp_verified ? '✓ OTP Verified' : '___________'}</div>
+          <div class="signature-label">Payee Signature</div>
+        </div>
+      </div>
+    </div>
+  `).join('')}
+  
+  ${vouchers.length > 1 ? `
+    <div class="summary">
+      <div class="summary-title">Summary</div>
+      <div class="summary-item">
+        <span>Total Vouchers:</span>
+        <span>${vouchers.length}</span>
+      </div>
+      <div class="summary-item">
+        <span>Completed:</span>
+        <span>${vouchers.filter(v => v.status === 'completed').length}</span>
+      </div>
+      <div class="summary-item">
+        <span>Pending:</span>
+        <span>${vouchers.filter(v => v.status === 'pending').length}</span>
+      </div>
+      <div class="summary-item summary-total">
+        <span>TOTAL AMOUNT:</span>
+        <span>${formatCurrency(totalAmount)}</span>
+      </div>
+    </div>
+  ` : ''}
+  
+  <button class="no-print" onclick="window.print()" style="position: fixed; top: 20px; right: 20px; padding: 10px 20px; background: #F59E0B; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold;">Print</button>
+</body>
+</html>`;
+  };
+  
   const handleApprove = async () => { setLoading(true); try { const result = await api.approveVoucher(selectedVoucher.id, user.id); if (result.success) { addToast('Voucher approved. OTP sent to payee.', 'success'); refreshVouchers(); setShowModal(false); } else addToast(result.error, 'error'); } catch { addToast('Failed', 'error'); } setLoading(false); };
   const handleReject = async () => { setLoading(true); try { await api.rejectVoucher(selectedVoucher.id, user.id, rejectReason); addToast('Voucher rejected', 'info'); refreshVouchers(); setShowRejectModal(false); setShowModal(false); } catch { addToast('Failed', 'error'); } setLoading(false); };
   const handleComplete = async () => { if (payeeOtp.length < 6) { addToast('Enter complete OTP', 'error'); return; } setLoading(true); try { const result = await api.completeVoucher(selectedVoucher.id, payeeOtp); if (result.success) { addToast('Voucher completed!', 'success'); refreshVouchers(); setShowModal(false); setPayeeOtp(''); } else addToast(result.error, 'error'); } catch { addToast('Failed', 'error'); } setLoading(false); };
@@ -278,7 +523,17 @@ const VoucherList = ({ filter }) => {
 
   return (
     <div>
-      <div className="page-header"><h1 className="page-title">{titles[filter]}</h1><p className="page-subtitle">{filtered.length} voucher(s)</p></div>
+      <div className="page-header">
+        <div>
+          <h1 className="page-title">{titles[filter]}</h1>
+          <p className="page-subtitle">{filtered.length} voucher(s)</p>
+        </div>
+        {filtered.length > 0 && (
+          <button className="btn btn-secondary" onClick={() => setShowPrintModal(true)}>
+            {Icons.printer} Print Report
+          </button>
+        )}
+      </div>
       <div className="card"><div className="card-body" style={{ padding: 0 }}>
         {filtered.length === 0 ? <div className="empty-state">{Icons.fileText}<p>No vouchers found</p></div> : (
           <div className="table-container"><table className="table"><thead><tr><th>Serial No.</th><th>Head of Account</th><th>Payee</th><th>Amount</th><th>Mode</th><th>Status</th><th>Date</th><th>Actions</th></tr></thead><tbody>
@@ -288,7 +543,15 @@ const VoucherList = ({ filter }) => {
       </div></div>
       {showModal && selectedVoucher && (
         <div className="modal-overlay" onClick={() => setShowModal(false)}><div className="modal modal-lg" onClick={(e) => e.stopPropagation()}>
-          <div className="modal-header"><h3 className="modal-title">Voucher Details</h3><button className="modal-close" onClick={() => setShowModal(false)}>×</button></div>
+          <div className="modal-header">
+            <h3 className="modal-title">Voucher Details</h3>
+            <div style={{display: 'flex', gap: '0.5rem', alignItems: 'center'}}>
+              <button className="btn btn-sm btn-secondary" onClick={() => handlePrintSingle(selectedVoucher)}>
+                {Icons.printer} Print
+              </button>
+              <button className="modal-close" onClick={() => setShowModal(false)}>×</button>
+            </div>
+          </div>
           <div className="modal-body">
             <VoucherPreview voucher={selectedVoucher} />
             {selectedVoucher.status === 'awaiting_payee_otp' && selectedVoucher.prepared_by === user.id && (
@@ -311,23 +574,351 @@ const VoucherList = ({ filter }) => {
           <div className="modal-footer"><button className="btn btn-secondary" onClick={() => setShowRejectModal(false)}>Cancel</button><button className="btn btn-danger" onClick={handleReject} disabled={loading}>{loading && Icons.loader}Confirm Rejection</button></div>
         </div></div>
       )}
+      {showPrintModal && (
+        <div className="modal-overlay" onClick={() => setShowPrintModal(false)}><div className="modal" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-header"><h3 className="modal-title">{Icons.calendar} Print Vouchers Report</h3><button className="modal-close" onClick={() => setShowPrintModal(false)}>×</button></div>
+          <div className="modal-body">
+            <p style={{marginBottom: '1rem', color: '#666'}}>Select date range for consolidated voucher report</p>
+            <div className="form-row">
+              <div className="form-group">
+                <label className="form-label">From Date</label>
+                <input type="date" className="form-input" value={printDateFrom} onChange={(e) => setPrintDateFrom(e.target.value)} />
+              </div>
+              <div className="form-group">
+                <label className="form-label">To Date</label>
+                <input type="date" className="form-input" value={printDateTo} onChange={(e) => setPrintDateTo(e.target.value)} />
+              </div>
+            </div>
+            <div style={{background: '#f8f9fa', padding: '1rem', borderRadius: '8px', fontSize: '0.9rem'}}>
+              <strong>ℹ️ Report will include:</strong>
+              <ul style={{margin: '0.5rem 0 0', paddingLeft: '1.5rem'}}>
+                <li>All vouchers in selected date range</li>
+                <li>Detailed voucher information</li>
+                <li>Summary with total amounts</li>
+                <li>Print-optimized layout</li>
+              </ul>
+            </div>
+          </div>
+          <div className="modal-footer"><button className="btn btn-secondary" onClick={() => setShowPrintModal(false)}>Cancel</button><button className="btn btn-primary" onClick={handlePrintPeriod} disabled={!printDateFrom || !printDateTo}>{Icons.printer} Generate & Print</button></div>
+        </div></div>
+      )}
     </div>
   );
 };
 
-// Users Management
+// Users Management (Admin Dashboard)
 const UsersManagement = () => {
-  const { user } = useApp();
+  const { user, addToast } = useApp();
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
-  useEffect(() => { api.getCompanyUsers(user.company.id).then(setUsers).finally(() => setLoading(false)); }, [user.company.id]);
+  const [showOnboardModal, setShowOnboardModal] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [newUser, setNewUser] = useState({ name: '', mobile: '', aadhar: '', role: 'accounts' });
+  const [onboardStep, setOnboardStep] = useState(1); // 1=form, 2=otp, 3=success
+  const [otp, setOtp] = useState('');
+  const [pendingUserId, setPendingUserId] = useState('');
+  const [generatedUsername, setGeneratedUsername] = useState('');
+  
+  const refreshUsers = () => {
+    api.getCompanyUsers(user.company.id).then(setUsers).finally(() => setLoading(false));
+  };
+  
+  useEffect(() => { refreshUsers(); }, [user.company.id]);
+  
+  const handleOnboardSubmit = async () => {
+    if (!newUser.name || !newUser.mobile || !newUser.aadhar) {
+      addToast('All fields are required', 'error');
+      return;
+    }
+    
+    setSubmitting(true);
+    try {
+      // Call admin onboard endpoint
+      const result = await api.onboardUser({
+        adminMobile: user.mobile,
+        companyId: user.company.id,
+        name: newUser.name,
+        mobile: newUser.mobile,
+        aadhar: newUser.aadhar,
+        role: newUser.role
+      });
+      
+      if (result.success) {
+        setPendingUserId(result.userId);
+        setGeneratedUsername(result.username);
+        // Send OTP to new user's mobile
+        await api.sendOtp(newUser.mobile, 'registration');
+        addToast('User created. OTP sent for verification.', 'success');
+        setOnboardStep(2);
+      } else {
+        addToast(result.error || 'Failed to onboard user', 'error');
+      }
+    } catch (error) {
+      addToast('Connection error', 'error');
+    }
+    setSubmitting(false);
+  };
+  
+  const handleVerifyOtp = async () => {
+    if (otp.length < 6) {
+      addToast('Enter complete OTP', 'error');
+      return;
+    }
+    
+    setSubmitting(true);
+    try {
+      const result = await api.verifyOtp(newUser.mobile, otp);
+      if (result.success) {
+        await api.verifyUserMobile(pendingUserId);
+        addToast('User verified successfully!', 'success');
+        setOnboardStep(3);
+        refreshUsers();
+        setTimeout(() => {
+          setShowOnboardModal(false);
+          resetOnboardForm();
+        }, 2000);
+      } else {
+        addToast('Invalid OTP', 'error');
+      }
+    } catch (error) {
+      addToast('Verification failed', 'error');
+    }
+    setSubmitting(false);
+  };
+  
+  const resetOnboardForm = () => {
+    setNewUser({ name: '', mobile: '', aadhar: '', role: 'accounts' });
+    setOnboardStep(1);
+    setOtp('');
+    setPendingUserId('');
+    setGeneratedUsername('');
+  };
+  
+  const handleResendOtp = async () => {
+    try {
+      await api.sendOtp(newUser.mobile, 'registration');
+      addToast('OTP resent', 'success');
+    } catch {
+      addToast('Failed to resend', 'error');
+    }
+  };
+  
   if (loading) return <div className="empty-state">{Icons.loader}</div>;
+  
   return (
     <div>
-      <div className="page-header"><h1 className="page-title">Team Members</h1><p className="page-subtitle">Manage accounts staff and admins</p></div>
-      <div className="card"><div className="card-body" style={{ padding: 0 }}><div className="table-container"><table className="table"><thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Verified</th><th>Last Login</th></tr></thead><tbody>
-        {users.map(u => (<tr key={u.id}><td className="fw-600">{u.name}</td><td className="text-mono">{u.username}</td><td><span className={`status-badge ${u.role === 'admin' ? 'status-approved' : 'status-pending'}`}>{u.role === 'admin' ? '🛡 Admin' : '👤 Accounts'}</span></td><td>{u.mobile_verified ? '✅' : '❌'}</td><td>{u.last_login ? new Date(u.last_login).toLocaleString('en-IN') : 'Never'}</td></tr>))}
-      </tbody></table></div></div></div>
+      <div className="page-header">
+        <div>
+          <h1 className="page-title">{Icons.users} User Management</h1>
+          <p className="page-subtitle">Onboard and manage team members</p>
+        </div>
+        <button className="btn btn-primary" onClick={() => setShowOnboardModal(true)}>
+          {Icons.plus} Onboard New User
+        </button>
+      </div>
+      
+      <div className="stats-grid" style={{marginBottom: '2rem'}}>
+        <div className="stat-card">
+          <div className="stat-icon purple">👥</div>
+          <div className="stat-value">{users.length}</div>
+          <div className="stat-label">Total Users</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-icon green">🛡</div>
+          <div className="stat-value">{users.filter(u => u.role === 'admin').length}</div>
+          <div className="stat-label">Admins</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-icon orange">👤</div>
+          <div className="stat-value">{users.filter(u => u.role === 'accounts').length}</div>
+          <div className="stat-label">Accounts Staff</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-icon teal">✓</div>
+          <div className="stat-value">{users.filter(u => u.mobile_verified).length}</div>
+          <div className="stat-label">Verified</div>
+        </div>
+      </div>
+      
+      <div className="card">
+        <div className="card-header"><h3 className="card-title">Team Members</h3></div>
+        <div className="card-body" style={{ padding: 0 }}>
+          <div className="table-container">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Username</th>
+                  <th>Mobile</th>
+                  <th>Role</th>
+                  <th>Status</th>
+                  <th>Last Login</th>
+                </tr>
+              </thead>
+              <tbody>
+                {users.map(u => (
+                  <tr key={u.id}>
+                    <td className="fw-600">{u.name}</td>
+                    <td className="text-mono">{u.username}</td>
+                    <td>{u.mobile?.replace(/\d(?=\d{4})/g, '*')}</td>
+                    <td>
+                      <span className={`status-badge ${u.role === 'admin' ? 'status-approved' : 'status-pending'}`}>
+                        {u.role === 'admin' ? '🛡 Admin' : '👤 Accounts'}
+                      </span>
+                    </td>
+                    <td>
+                      {u.mobile_verified ? 
+                        <span className="status-badge status-completed">✅ Verified</span> : 
+                        <span className="status-badge status-rejected">⚠ Unverified</span>
+                      }
+                    </td>
+                    <td>{u.last_login ? new Date(u.last_login).toLocaleString('en-IN') : 'Never'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      
+      {showOnboardModal && (
+        <div className="modal-overlay" onClick={() => { if (onboardStep !== 2) { setShowOnboardModal(false); resetOnboardForm(); } }}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3 className="modal-title">
+                {onboardStep === 1 && '👤 Onboard New User'}
+                {onboardStep === 2 && '📱 Verify Mobile Number'}
+                {onboardStep === 3 && '✅ User Onboarded Successfully'}
+              </h3>
+              {onboardStep !== 2 && <button className="modal-close" onClick={() => { setShowOnboardModal(false); resetOnboardForm(); }}>×</button>}
+            </div>
+            
+            <div className="modal-body">
+              {onboardStep === 1 && (
+                <>
+                  <div className="form-group">
+                    <label className="form-label">Full Name *</label>
+                    <input 
+                      type="text" 
+                      className="form-input" 
+                      placeholder="e.g., John Doe"
+                      value={newUser.name} 
+                      onChange={(e) => setNewUser({ ...newUser, name: e.target.value })} 
+                    />
+                  </div>
+                  
+                  <div className="form-group">
+                    <label className="form-label">Mobile Number *</label>
+                    <input 
+                      type="tel" 
+                      className="form-input" 
+                      placeholder="e.g., 9876543210"
+                      value={newUser.mobile} 
+                      onChange={(e) => setNewUser({ ...newUser, mobile: e.target.value })} 
+                    />
+                    <small style={{color: '#666', fontSize: '0.85rem'}}>User will receive OTP on this number</small>
+                  </div>
+                  
+                  <div className="form-group">
+                    <label className="form-label">Aadhar Number *</label>
+                    <input 
+                      type="text" 
+                      className="form-input" 
+                      placeholder="e.g., 1234 5678 9012"
+                      value={newUser.aadhar} 
+                      onChange={(e) => setNewUser({ ...newUser, aadhar: e.target.value })} 
+                    />
+                  </div>
+                  
+                  <div className="form-group">
+                    <label className="form-label">Role *</label>
+                    <select 
+                      className="form-select" 
+                      value={newUser.role} 
+                      onChange={(e) => setNewUser({ ...newUser, role: e.target.value })}
+                    >
+                      <option value="accounts">👤 Accounts (Can create vouchers)</option>
+                      <option value="admin">🛡 Admin (Can approve vouchers)</option>
+                    </select>
+                  </div>
+                  
+                  <div style={{background: '#f8f9fa', padding: '1rem', borderRadius: '8px', fontSize: '0.9rem', color: '#666'}}>
+                    <strong>ℹ️ Note:</strong> Username will be auto-generated as:<br/>
+                    <code style={{background: '#fff', padding: '0.25rem 0.5rem', borderRadius: '4px', marginTop: '0.5rem', display: 'inline-block'}}>
+                      {newUser.role === 'admin' ? 'Approve' : 'Accounts'}-{newUser.name.split(' ')[0] || 'FirstName'}
+                    </code>
+                  </div>
+                </>
+              )}
+              
+              {onboardStep === 2 && (
+                <div className="otp-section">
+                  {Icons.smartphone}
+                  <p style={{fontWeight: 500, margin: '1rem 0'}}>Verify New User's Mobile</p>
+                  <p style={{fontSize: '0.9rem', color: '#666', marginBottom: '1rem'}}>
+                    OTP sent to: {newUser.mobile?.replace(/\d(?=\d{4})/g, '*')}<br/>
+                    Username created: <strong>{generatedUsername}</strong>
+                  </p>
+                  <OTPInput value={otp} onChange={setOtp} />
+                  <button 
+                    className="btn btn-sm btn-secondary" 
+                    onClick={handleResendOtp}
+                    style={{marginTop: '1rem'}}
+                  >
+                    {Icons.refresh} Resend OTP
+                  </button>
+                </div>
+              )}
+              
+              {onboardStep === 3 && (
+                <div style={{textAlign: 'center', padding: '2rem'}}>
+                  <div style={{fontSize: '4rem', marginBottom: '1rem'}}>✅</div>
+                  <h3 style={{marginBottom: '0.5rem'}}>User Onboarded Successfully!</h3>
+                  <p style={{color: '#666', marginBottom: '1.5rem'}}>
+                    <strong>{newUser.name}</strong> can now login with username:<br/>
+                    <code style={{background: '#f0f0f0', padding: '0.5rem 1rem', borderRadius: '6px', fontSize: '1.1rem', marginTop: '0.5rem', display: 'inline-block'}}>
+                      {generatedUsername}
+                    </code>
+                  </p>
+                </div>
+              )}
+            </div>
+            
+            <div className="modal-footer">
+              {onboardStep === 1 && (
+                <>
+                  <button 
+                    className="btn btn-secondary" 
+                    onClick={() => { setShowOnboardModal(false); resetOnboardForm(); }}
+                  >
+                    Cancel
+                  </button>
+                  <button 
+                    className="btn btn-primary" 
+                    onClick={handleOnboardSubmit} 
+                    disabled={submitting || !newUser.name || !newUser.mobile || !newUser.aadhar}
+                  >
+                    {submitting && Icons.loader}
+                    {Icons.send} Create User & Send OTP
+                  </button>
+                </>
+              )}
+              
+              {onboardStep === 2 && (
+                <button 
+                  className="btn btn-success" 
+                  onClick={handleVerifyOtp} 
+                  disabled={submitting || otp.length < 6}
+                  style={{width: '100%'}}
+                >
+                  {submitting && Icons.loader}
+                  {Icons.check} Verify & Complete Onboarding
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -359,6 +950,7 @@ const App = () => {
 
   return (
     <AppContext.Provider value={contextValue}>
+      <PWAInstallPrompt />
       <div className="app-container">
         <header className="header">
           <div className="header-left"><div className="logo-container"><img src="logo.png" alt="Relish" style={{height:'40px'}} /></div><div className="company-badge">{Icons.building} {user.company.name}</div></div>
@@ -378,7 +970,7 @@ const App = () => {
               <div className={`nav-item ${currentPage === 'completed' ? 'active' : ''}`} onClick={() => setCurrentPage('completed')}>{Icons.checkCircle} Completed</div>
               <div className={`nav-item ${currentPage === 'all' ? 'active' : ''}`} onClick={() => setCurrentPage('all')}>{Icons.fileText} All Vouchers</div>
             </div>
-            {user.role === 'admin' && <div className="nav-section"><div className="nav-section-title">Admin</div><div className={`nav-item ${currentPage === 'users' ? 'active' : ''}`} onClick={() => setCurrentPage('users')}>{Icons.users} Team Members</div></div>}
+            {user.role === 'admin' && <div className="nav-section"><div className="nav-section-title">Admin Dashboard</div><div className={`nav-item ${currentPage === 'users' ? 'active' : ''}`} onClick={() => setCurrentPage('users')}>{Icons.users} User Management</div></div>}
           </aside>
           <main className="main-content">{renderPage()}</main>
           {showNotifications && (
