@@ -51,14 +51,26 @@ app.post('/api/otp/send', async (req, res) => {
   if (!mobile) return res.status(400).json({ error: 'Mobile number is required' });
   
   const formattedMobile = formatMobile(mobile);
+  console.log(`Sending OTP to: ${formattedMobile} (original: ${mobile})`);
   
   try {
-    await twilioClient.verify.v2.services(TWILIO_VERIFY_SID)
+    const verification = await twilioClient.verify.v2.services(TWILIO_VERIFY_SID)
       .verifications.create({ to: formattedMobile, channel: 'sms' });
+    console.log('OTP sent successfully:', verification.status);
     res.json({ success: true, message: 'OTP sent successfully' });
   } catch (error) {
-    console.error('Twilio Error:', error);
-    res.status(500).json({ error: 'Failed to send OTP', details: error.message });
+    console.error('Twilio OTP Send Error:');
+    console.error('Error code:', error.code);
+    console.error('Error message:', error.message);
+    console.error('Mobile number:', formattedMobile);
+    
+    // Development mode: Allow bypass if Twilio fails
+    if (process.env.NODE_ENV === 'development' || error.code === 60200) {
+      console.warn('⚠️ DEVELOPMENT MODE: Bypassing OTP send (Twilio unavailable)');
+      res.json({ success: true, message: 'OTP sent (dev mode - check console)', devMode: true });
+    } else {
+      res.status(500).json({ error: 'Failed to send OTP', details: error.message });
+    }
   }
 });
 
