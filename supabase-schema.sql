@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS companies (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     address TEXT NOT NULL,
+    gst TEXT NOT NULL,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -83,10 +84,10 @@ CREATE TABLE IF NOT EXISTS notifications (
 );
 
 -- Insert Companies
-INSERT INTO companies (id, name, address) VALUES 
-('relish-foods', 'Relish Foods Pvt Ltd', '17/9 B, Madhavapuram, Kanyakumari 629704. TN; India.'),
-('relish-hhc', 'Relish Hao Hao Chi Foods', '26/599, M.O.Ward, Alappuzha 688001. KL; India.')
-ON CONFLICT (id) DO NOTHING;
+INSERT INTO companies (id, name, address, gst) VALUES 
+('relish-foods', 'Relish Foods Pvt Ltd', '17/9B, Madhavapuram, Kanyakumari 629704. TN. India', '33AAACR7749E2ZD'),
+('relish-hhc', 'Relish Hao Hao Chi Foods', '26/599, M.O.Ward, Alappuzha 688001. KL. India', '32AAUFR0742E1ZB')
+ON CONFLICT (id) DO UPDATE SET address = EXCLUDED.address, gst = EXCLUDED.gst;
 
 -- Initialize Voucher Series for Companies
 INSERT INTO voucher_series (company_id, current_number, prefix, financial_year) VALUES 

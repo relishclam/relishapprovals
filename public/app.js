@@ -268,22 +268,39 @@ const CreateVoucher = () => {
   const [loading, setLoading] = useState(false);
   const [payees, setPayees] = useState([]);
   const [heads, setHeads] = useState([]);
+  const [companies, setCompanies] = useState([]);
   const [showPayeeModal, setShowPayeeModal] = useState(false);
-  const [form, setForm] = useState({ headOfAccount: '', narration: '', payeeId: '', paymentMode: 'UPI', amount: '' });
+  const [form, setForm] = useState({ voucherCompanyId: '', headOfAccount: '', narration: '', payeeId: '', paymentMode: 'UPI', amount: '' });
   const [newPayee, setNewPayee] = useState({ name: '', alias: '', mobile: '', bankAccount: '', ifsc: '', upiId: '' });
 
-  useEffect(() => { api.getPayees(user.company.id).then(setPayees); api.getHeadsOfAccount().then(setHeads); }, [user.company.id]);
+  useEffect(() => { 
+    api.getCompanies().then(setCompanies);
+    api.getHeadsOfAccount().then(setHeads); 
+  }, []);
+
+  useEffect(() => {
+    if (form.voucherCompanyId) {
+      api.getPayees(form.voucherCompanyId).then(setPayees);
+      setForm(prev => ({ ...prev, payeeId: '' })); // Reset payee when company changes
+    } else {
+      setPayees([]);
+    }
+  }, [form.voucherCompanyId]);
 
   const handleAddPayee = async () => {
+    if (!form.voucherCompanyId) {
+      addToast('Please select a company first', 'error');
+      return;
+    }
     setLoading(true);
-    try { const result = await api.addPayee({ companyId: user.company.id, ...newPayee }); if (result.success) { addToast('Payee added', 'success'); setShowPayeeModal(false); setNewPayee({ name: '', alias: '', mobile: '', bankAccount: '', ifsc: '', upiId: '' }); api.getPayees(user.company.id).then(setPayees); } } catch { addToast('Failed', 'error'); }
+    try { const result = await api.addPayee({ companyId: form.voucherCompanyId, ...newPayee }); if (result.success) { addToast('Payee added', 'success'); setShowPayeeModal(false); setNewPayee({ name: '', alias: '', mobile: '', bankAccount: '', ifsc: '', upiId: '' }); api.getPayees(form.voucherCompanyId).then(setPayees); } } catch { addToast('Failed', 'error'); }
     setLoading(false);
   };
 
   const handleSubmit = async () => {
-    if (!form.headOfAccount || !form.payeeId || !form.amount) { addToast('Fill all required fields', 'error'); return; }
+    if (!form.voucherCompanyId || !form.headOfAccount || !form.payeeId || !form.amount) { addToast('Fill all required fields including company selection', 'error'); return; }
     setLoading(true);
-    try { const result = await api.createVoucher({ companyId: user.company.id, headOfAccount: form.headOfAccount, narration: form.narration, amount: parseFloat(form.amount), paymentMode: form.paymentMode, payeeId: form.payeeId, preparedBy: user.id }); if (result.success) { addToast(`Voucher ${result.serialNumber} created`, 'success'); setForm({ headOfAccount: '', narration: '', payeeId: '', paymentMode: 'UPI', amount: '' }); refreshVouchers(); } } catch { addToast('Failed', 'error'); }
+    try { const result = await api.createVoucher({ companyId: form.voucherCompanyId, headOfAccount: form.headOfAccount, narration: form.narration, amount: parseFloat(form.amount), paymentMode: form.paymentMode, payeeId: form.payeeId, preparedBy: user.id }); if (result.success) { addToast(`Voucher ${result.serialNumber} created for ${companies.find(c => c.id === form.voucherCompanyId)?.name}`, 'success'); setForm({ voucherCompanyId: '', headOfAccount: '', narration: '', payeeId: '', paymentMode: 'UPI', amount: '' }); refreshVouchers(); } } catch { addToast('Failed', 'error'); }
     setLoading(false);
   };
 
@@ -293,13 +310,25 @@ const CreateVoucher = () => {
       <div className="card">
         <div className="card-header"><h3 className="card-title">{Icons.fileText} Voucher Details</h3></div>
         <div className="card-body">
-          <div className="form-row">
-            <div className="form-group"><label className="form-label">Head of Account *</label><select className="form-select" value={form.headOfAccount} onChange={(e) => setForm({ ...form, headOfAccount: e.target.value })}><option value="">Select</option>{heads.map(h => <option key={h} value={h}>{h}</option>)}</select></div>
-            <div className="form-group"><label className="form-label">Payment Mode *</label><select className="form-select" value={form.paymentMode} onChange={(e) => setForm({ ...form, paymentMode: e.target.value })}><option value="UPI">UPI</option><option value="Account Transfer">Account Transfer</option><option value="Cash">Cash</option></select></div>
+          <div className="form-group" style={{marginBottom: '1.5rem', padding: '1rem', background: 'var(--relish-cream)', borderRadius: '8px', border: '2px solid var(--relish-orange)'}}>
+            <label className="form-label" style={{fontSize: '1rem', fontWeight: 600, color: 'var(--relish-dark)'}}>{Icons.building} Select Company for this Voucher *</label>
+            <select className="form-select" value={form.voucherCompanyId} onChange={(e) => setForm({ ...form, voucherCompanyId: e.target.value })} style={{fontSize: '1rem', fontWeight: 500}}>
+              <option value="">-- Select Company --</option>
+              {companies.map(c => <option key={c.id} value={c.id}>{c.name} - GST: {c.gst}</option>)}
+            </select>
+            {form.voucherCompanyId && (
+              <div style={{marginTop: '0.5rem', fontSize: '0.85rem', color: '#666'}}>
+                {companies.find(c => c.id === form.voucherCompanyId)?.address}
+              </div>
+            )}
           </div>
-          <div className="form-group"><label className="form-label form-label-row">Payee *<button className="btn btn-sm btn-secondary" onClick={() => setShowPayeeModal(true)}>{Icons.plus} Add Payee</button></label><select className="form-select" value={form.payeeId} onChange={(e) => setForm({ ...form, payeeId: e.target.value })}><option value="">Select Payee</option>{payees.map(p => <option key={p.id} value={p.id}>{p.name} {p.alias && `(${p.alias})`}</option>)}</select></div>
-          <div className="form-group"><label className="form-label">Amount (₹) *</label><input type="number" className="form-input" placeholder="Enter amount" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} /></div>
-          <div className="form-group"><label className="form-label">Narration</label><textarea className="form-input" rows={2} placeholder="Enter payment description" value={form.narration} onChange={(e) => setForm({ ...form, narration: e.target.value })} /></div>
+          <div className="form-row">
+            <div className="form-group"><label className="form-label">Head of Account *</label><select className="form-select" value={form.headOfAccount} onChange={(e) => setForm({ ...form, headOfAccount: e.target.value })} disabled={!form.voucherCompanyId}><option value="">Select</option>{heads.map(h => <option key={h} value={h}>{h}</option>)}</select></div>
+            <div className="form-group"><label className="form-label">Payment Mode *</label><select className="form-select" value={form.paymentMode} onChange={(e) => setForm({ ...form, paymentMode: e.target.value })} disabled={!form.voucherCompanyId}><option value="UPI">UPI</option><option value="Account Transfer">Account Transfer</option><option value="Cash">Cash</option></select></div>
+          </div>
+          <div className="form-group"><label className="form-label form-label-row">Payee *<button className="btn btn-sm btn-secondary" onClick={() => setShowPayeeModal(true)} disabled={!form.voucherCompanyId}>{Icons.plus} Add Payee</button></label><select className="form-select" value={form.payeeId} onChange={(e) => setForm({ ...form, payeeId: e.target.value })} disabled={!form.voucherCompanyId}><option value="">{form.voucherCompanyId ? 'Select Payee' : 'Select Company First'}</option>{payees.map(p => <option key={p.id} value={p.id}>{p.name} {p.alias && `(${p.alias})`}</option>)}</select></div>
+          <div className="form-group"><label className="form-label">Amount (₹) *</label><input type="number" className="form-input" placeholder="Enter amount" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} disabled={!form.voucherCompanyId} /></div>
+          <div className="form-group"><label className="form-label">Narration</label><textarea className="form-input" rows={2} placeholder="Enter payment description" value={form.narration} onChange={(e) => setForm({ ...form, narration: e.target.value })} disabled={!form.voucherCompanyId} /></div>
           <div className="btn-group"><button className="btn btn-primary" onClick={handleSubmit} disabled={loading}>{loading && Icons.loader}{Icons.send} Submit for Approval</button></div>
         </div>
       </div>
@@ -432,6 +461,7 @@ const VoucherList = ({ filter }) => {
       <div class="voucher-header">
         <div class="company-name">${v.company_name}</div>
         <div class="company-address">${v.company_address}</div>
+        <div class="company-address">GST: ${v.company_gst}</div>
         <div class="voucher-title">PAYMENT VOUCHER</div>
       </div>
       

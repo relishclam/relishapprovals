@@ -351,7 +351,7 @@ app.get('/api/companies/:companyId/vouchers', async (req, res) => {
         payee:payees(name, alias, mobile),
         preparer:users!vouchers_prepared_by_fkey(name, username),
         approver:users!vouchers_approved_by_fkey(name, username),
-        company:companies(name, address)
+        company:companies(name, address, gst)
       `)
       .eq('company_id', req.params.companyId)
       .order('created_at', { ascending: false });
@@ -369,7 +369,8 @@ app.get('/api/companies/:companyId/vouchers', async (req, res) => {
       approver_name: v.approver?.name,
       approver_username: v.approver?.username,
       company_name: v.company?.name,
-      company_address: v.company?.address
+      company_address: v.company?.address,
+      company_gst: v.company?.gst
     }));
     
     res.json(formattedVouchers);
@@ -387,7 +388,7 @@ app.get('/api/vouchers/:voucherId', async (req, res) => {
         payee:payees(name, alias, mobile, bank_account, ifsc, upi_id),
         preparer:users!vouchers_prepared_by_fkey(name, username),
         approver:users!vouchers_approved_by_fkey(name, username),
-        company:companies(name, address)
+        company:companies(name, address, gst)
       `)
       .eq('id', req.params.voucherId)
       .single();
@@ -404,7 +405,8 @@ app.get('/api/vouchers/:voucherId', async (req, res) => {
       approver_name: voucher.approver?.name,
       approver_username: voucher.approver?.username,
       company_name: voucher.company?.name,
-      company_address: voucher.company?.address
+      company_address: voucher.company?.address,
+      company_gst: voucher.company?.gst
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
