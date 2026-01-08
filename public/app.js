@@ -25,6 +25,7 @@ const Icons = {
   download: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>,
   printer: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect width="12" height="8" x="6" y="14"/></svg>,
   calendar: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect width="18" height="18" x="3" y="4" rx="2" ry="2"/><line x1="16" x2="16" y1="2" y2="6"/><line x1="8" x2="8" y1="2" y2="6"/><line x1="3" x2="21" y1="10" y2="10"/></svg>,
+  menu: <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="3" x2="21" y1="12" y2="12"/><line x1="3" x2="21" y1="6" y2="6"/><line x1="3" x2="21" y1="18" y2="18"/></svg>,
 };
 
 // API Functions
@@ -223,9 +224,6 @@ const LoginPage = ({ onLogin }) => {
         <div className="login-logo"><img src="logo.png" alt="Relish" /></div>
         <h1 className="login-title">Payment Approval System</h1>
         <p className="login-subtitle">Secure voucher management with OTP verification</p>
-        <div className="login-tabs">
-          <button className="login-tab active">Sign In</button>
-        </div>
         {error && <div className="alert alert-error">{error}</div>}
         <div>
           <div className="form-group"><label className="form-label">Username</label><input type="text" className="form-input" placeholder="e.g., Accounts-John or Approve-Jane" value={username} onChange={(e) => setUsername(e.target.value)} /></div>
@@ -930,6 +928,7 @@ const App = () => {
   const [notifications, setNotifications] = useState([]);
   const [currentPage, setCurrentPage] = useState('dashboard');
   const [showNotifications, setShowNotifications] = useState(false);
+  const [showMobileMenu, setShowMobileMenu] = useState(false);
   const [toasts, setToasts] = useState([]);
 
   const addToast = useCallback((message, type = 'info') => { const id = Date.now(); setToasts(prev => [...prev, { id, message, type }]); setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 4000); }, []);
@@ -948,12 +947,23 @@ const App = () => {
   const contextValue = { user, vouchers, notifications, addToast, refreshVouchers, refreshNotifications };
   const renderPage = () => { switch(currentPage) { case 'dashboard': return <Dashboard />; case 'create': return <CreateVoucher />; case 'pending': return <VoucherList filter="pending" />; case 'approved': return <VoucherList filter="approved" />; case 'completed': return <VoucherList filter="completed" />; case 'all': return <VoucherList filter="all" />; case 'users': return <UsersManagement />; default: return <Dashboard />; } };
 
+  const handleNavClick = (page) => {
+    setCurrentPage(page);
+    setShowMobileMenu(false);
+  };
+
   return (
     <AppContext.Provider value={contextValue}>
       <PWAInstallPrompt />
       <div className="app-container">
         <header className="header">
-          <div className="header-left"><div className="logo-container"><img src="logo.png" alt="Relish" style={{height:'40px'}} /></div><div className="company-badge">{Icons.building} {user.company.name}</div></div>
+          <div className="header-left">
+            <button className="mobile-menu-btn" onClick={() => setShowMobileMenu(!showMobileMenu)}>
+              {Icons.menu}
+            </button>
+            <div className="logo-container"><img src="logo.png" alt="Relish" style={{height:'40px'}} /></div>
+            <div className="company-badge">{Icons.building} {user.company.name}</div>
+          </div>
           <div className="header-right">
             <div className="user-badge">{user.role === 'admin' ? Icons.shield : Icons.user} {user.username}</div>
             <button className="notification-btn" onClick={() => setShowNotifications(!showNotifications)}>{Icons.bell}{unreadCount > 0 && <span className="notification-badge">{unreadCount}</span>}</button>
@@ -962,16 +972,37 @@ const App = () => {
         </header>
         <div className="main-layout">
           <aside className="sidebar">
-            <div className="nav-section"><div className="nav-section-title">Main</div><div className={`nav-item ${currentPage === 'dashboard' ? 'active' : ''}`} onClick={() => setCurrentPage('dashboard')}>{Icons.home} Dashboard</div></div>
+            <div className="nav-section"><div className="nav-section-title">Main</div><div className={`nav-item ${currentPage === 'dashboard' ? 'active' : ''}`} onClick={() => handleNavClick('dashboard')}>{Icons.home} Dashboard</div></div>
             <div className="nav-section"><div className="nav-section-title">Vouchers</div>
-              {user.role === 'accounts' && <div className={`nav-item ${currentPage === 'create' ? 'active' : ''}`} onClick={() => setCurrentPage('create')}>{Icons.plus} Create Voucher</div>}
-              <div className={`nav-item ${currentPage === 'pending' ? 'active' : ''}`} onClick={() => setCurrentPage('pending')}>{Icons.clock} Pending Approval</div>
-              <div className={`nav-item ${currentPage === 'approved' ? 'active' : ''}`} onClick={() => setCurrentPage('approved')}>{Icons.smartphone} Awaiting OTP</div>
-              <div className={`nav-item ${currentPage === 'completed' ? 'active' : ''}`} onClick={() => setCurrentPage('completed')}>{Icons.checkCircle} Completed</div>
-              <div className={`nav-item ${currentPage === 'all' ? 'active' : ''}`} onClick={() => setCurrentPage('all')}>{Icons.fileText} All Vouchers</div>
+              {user.role === 'accounts' && <div className={`nav-item ${currentPage === 'create' ? 'active' : ''}`} onClick={() => handleNavClick('create')}>{Icons.plus} Create Voucher</div>}
+              <div className={`nav-item ${currentPage === 'pending' ? 'active' : ''}`} onClick={() => handleNavClick('pending')}>{Icons.clock} Pending Approval</div>
+              <div className={`nav-item ${currentPage === 'approved' ? 'active' : ''}`} onClick={() => handleNavClick('approved')}>{Icons.smartphone} Awaiting OTP</div>
+              <div className={`nav-item ${currentPage === 'completed' ? 'active' : ''}`} onClick={() => handleNavClick('completed')}>{Icons.checkCircle} Completed</div>
+              <div className={`nav-item ${currentPage === 'all' ? 'active' : ''}`} onClick={() => handleNavClick('all')}>{Icons.fileText} All Vouchers</div>
             </div>
-            {user.role === 'admin' && <div className="nav-section"><div className="nav-section-title">Admin Dashboard</div><div className={`nav-item ${currentPage === 'users' ? 'active' : ''}`} onClick={() => setCurrentPage('users')}>{Icons.users} User Management</div></div>}
+            {user.role === 'admin' && <div className="nav-section"><div className="nav-section-title">Admin Dashboard</div><div className={`nav-item ${currentPage === 'users' ? 'active' : ''}`} onClick={() => handleNavClick('users')}>{Icons.users} User Management</div></div>}
           </aside>
+          
+          {showMobileMenu && (
+            <>
+              <div className="mobile-menu-overlay" onClick={() => setShowMobileMenu(false)} />
+              <aside className="mobile-menu">
+                <div className="mobile-menu-header">
+                  <h3>Menu</h3>
+                  <button className="mobile-menu-close" onClick={() => setShowMobileMenu(false)}>{Icons.x}</button>
+                </div>
+                <div className="nav-section"><div className="nav-section-title">Main</div><div className={`nav-item ${currentPage === 'dashboard' ? 'active' : ''}`} onClick={() => handleNavClick('dashboard')}>{Icons.home} Dashboard</div></div>
+                <div className="nav-section"><div className="nav-section-title">Vouchers</div>
+                  {user.role === 'accounts' && <div className={`nav-item ${currentPage === 'create' ? 'active' : ''}`} onClick={() => handleNavClick('create')}>{Icons.plus} Create Voucher</div>}
+                  <div className={`nav-item ${currentPage === 'pending' ? 'active' : ''}`} onClick={() => handleNavClick('pending')}>{Icons.clock} Pending Approval</div>
+                  <div className={`nav-item ${currentPage === 'approved' ? 'active' : ''}`} onClick={() => handleNavClick('approved')}>{Icons.smartphone} Awaiting OTP</div>
+                  <div className={`nav-item ${currentPage === 'completed' ? 'active' : ''}`} onClick={() => handleNavClick('completed')}>{Icons.checkCircle} Completed</div>
+                  <div className={`nav-item ${currentPage === 'all' ? 'active' : ''}`} onClick={() => handleNavClick('all')}>{Icons.fileText} All Vouchers</div>
+                </div>
+                {user.role === 'admin' && <div className="nav-section"><div className="nav-section-title">Admin Dashboard</div><div className={`nav-item ${currentPage === 'users' ? 'active' : ''}`} onClick={() => handleNavClick('users')}>{Icons.users} User Management</div></div>}
+              </aside>
+            </>
+          )}
           <main className="main-content">{renderPage()}</main>
           {showNotifications && (
             <div className="notifications-panel">
