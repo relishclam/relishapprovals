@@ -9,15 +9,21 @@ app.use(express.json());
 app.use(express.static('public'));
 
 // Supabase Configuration
-const SUPABASE_URL = process.env.SUPABASE_URL || 'https://ewbguvwrejdvlhzcqlbp.supabase.co';
-const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || 'sb_secret_DQi-Nbm1KblmLvTDgStfxg_R6JjxgnG';
+if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_KEY) {
+  throw new Error('Missing required environment variables: SUPABASE_URL and SUPABASE_SERVICE_KEY');
+}
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
 // Twilio Configuration
-const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID || 'ACa20586b74de137a5e2d929082';
-const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN || 'f121023e3137efb17a5650bad2c2971f';
-const TWILIO_VERIFY_SID = process.env.TWILIO_VERIFY_SID || 'VAdfa2e776aa2b3d261bdf30dcf67846bf';
+if (!process.env.TWILIO_ACCOUNT_SID || !process.env.TWILIO_AUTH_TOKEN || !process.env.TWILIO_VERIFY_SID) {
+  throw new Error('Missing required environment variables: TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_VERIFY_SID');
+}
+const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID;
+const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
+const TWILIO_VERIFY_SID = process.env.TWILIO_VERIFY_SID;
 
 const twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
 

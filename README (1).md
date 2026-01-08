@@ -69,7 +69,7 @@ npm start
 Create a `.env` file (see `.env.example`):
 
 ```env
-SUPABASE_URL=https://ewbguvwrejdvlhzcqlbp.supabase.co
+SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_SERVICE_KEY=your_service_key
 TWILIO_ACCOUNT_SID=your_account_sid
 TWILIO_AUTH_TOKEN=your_auth_token
