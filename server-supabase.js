@@ -166,6 +166,72 @@ app.post('/api/users/:userId/verify-mobile', async (req, res) => {
   }
 });
 
+// Update user (Admin only)
+app.put('/api/users/:userId', async (req, res) => {
+  const { name, mobile, aadhar, role } = req.body;
+  
+  if (!name || !mobile || !aadhar || !role) {
+    return res.status(400).json({ error: 'All fields are required' });
+  }
+  
+  try {
+    const firstName = name.split(' ')[0];
+    const rolePrefix = role === 'admin' ? 'Approve' : 'Accounts';
+    const username = `${rolePrefix}-${firstName}`;
+    const formattedMobile = formatMobile(mobile);
+    
+    const { data, error } = await supabase.from('users')
+      .update({
+        name,
+        first_name: firstName,
+        mobile: formattedMobile,
+        aadhar,
+        role,
+        username
+      })
+      .eq('id', req.params.userId)
+      .select()
+      .single();
+    
+    if (error) {
+      if (error.code === '23505') {
+        return res.status(400).json({ error: 'Mobile number or username already in use' });
+      }
+      throw error;
+    }
+    
+    res.json({ success: true, user: data });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to update user', details: error.message });
+  }
+});
+
+// Delete user (Admin only)
+app.delete('/api/users/:userId', async (req, res) => {
+  try {
+    // Check if user has any vouchers
+    const { data: vouchers } = await supabase.from('vouchers')
+      .select('id')
+      .or(`created_by.eq.${req.params.userId},approved_by.eq.${req.params.userId}`)
+      .limit(1);
+    
+    if (vouchers && vouchers.length > 0) {
+      return res.status(400).json({ 
+        error: 'Cannot delete user with existing vouchers. Archive user instead.' 
+      });
+    }
+    
+    const { error } = await supabase.from('users')
+      .delete()
+      .eq('id', req.params.userId);
+    
+    if (error) throw error;
+    res.json({ success: true, message: 'User deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to delete user', details: error.message });
+  }
+});
+
 // Login
 app.post('/api/users/login', async (req, res) => {
   const { username, otp } = req.body;

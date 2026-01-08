@@ -36,6 +36,8 @@ const api = {
   login: (data) => fetch(`${API_BASE}/users/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
   getCompanyUsers: (companyId) => fetch(`${API_BASE}/companies/${companyId}/users`).then(r => r.json()),
   onboardUser: (data) => fetch(`${API_BASE}/admin/onboard-user`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
+  updateUser: (userId, data) => fetch(`${API_BASE}/users/${userId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
+  deleteUser: (userId) => fetch(`${API_BASE}/users/${userId}`, { method: 'DELETE' }).then(r => r.json()),
   sendOtp: (mobile, purpose) => fetch(`${API_BASE}/otp/send`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mobile, purpose }) }).then(r => r.json()),
   verifyOtp: (mobile, code) => fetch(`${API_BASE}/otp/verify`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mobile, code }) }).then(r => r.json()),
   addPayee: (data) => fetch(`${API_BASE}/payees`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
@@ -640,8 +642,12 @@ const UsersManagement = () => {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showOnboardModal, setShowOnboardModal] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [showDetailsModal, setShowDetailsModal] = useState(false);
+  const [selectedUser, setSelectedUser] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [newUser, setNewUser] = useState({ name: '', mobile: '', aadhar: '', role: 'accounts' });
+  const [editUser, setEditUser] = useState({ name: '', mobile: '', aadhar: '', role: 'accounts' });
   const [onboardStep, setOnboardStep] = useState(1); // 1=form, 2=otp, 3=success
   const [otp, setOtp] = useState('');
   const [pendingUserId, setPendingUserId] = useState('');
@@ -738,6 +744,88 @@ const UsersManagement = () => {
     }
   };
   
+  const handleResendVerification = async (userId, mobile) => {
+    try {
+      await api.sendOtp(mobile, 'verification');
+      addToast('Verification OTP sent to user', 'success');
+    } catch {
+      addToast('Failed to send OTP', 'error');
+    }
+  };
+  
+  const handleManualVerify = async (userId, userName) => {
+    if (!confirm(`Manually verify ${userName}? This will mark their account as verified without OTP.`)) return;
+    
+    try {
+      const result = await api.verifyUserMobile(userId);
+      if (result.success) {
+        addToast('User verified successfully', 'success');
+        refreshUsers();
+        if (selectedUser?.id === userId) {
+          setSelectedUser({ ...selectedUser, mobile_verified: true });
+        }
+      } else {
+        addToast(result.error || 'Failed to verify user', 'error');
+      }
+    } catch {
+      addToast('Connection error', 'error');
+    }
+  };
+  
+  const handleEditUser = (userToEdit) => {
+    setSelectedUser(userToEdit);
+    setEditUser({ 
+      name: userToEdit.name, 
+      mobile: userToEdit.mobile, 
+      aadhar: userToEdit.aadhar, 
+      role: userToEdit.role 
+    });
+    setShowEditModal(true);
+  };
+  
+  const handleUpdateUser = async () => {
+    if (!editUser.name?.trim() || !editUser.mobile?.trim() || !editUser.aadhar?.trim()) {
+      addToast('All fields are required', 'error');
+      return;
+    }
+    
+    setSubmitting(true);
+    try {
+      const result = await api.updateUser(selectedUser.id, editUser);
+      if (result.success) {
+        addToast('User updated successfully', 'success');
+        setShowEditModal(false);
+        refreshUsers();
+      } else {
+        addToast(result.error || 'Failed to update user', 'error');
+      }
+    } catch {
+      addToast('Connection error', 'error');
+    }
+    setSubmitting(false);
+  };
+  
+  const handleDeleteUser = async (userId, userName) => {
+    if (!confirm(`Delete user "${userName}"? This action cannot be undone.`)) return;
+    
+    try {
+      const result = await api.deleteUser(userId);
+      if (result.success) {
+        addToast('User deleted successfully', 'success');
+        refreshUsers();
+      } else {
+        addToast(result.error || 'Failed to delete user', 'error');
+      }
+    } catch {
+      addToast('Connection error', 'error');
+    }
+  };
+  
+  const handleViewDetails = (userToView) => {
+    setSelectedUser(userToView);
+    setShowDetailsModal(true);
+  };
+  
   if (loading) return <div className="empty-state">{Icons.loader}</div>;
   
   return (
@@ -788,11 +876,12 @@ const UsersManagement = () => {
                   <th>Role</th>
                   <th>Status</th>
                   <th>Last Login</th>
+                  <th style={{textAlign: 'center'}}>Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {users.map(u => (
-                  <tr key={u.id}>
+                  <tr key={u.id} style={{cursor: 'pointer'}} onClick={() => handleViewDetails(u)}>
                     <td className="fw-600">{u.name}</td>
                     <td className="text-mono">{u.username}</td>
                     <td>{u.mobile?.replace(/\d(?=\d{4})/g, '*')}</td>
@@ -808,6 +897,33 @@ const UsersManagement = () => {
                       }
                     </td>
                     <td>{u.last_login ? new Date(u.last_login).toLocaleString('en-IN') : 'Never'}</td>
+                    <td style={{textAlign: 'center'}} onClick={(e) => e.stopPropagation()}>
+                      <div style={{display: 'flex', gap: '0.5rem', justifyContent: 'center'}}>
+                        <button 
+                          className="btn btn-sm btn-secondary" 
+                          onClick={() => handleEditUser(u)}
+                          title="Edit User"
+                        >
+                          ✏️
+                        </button>
+                        {!u.mobile_verified && (
+                          <button 
+                            className="btn btn-sm btn-primary" 
+                            onClick={() => handleResendVerification(u.id, u.mobile)}
+                            title="Resend Verification OTP"
+                          >
+                            📤
+                          </button>
+                        )}
+                        <button 
+                          className="btn btn-sm btn-danger" 
+                          onClick={() => handleDeleteUser(u.id, u.name)}
+                          title="Delete User"
+                        >
+                          🗑️
+                        </button>
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -950,6 +1066,166 @@ const UsersManagement = () => {
                   {Icons.check} Verify & Complete Onboarding
                 </button>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+      
+      {/* Edit User Modal */}
+      {showEditModal && (
+        <div className="modal-overlay" onClick={() => setShowEditModal(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3 className="modal-title">✏️ Edit User</h3>
+              <button className="modal-close" onClick={() => setShowEditModal(false)}>×</button>
+            </div>
+            <div className="modal-body">
+              <div className="form-group">
+                <label className="form-label">Full Name *</label>
+                <input 
+                  type="text" 
+                  className="form-input" 
+                  value={editUser.name} 
+                  onChange={(e) => setEditUser({ ...editUser, name: e.target.value })} 
+                />
+              </div>
+              
+              <div className="form-group">
+                <label className="form-label">Mobile Number *</label>
+                <input 
+                  type="tel" 
+                  className="form-input" 
+                  value={editUser.mobile} 
+                  onChange={(e) => setEditUser({ ...editUser, mobile: e.target.value })} 
+                />
+              </div>
+              
+              <div className="form-group">
+                <label className="form-label">Aadhar Number *</label>
+                <input 
+                  type="text" 
+                  className="form-input" 
+                  value={editUser.aadhar} 
+                  onChange={(e) => setEditUser({ ...editUser, aadhar: e.target.value })} 
+                />
+              </div>
+              
+              <div className="form-group">
+                <label className="form-label">Role *</label>
+                <select 
+                  className="form-select" 
+                  value={editUser.role} 
+                  onChange={(e) => setEditUser({ ...editUser, role: e.target.value })}
+                >
+                  <option value="accounts">👤 Accounts (Can create vouchers)</option>
+                  <option value="admin">🛡 Admin (Can approve vouchers)</option>
+                </select>
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setShowEditModal(false)}>Cancel</button>
+              <button 
+                className="btn btn-primary" 
+                onClick={handleUpdateUser} 
+                disabled={submitting}
+              >
+                {submitting && Icons.loader}
+                {Icons.check} Update User
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      
+      {/* User Details Modal */}
+      {showDetailsModal && selectedUser && (
+        <div className="modal-overlay" onClick={() => setShowDetailsModal(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3 className="modal-title">👤 User Details</h3>
+              <button className="modal-close" onClick={() => setShowDetailsModal(false)}>×</button>
+            </div>
+            <div className="modal-body">
+              <div style={{display: 'grid', gap: '1.5rem'}}>
+                <div>
+                  <label style={{display: 'block', fontSize: '0.85rem', color: '#666', marginBottom: '0.25rem'}}>Full Name</label>
+                  <div style={{fontSize: '1.1rem', fontWeight: 600}}>{selectedUser.name}</div>
+                </div>
+                
+                <div>
+                  <label style={{display: 'block', fontSize: '0.85rem', color: '#666', marginBottom: '0.25rem'}}>Username</label>
+                  <div style={{fontSize: '1rem', fontFamily: 'monospace', background: '#f5f5f5', padding: '0.5rem', borderRadius: '4px'}}>{selectedUser.username}</div>
+                </div>
+                
+                <div>
+                  <label style={{display: 'block', fontSize: '0.85rem', color: '#666', marginBottom: '0.25rem'}}>Mobile Number</label>
+                  <div style={{fontSize: '1rem'}}>{selectedUser.mobile}</div>
+                </div>
+                
+                <div>
+                  <label style={{display: 'block', fontSize: '0.85rem', color: '#666', marginBottom: '0.25rem'}}>Aadhar Number</label>
+                  <div style={{fontSize: '1rem', fontFamily: 'monospace'}}>{selectedUser.aadhar}</div>
+                </div>
+                
+                <div>
+                  <label style={{display: 'block', fontSize: '0.85rem', color: '#666', marginBottom: '0.25rem'}}>Role</label>
+                  <span className={`status-badge ${selectedUser.role === 'admin' ? 'status-approved' : 'status-pending'}`}>
+                    {selectedUser.role === 'admin' ? '🛡 Admin' : '👤 Accounts'}
+                  </span>
+                </div>
+                
+                <div>
+                  <label style={{display: 'block', fontSize: '0.85rem', color: '#666', marginBottom: '0.25rem'}}>Verification Status</label>
+                  {selectedUser.mobile_verified ? 
+                    <span className="status-badge status-completed">✅ Verified</span> : 
+                    <span className="status-badge status-rejected">⚠ Unverified</span>
+                  }
+                </div>
+                
+                <div>
+                  <label style={{display: 'block', fontSize: '0.85rem', color: '#666', marginBottom: '0.25rem'}}>Last Login</label>
+                  <div style={{fontSize: '1rem'}}>{selectedUser.last_login ? new Date(selectedUser.last_login).toLocaleString('en-IN') : 'Never logged in'}</div>
+                </div>
+                
+                <div>
+                  <label style={{display: 'block', fontSize: '0.85rem', color: '#666', marginBottom: '0.25rem'}}>User ID</label>
+                  <div style={{fontSize: '0.85rem', fontFamily: 'monospace', color: '#999'}}>{selectedUser.id}</div>
+                </div>
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setShowDetailsModal(false)}>Close</button>
+              {!selectedUser.mobile_verified && (
+                <>
+                  <button 
+                    className="btn btn-primary" 
+                    onClick={() => {
+                      handleResendVerification(selectedUser.id, selectedUser.mobile);
+                      setShowDetailsModal(false);
+                    }}
+                  >
+                    📤 Resend OTP
+                  </button>
+                  <button 
+                    className="btn btn-success" 
+                    onClick={() => {
+                      handleManualVerify(selectedUser.id, selectedUser.name);
+                      setShowDetailsModal(false);
+                    }}
+                  >
+                    ✓ Verify Manually
+                  </button>
+                </>
+              )}
+              <button 
+                className="btn btn-primary" 
+                onClick={() => {
+                  setShowDetailsModal(false);
+                  handleEditUser(selectedUser);
+                }}
+              >
+                ✏️ Edit User
+              </button>
             </div>
           </div>
         </div>
