@@ -654,22 +654,27 @@ const UsersManagement = () => {
   useEffect(() => { refreshUsers(); }, [user.company.id]);
   
   const handleOnboardSubmit = async () => {
-    if (!newUser.name || !newUser.mobile || !newUser.aadhar || !newUser.role) {
+    if (!newUser.name?.trim() || !newUser.mobile?.trim() || !newUser.aadhar?.trim() || !newUser.role) {
       addToast('All fields are required', 'error');
+      console.log('Validation failed:', newUser);
       return;
     }
+    
+    const payload = {
+      adminMobile: user.mobile,
+      companyId: user.company.id,
+      name: newUser.name.trim(),
+      mobile: newUser.mobile.trim(),
+      aadhar: newUser.aadhar.trim(),
+      role: newUser.role
+    };
+    
+    console.log('Onboard payload:', payload);
     
     setSubmitting(true);
     try {
       // Call admin onboard endpoint
-      const result = await api.onboardUser({
-        adminMobile: user.mobile,
-        companyId: user.company.id,
-        name: newUser.name,
-        mobile: newUser.mobile,
-        aadhar: newUser.aadhar,
-        role: newUser.role
-      });
+      const result = await api.onboardUser(payload);
       
       if (result.success) {
         setPendingUserId(result.userId);
@@ -679,9 +684,11 @@ const UsersManagement = () => {
         addToast('User created. OTP sent for verification.', 'success');
         setOnboardStep(2);
       } else {
+        console.error('Onboard error:', result);
         addToast(result.error || 'Failed to onboard user', 'error');
       }
     } catch (error) {
+      console.error('Onboard exception:', error);
       addToast('Connection error', 'error');
     }
     setSubmitting(false);
