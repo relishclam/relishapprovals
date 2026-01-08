@@ -171,32 +171,16 @@ const LoginPage = ({ onLogin }) => {
             <button className="btn btn-primary" style={{ width: '100%' }} onClick={handleLogin} disabled={loading || !username}>{loading && Icons.loader}{requiresOtp ? 'Verify & Sign In' : 'Sign In'}</button>
           </div>
         ) : (
-          <div>
-            {reg.step === 1 && (
-              <React.Fragment>
-                <div className="form-group"><label className="form-label">Company</label><select className="form-select" value={reg.companyId} onChange={(e) => setReg({ ...reg, companyId: e.target.value })}><option value="">Select Company</option>{companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
-                <div className="form-group"><label className="form-label">Full Name</label><input type="text" className="form-input" value={reg.name} onChange={(e) => setReg({ ...reg, name: e.target.value })} /></div>
-                <div className="form-group"><label className="form-label">Mobile Number</label><input type="tel" className="form-input" placeholder="10-digit mobile number" value={reg.mobile} onChange={(e) => setReg({ ...reg, mobile: e.target.value })} /></div>
-                <div className="form-group"><label className="form-label">Aadhaar Number</label><input type="text" className="form-input" placeholder="12-digit Aadhaar" value={reg.aadhar} onChange={(e) => setReg({ ...reg, aadhar: e.target.value })} /></div>
-                <div className="form-group"><label className="form-label">Role</label><select className="form-select" value={reg.role} onChange={(e) => setReg({ ...reg, role: e.target.value })}><option value="accounts">Accounts Staff (Preparer)</option><option value="admin">Admin (Approver)</option></select></div>
-                <button className="btn btn-primary" style={{ width: '100%' }} onClick={handleRegister} disabled={loading || !reg.companyId || !reg.name || !reg.mobile || !reg.aadhar}>{loading && Icons.loader}Register & Send OTP</button>
-              </React.Fragment>
-            )}
-            {reg.step === 2 && (
-              <React.Fragment>
-                <div className="text-center mb-1">{Icons.smartphone}<p style={{marginTop:'1rem'}}>Enter OTP sent to <strong>+91 {reg.mobile}</strong></p></div>
-                <OTPInput value={reg.otp} onChange={(v) => setReg({ ...reg, otp: v })} />
-                <button className="btn btn-primary" style={{ width: '100%', marginTop: '1rem' }} onClick={handleRegister} disabled={loading || reg.otp.length < 6}>{loading && Icons.loader}Verify Mobile</button>
-              </React.Fragment>
-            )}
-            {reg.step === 3 && (
-              <div className="reg-success">
-                <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="2"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></svg>
-                <h3>Registration Successful!</h3>
-                <p>You can now sign in using your username.</p>
-                <button className="btn btn-primary" onClick={() => { setTab('login'); setReg({ ...reg, step: 1 }); }}>Go to Sign In</button>
-              </div>
-            )}
+          <div className="reg-disabled-message" style={{textAlign: 'center', padding: '2rem 0'}}>
+            <svg style={{margin: '0 auto', display: 'block', marginBottom: '1rem'}} width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+            <h3 style={{color: '#1f2937', marginBottom: '1rem'}}>Registration Disabled</h3>
+            <p style={{color: '#6b7280', marginBottom: '1rem'}}>Self-registration is not available. Please contact your administrator to onboard your account.</p>
+            <div style={{background: '#f3f4f6', padding: '1.5rem', borderRadius: '8px', marginTop: '1.5rem'}}>
+              <p style={{fontWeight: '600', color: '#374151', marginBottom: '0.5rem'}}>Admin Contact:</p>
+              <p style={{color: '#1f2937', fontWeight: '500'}}>Motty Philip</p>
+              <p style={{color: '#6b7280'}}>Mobile: +91 9446012324</p>
+            </div>
+            <button className="btn btn-secondary" style={{marginTop: '1.5rem'}} onClick={() => setTab('login')}>Back to Sign In</button>
           </div>
         )}
       </div>

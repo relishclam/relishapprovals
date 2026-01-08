@@ -82,19 +82,33 @@ app.post('/api/otp/verify', async (req, res) => {
   }
 });
 
-// Register user
-app.post('/api/users/register', async (req, res) => {
-  const { companyId, name, mobile, aadhar, role } = req.body;
-  if (!companyId || !name || !mobile || !aadhar || !role) {
+// DISABLED: Self-registration not allowed
+// Only admins can onboard users via /api/admin/onboard-user
+
+// Admin-only: Onboard new user
+app.post('/api/admin/onboard-user', async (req, res) => {
+  const { adminMobile, companyId, name, mobile, aadhar, role } = req.body;
+  if (!adminMobile || !companyId || !name || !mobile || !aadhar || !role) {
     return res.status(400).json({ error: 'All fields are required' });
   }
   
-  const firstName = name.split(' ')[0];
-  const rolePrefix = role === 'admin' ? 'Approve' : 'Accounts';
-  const username = `${rolePrefix}-${firstName}`;
-  const formattedMobile = formatMobile(mobile);
-  
   try {
+    // Verify admin privileges
+    const { data: admin, error: adminError } = await supabase.from('users')
+      .select('role')
+      .eq('mobile', formatMobile(adminMobile))
+      .eq('role', 'admin')
+      .single();
+    
+    if (adminError || !admin) {
+      return res.status(403).json({ error: 'Unauthorized: Admin access required' });
+    }
+    
+    const firstName = name.split(' ')[0];
+    const rolePrefix = role === 'admin' ? 'Approve' : 'Accounts';
+    const username = `${rolePrefix}-${firstName}`;
+    const formattedMobile = formatMobile(mobile);
+    
     const { data, error } = await supabase.from('users').insert({
       company_id: companyId,
       name,
@@ -102,7 +116,8 @@ app.post('/api/users/register', async (req, res) => {
       mobile: formattedMobile,
       aadhar,
       role,
-      username
+      username,
+      mobile_verified: false
     }).select().single();
     
     if (error) {
@@ -112,9 +127,14 @@ app.post('/api/users/register', async (req, res) => {
       throw error;
     }
     
-    res.json({ success: true, userId: data.id, username });
+    res.json({ 
+      success: true, 
+      userId: data.id, 
+      username,
+      message: 'User onboarded successfully. They must verify mobile to login.' 
+    });
   } catch (error) {
-    res.status(500).json({ error: 'Registration failed', details: error.message });
+    res.status(500).json({ error: 'User onboarding failed', details: error.message });
   }
 });
 
