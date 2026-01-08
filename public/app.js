@@ -654,7 +654,7 @@ const UsersManagement = () => {
   useEffect(() => { refreshUsers(); }, [user.company.id]);
   
   const handleOnboardSubmit = async () => {
-    if (!newUser.name || !newUser.mobile || !newUser.aadhar) {
+    if (!newUser.name || !newUser.mobile || !newUser.aadhar || !newUser.role) {
       addToast('All fields are required', 'error');
       return;
     }
@@ -924,7 +924,7 @@ const UsersManagement = () => {
                   <button 
                     className="btn btn-primary" 
                     onClick={handleOnboardSubmit} 
-                    disabled={submitting || !newUser.name || !newUser.mobile || !newUser.aadhar}
+                    disabled={submitting || !newUser.name || !newUser.mobile || !newUser.aadhar || !newUser.role}
                   >
                     {submitting && Icons.loader}
                     {Icons.send} Create User & Send OTP
