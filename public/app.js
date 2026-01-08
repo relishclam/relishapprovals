@@ -160,29 +160,14 @@ const LoginPage = ({ onLogin }) => {
         <h1 className="login-title">Payment Approval System</h1>
         <p className="login-subtitle">Secure voucher management with OTP verification</p>
         <div className="login-tabs">
-          <button className={`login-tab ${tab === 'login' ? 'active' : ''}`} onClick={() => setTab('login')}>Sign In</button>
-          <button className={`login-tab ${tab === 'register' ? 'active' : ''}`} onClick={() => { setTab('register'); setReg({ ...reg, step: 1 }); }}>Register</button>
+          <button className="login-tab active">Sign In</button>
         </div>
         {error && <div className="alert alert-error">{error}</div>}
-        {tab === 'login' ? (
-          <div>
-            <div className="form-group"><label className="form-label">Username</label><input type="text" className="form-input" placeholder="e.g., Accounts-John or Approve-Jane" value={username} onChange={(e) => setUsername(e.target.value)} /></div>
-            {requiresOtp && <div className="form-group"><label className="form-label">Enter OTP sent to your mobile</label><OTPInput value={otp} onChange={setOtp} /></div>}
-            <button className="btn btn-primary" style={{ width: '100%' }} onClick={handleLogin} disabled={loading || !username}>{loading && Icons.loader}{requiresOtp ? 'Verify & Sign In' : 'Sign In'}</button>
-          </div>
-        ) : (
-          <div className="reg-disabled-message" style={{textAlign: 'center', padding: '2rem 0'}}>
-            <svg style={{margin: '0 auto', display: 'block', marginBottom: '1rem'}} width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-            <h3 style={{color: '#1f2937', marginBottom: '1rem'}}>Registration Disabled</h3>
-            <p style={{color: '#6b7280', marginBottom: '1rem'}}>Self-registration is not available. Please contact your administrator to onboard your account.</p>
-            <div style={{background: '#f3f4f6', padding: '1.5rem', borderRadius: '8px', marginTop: '1.5rem'}}>
-              <p style={{fontWeight: '600', color: '#374151', marginBottom: '0.5rem'}}>Admin Contact:</p>
-              <p style={{color: '#1f2937', fontWeight: '500'}}>Motty Philip</p>
-              <p style={{color: '#6b7280'}}>Mobile: +91 9446012324</p>
-            </div>
-            <button className="btn btn-secondary" style={{marginTop: '1.5rem'}} onClick={() => setTab('login')}>Back to Sign In</button>
-          </div>
-        )}
+        <div>
+          <div className="form-group"><label className="form-label">Username</label><input type="text" className="form-input" placeholder="e.g., Accounts-John or Approve-Jane" value={username} onChange={(e) => setUsername(e.target.value)} /></div>
+          {requiresOtp && <div className="form-group"><label className="form-label">Enter OTP sent to your mobile</label><OTPInput value={otp} onChange={setOtp} /></div>}
+          <button className="btn btn-primary" style={{ width: '100%' }} onClick={handleLogin} disabled={loading || !username}>{loading && Icons.loader}{requiresOtp ? 'Verify & Sign In' : 'Sign In'}</button>
+        </div>
       </div>
     </div>
   );
