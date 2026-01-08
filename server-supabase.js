@@ -597,5 +597,11 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => console.log(`🚀 Relish Approval Server running on http://localhost:${PORT}`));
+// Export the Express app for Vercel serverless deployment
+module.exports = app;
+
+// Only start server if running locally (not in Vercel)
+if (process.env.NODE_ENV !== 'production') {
+  const PORT = process.env.PORT || 3001;
+  app.listen(PORT, () => console.log(`🚀 Relish Approval Server running on http://localhost:${PORT}`));
+}
