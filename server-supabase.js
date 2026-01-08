@@ -310,7 +310,7 @@ app.post('/api/users/login', async (req, res) => {
 app.get('/api/companies/:companyId/users', async (req, res) => {
   try {
     const { data, error } = await supabase.from('users')
-      .select('id, name, username, role, mobile_verified, last_login')
+      .select('id, name, username, mobile, aadhar, role, mobile_verified, last_login, created_at')
       .eq('company_id', req.params.companyId);
     
     if (error) throw error;

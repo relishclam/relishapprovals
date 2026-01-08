@@ -745,10 +745,22 @@ const UsersManagement = () => {
   };
   
   const handleResendVerification = async (userId, mobile) => {
+    if (!mobile) {
+      addToast('Mobile number not found for this user', 'error');
+      console.error('Missing mobile for user:', userId);
+      return;
+    }
+    
+    console.log('Sending OTP to mobile:', mobile);
     try {
-      await api.sendOtp(mobile, 'verification');
-      addToast('Verification OTP sent to user', 'success');
-    } catch {
+      const result = await api.sendOtp(mobile, 'verification');
+      if (result.success) {
+        addToast(`Verification OTP sent to ${mobile.replace(/\d(?=\d{4})/g, '*')}`, 'success');
+      } else {
+        addToast(result.error || 'Failed to send OTP', 'error');
+      }
+    } catch (error) {
+      console.error('OTP send error:', error);
       addToast('Failed to send OTP', 'error');
     }
   };
