@@ -4,6 +4,10 @@
     {
       "src": "server-supabase.js",
       "use": "@vercel/node"
+    },
+    {
+      "src": "public/**",
+      "use": "@vercel/static"
     }
   ],
   "routes": [
@@ -12,8 +16,12 @@
       "dest": "/server-supabase.js"
     },
     {
+      "src": "/(.*\\.(js|css|png|jpg|jpeg|gif|svg|ico))",
+      "dest": "/public/$1"
+    },
+    {
       "src": "/(.*)",
-      "dest": "/server-supabase.js"
+      "dest": "/public/index.html"
     }
   ]
 }
