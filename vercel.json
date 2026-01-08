@@ -4,47 +4,20 @@
     {
       "src": "server-supabase.js",
       "use": "@vercel/node"
+    },
+    {
+      "src": "public/**",
+      "use": "@vercel/static"
     }
   ],
   "routes": [
     {
-      "src": "/manifest.json",
-      "dest": "/public/manifest.json",
-      "headers": {
-        "Content-Type": "application/manifest+json"
-      }
-    },
-    {
-      "src": "/service-worker.js",
-      "dest": "/public/service-worker.js",
-      "headers": {
-        "Content-Type": "application/javascript",
-        "Service-Worker-Allowed": "/"
-      }
-    },
-    {
-      "src": "/(android-launchericon.*\\.png)",
-      "dest": "/public/$1"
-    },
-    {
-      "src": "/(.*\\.png)",
-      "dest": "/public/$1"
-    },
-    {
-      "src": "/styles.css",
-      "dest": "/public/styles.css"
-    },
-    {
-      "src": "/app.js",
-      "dest": "/public/app.js"
-    },
-    {
-      "src": "/logo.png",
-      "dest": "/public/logo.png"
-    },
-    {
       "src": "/api/(.*)",
       "dest": "/server-supabase.js"
+    },
+    {
+      "src": "/(.*\\.(js|css|png|jpg|jpeg|gif|svg|ico|json))",
+      "dest": "/public/$1"
     },
     {
       "src": "/(.*)",
