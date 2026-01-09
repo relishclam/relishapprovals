@@ -361,6 +361,45 @@ app.get('/api/companies/:companyId/payees', async (req, res) => {
   }
 });
 
+// Update payee
+app.put('/api/payees/:payeeId', async (req, res) => {
+  const { name, alias, mobile, bank_account, ifsc, upi_id } = req.body;
+  
+  try {
+    const { data, error } = await supabase.from('payees')
+      .update({
+        name,
+        alias: alias || null,
+        mobile: mobile ? formatMobile(mobile) : undefined,
+        bank_account: bank_account || null,
+        ifsc: ifsc || null,
+        upi_id: upi_id || null
+      })
+      .eq('id', req.params.payeeId)
+      .select()
+      .single();
+    
+    if (error) throw error;
+    res.json({ success: true, payee: data });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Delete payee
+app.delete('/api/payees/:payeeId', async (req, res) => {
+  try {
+    const { error } = await supabase.from('payees')
+      .delete()
+      .eq('id', req.params.payeeId);
+    
+    if (error) throw error;
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Get next voucher number
 const getNextVoucherNumber = async (companyId) => {
   const { data, error } = await supabase.rpc('get_next_voucher_number', { p_company_id: companyId });

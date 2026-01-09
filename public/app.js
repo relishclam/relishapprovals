@@ -41,7 +41,10 @@ const api = {
   sendOtp: (mobile, purpose) => fetch(`${API_BASE}/otp/send`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mobile, purpose }) }).then(r => r.json()),
   verifyOtp: (mobile, code) => fetch(`${API_BASE}/otp/verify`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mobile, code }) }).then(r => r.json()),
   addPayee: (data) => fetch(`${API_BASE}/payees`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
+  createPayee: (data) => fetch(`${API_BASE}/payees`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
   getPayees: (companyId) => fetch(`${API_BASE}/companies/${companyId}/payees`).then(r => r.json()),
+  updatePayee: (payeeId, data) => fetch(`${API_BASE}/payees/${payeeId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
+  deletePayee: (payeeId) => fetch(`${API_BASE}/payees/${payeeId}`, { method: 'DELETE' }).then(r => r.json()),
   createVoucher: (data) => fetch(`${API_BASE}/vouchers`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
   getVouchers: (companyId) => fetch(`${API_BASE}/companies/${companyId}/vouchers`).then(r => r.json()),
   getVoucher: (voucherId) => fetch(`${API_BASE}/vouchers/${voucherId}`).then(r => r.json()),
@@ -272,13 +275,19 @@ const CreateVoucher = () => {
   const [heads, setHeads] = useState([]);
   const [companies, setCompanies] = useState([]);
   const [showPayeeModal, setShowPayeeModal] = useState(false);
+  const [showCustomAccount, setShowCustomAccount] = useState(false);
+  const [customAccount, setCustomAccount] = useState('');
   const [form, setForm] = useState({ voucherCompanyId: '', headOfAccount: '', narration: '', payeeId: '', paymentMode: 'UPI', amount: '' });
   const [newPayee, setNewPayee] = useState({ name: '', alias: '', mobile: '', bankAccount: '', ifsc: '', upiId: '' });
 
   useEffect(() => { 
     api.getCompanies().then(setCompanies);
-    api.getHeadsOfAccount().then(setHeads); 
-  }, []);
+    // Load heads from localStorage based on user's company
+    const stored = localStorage.getItem(`heads_of_account_${user.company.id}`);
+    if (stored) {
+      setHeads(JSON.parse(stored));
+    }
+  }, [user.company.id]);
 
   useEffect(() => {
     if (form.voucherCompanyId) {
@@ -297,6 +306,14 @@ const CreateVoucher = () => {
     setLoading(true);
     try { const result = await api.addPayee({ companyId: form.voucherCompanyId, ...newPayee }); if (result.success) { addToast('Payee added', 'success'); setShowPayeeModal(false); setNewPayee({ name: '', alias: '', mobile: '', bankAccount: '', ifsc: '', upiId: '' }); api.getPayees(form.voucherCompanyId).then(setPayees); } } catch { addToast('Failed', 'error'); }
     setLoading(false);
+  };
+
+  const handleUseCustomAccount = () => {
+    if (customAccount.trim()) {
+      setForm({ ...form, headOfAccount: customAccount.trim() });
+      setShowCustomAccount(false);
+      setCustomAccount('');
+    }
   };
 
   const handleSubmit = async () => {
@@ -325,7 +342,21 @@ const CreateVoucher = () => {
             )}
           </div>
           <div className="form-row">
-            <div className="form-group"><label className="form-label">Head of Account *</label><select className="form-select" value={form.headOfAccount} onChange={(e) => setForm({ ...form, headOfAccount: e.target.value })} disabled={!form.voucherCompanyId}><option value="">Select</option>{heads.map(h => <option key={h} value={h}>{h}</option>)}</select></div>
+            <div className="form-group">
+              <label className="form-label form-label-row">
+                Head of Account *
+                <button className="btn btn-sm btn-secondary" onClick={() => setShowCustomAccount(true)} disabled={!form.voucherCompanyId} style={{fontSize: '0.75rem'}}>✏️ Enter Custom</button>
+              </label>
+              <select className="form-select" value={form.headOfAccount} onChange={(e) => setForm({ ...form, headOfAccount: e.target.value })} disabled={!form.voucherCompanyId}>
+                <option value="">Select</option>
+                {heads.map(h => <option key={h} value={h}>{h}</option>)}
+              </select>
+              {form.headOfAccount && !heads.includes(form.headOfAccount) && (
+                <div style={{marginTop: '0.5rem', fontSize: '0.85rem', color: 'var(--relish-orange)', fontStyle: 'italic'}}>
+                  Custom account: {form.headOfAccount}
+                </div>
+              )}
+            </div>
             <div className="form-group"><label className="form-label">Payment Mode *</label><select className="form-select" value={form.paymentMode} onChange={(e) => setForm({ ...form, paymentMode: e.target.value })} disabled={!form.voucherCompanyId}><option value="UPI">UPI</option><option value="Account Transfer">Account Transfer</option><option value="Cash">Cash</option></select></div>
           </div>
           <div className="form-group"><label className="form-label form-label-row">Payee *<button className="btn btn-sm btn-secondary" onClick={() => setShowPayeeModal(true)} disabled={!form.voucherCompanyId}>{Icons.plus} Add Payee</button></label><select className="form-select" value={form.payeeId} onChange={(e) => setForm({ ...form, payeeId: e.target.value })} disabled={!form.voucherCompanyId}><option value="">{form.voucherCompanyId ? 'Select Payee' : 'Select Company First'}</option>{payees.map(p => <option key={p.id} value={p.id}>{p.name} {p.alias && `(${p.alias})`}</option>)}</select></div>
@@ -346,6 +377,33 @@ const CreateVoucher = () => {
           </div>
           <div className="modal-footer"><button className="btn btn-secondary" onClick={() => setShowPayeeModal(false)}>Cancel</button><button className="btn btn-primary" onClick={handleAddPayee} disabled={loading || !newPayee.name || !newPayee.mobile}>{loading && Icons.loader}Add Payee</button></div>
         </div></div>
+      )}
+      {showCustomAccount && (
+        <div className="modal-overlay" onClick={() => setShowCustomAccount(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header"><h3 className="modal-title">✏️ Enter Custom Head of Account</h3><button className="modal-close" onClick={() => setShowCustomAccount(false)}>×</button></div>
+            <div className="modal-body">
+              <div className="form-group">
+                <label className="form-label">Account Name</label>
+                <input 
+                  type="text" 
+                  className="form-input" 
+                  value={customAccount} 
+                  onChange={(e) => setCustomAccount(e.target.value)}
+                  placeholder="Enter account name (e.g., Equipment Purchase)"
+                  onKeyPress={e => e.key === 'Enter' && handleUseCustomAccount()}
+                />
+              </div>
+              <p style={{fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '1rem'}}>
+                This will be used for this voucher only. To add it permanently, go to Heads of Account management.
+              </p>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setShowCustomAccount(false)}>Cancel</button>
+              <button className="btn btn-primary" onClick={handleUseCustomAccount} disabled={!customAccount.trim()}>Use This Account</button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
@@ -644,14 +702,17 @@ const UsersManagement = () => {
   const [showOnboardModal, setShowOnboardModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showDetailsModal, setShowDetailsModal] = useState(false);
+  const [showVerifyModal, setShowVerifyModal] = useState(false);
   const [selectedUser, setSelectedUser] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [newUser, setNewUser] = useState({ name: '', mobile: '', aadhar: '', role: 'accounts' });
   const [editUser, setEditUser] = useState({ name: '', mobile: '', aadhar: '', role: 'accounts' });
   const [onboardStep, setOnboardStep] = useState(1); // 1=form, 2=otp, 3=success
   const [otp, setOtp] = useState('');
+  const [verifyOtp, setVerifyOtp] = useState('');
   const [pendingUserId, setPendingUserId] = useState('');
   const [generatedUsername, setGeneratedUsername] = useState('');
+  const [verifyingUser, setVerifyingUser] = useState(null);
   
   const refreshUsers = () => {
     api.getCompanyUsers(user.company.id).then(setUsers).finally(() => setLoading(false));
@@ -744,7 +805,7 @@ const UsersManagement = () => {
     }
   };
   
-  const handleResendVerification = async (userId, mobile) => {
+  const handleResendVerification = async (userId, mobile, userName) => {
     if (!mobile) {
       addToast('Mobile number not found for this user', 'error');
       console.error('Missing mobile for user:', userId);
@@ -756,12 +817,49 @@ const UsersManagement = () => {
       const result = await api.sendOtp(mobile, 'verification');
       if (result.success) {
         addToast(`Verification OTP sent to ${mobile.replace(/\d(?=\d{4})/g, '*')}`, 'success');
+        setVerifyingUser({ id: userId, mobile, name: userName });
+        setVerifyOtp('');
+        setShowVerifyModal(true);
       } else {
         addToast(result.error || 'Failed to send OTP', 'error');
       }
     } catch (error) {
       console.error('OTP send error:', error);
       addToast('Failed to send OTP', 'error');
+    }
+  };
+  
+  const handleVerifyOtp = async () => {
+    if (verifyOtp.length !== 6) {
+      addToast('Please enter 6-digit OTP', 'error');
+      return;
+    }
+    
+    setSubmitting(true);
+    try {
+      const verifyResult = await api.verifyOtp(verifyingUser.mobile, verifyOtp);
+      if (verifyResult.success && verifyResult.status === 'approved') {
+        const updateResult = await api.verifyUserMobile(verifyingUser.id);
+        if (updateResult.success) {
+          addToast('User verified successfully', 'success');
+          setShowVerifyModal(false);
+          setVerifyingUser(null);
+          setVerifyOtp('');
+          refreshUsers();
+          if (selectedUser?.id === verifyingUser.id) {
+            setSelectedUser({ ...selectedUser, mobile_verified: true });
+          }
+        } else {
+          addToast(updateResult.error || 'Failed to update verification status', 'error');
+        }
+      } else {
+        addToast('Invalid OTP', 'error');
+      }
+    } catch (error) {
+      console.error('OTP verification error:', error);
+      addToast('Failed to verify OTP', 'error');
+    } finally {
+      setSubmitting(false);
     }
   };
   
@@ -921,7 +1019,7 @@ const UsersManagement = () => {
                         {!u.mobile_verified && (
                           <button 
                             className="btn btn-sm btn-primary" 
-                            onClick={() => handleResendVerification(u.id, u.mobile)}
+                            onClick={() => handleResendVerification(u.id, u.mobile, u.name)}
                             title="Resend Verification OTP"
                           >
                             📤
@@ -1212,7 +1310,7 @@ const UsersManagement = () => {
                   <button 
                     className="btn btn-primary" 
                     onClick={() => {
-                      handleResendVerification(selectedUser.id, selectedUser.mobile);
+                      handleResendVerification(selectedUser.id, selectedUser.mobile, selectedUser.name);
                       setShowDetailsModal(false);
                     }}
                   >
@@ -1238,6 +1336,508 @@ const UsersManagement = () => {
               >
                 ✏️ Edit User
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* OTP Verification Modal */}
+      {showVerifyModal && verifyingUser && (
+        <div className="modal-overlay" onClick={() => setShowVerifyModal(false)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{maxWidth: '400px'}}>
+            <div className="modal-header">
+              <h2 className="modal-title">Verify User Mobile</h2>
+              <button className="modal-close" onClick={() => setShowVerifyModal(false)}>×</button>
+            </div>
+            <div className="modal-body">
+              <p style={{marginBottom: '1rem', color: '#666'}}>
+                OTP sent to {verifyingUser.mobile.replace(/\d(?=\d{4})/g, '*')} for <strong>{verifyingUser.name}</strong>
+              </p>
+              <div className="form-group">
+                <label className="form-label">Enter 6-digit OTP</label>
+                <input
+                  type="text"
+                  className="form-control"
+                  placeholder="Enter OTP"
+                  value={verifyOtp}
+                  onChange={(e) => setVerifyOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                  maxLength={6}
+                  style={{fontSize: '1.5rem', textAlign: 'center', letterSpacing: '0.5rem'}}
+                />
+              </div>
+              <button 
+                className="btn btn-secondary btn-sm" 
+                onClick={() => handleResendVerification(verifyingUser.id, verifyingUser.mobile, verifyingUser.name)}
+                style={{marginTop: '0.5rem'}}
+              >
+                {Icons.refresh} Resend OTP
+              </button>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setShowVerifyModal(false)}>Cancel</button>
+              <button 
+                className="btn btn-success" 
+                onClick={handleVerifyOtp} 
+                disabled={submitting || verifyOtp.length !== 6}
+              >
+                {submitting && Icons.loader}
+                ✓ Verify
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// Payees Management Component
+const PayeesManagement = () => {
+  const { user, addToast } = useApp();
+  const [payees, setPayees] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [newPayee, setNewPayee] = useState({ name: '', alias: '', mobile: '', bankAccount: '', ifsc: '', upiId: '' });
+  const [editPayee, setEditPayee] = useState({ id: '', name: '', alias: '', mobile: '', bankAccount: '', ifsc: '', upiId: '' });
+  const [importData, setImportData] = useState('');
+
+  const refreshPayees = () => {
+    api.getPayees(user.company.id).then(setPayees).finally(() => setLoading(false));
+  };
+
+  useEffect(() => { refreshPayees(); }, [user.company.id]);
+
+  const handleAddPayee = async () => {
+    if (!newPayee.name?.trim() || !newPayee.mobile?.trim()) {
+      addToast('Name and Mobile are required', 'error');
+      return;
+    }
+    
+    setSubmitting(true);
+    try {
+      await api.createPayee({ ...newPayee, companyId: user.company.id });
+      addToast('Payee added successfully', 'success');
+      setShowAddModal(false);
+      setNewPayee({ name: '', alias: '', mobile: '', bankAccount: '', ifsc: '', upiId: '' });
+      refreshPayees();
+    } catch (error) {
+      addToast('Failed to add payee: ' + error.message, 'error');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleEditPayee = async () => {
+    if (!editPayee.name?.trim() || !editPayee.mobile?.trim()) {
+      addToast('Name and Mobile are required', 'error');
+      return;
+    }
+    
+    setSubmitting(true);
+    try {
+      await api.updatePayee(editPayee.id, editPayee);
+      addToast('Payee updated successfully', 'success');
+      setShowEditModal(false);
+      refreshPayees();
+    } catch (error) {
+      addToast('Failed to update payee: ' + error.message, 'error');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleDeletePayee = async (id) => {
+    if (!confirm('Are you sure you want to delete this payee?')) return;
+    
+    try {
+      await api.deletePayee(id);
+      addToast('Payee deleted successfully', 'success');
+      refreshPayees();
+    } catch (error) {
+      addToast('Failed to delete payee: ' + error.message, 'error');
+    }
+  };
+
+  const handleImport = async () => {
+    if (!importData.trim()) {
+      addToast('Please paste CSV data to import', 'error');
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const lines = importData.trim().split('\n');
+      const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
+      const imported = [];
+      
+      for (let i = 1; i < lines.length; i++) {
+        const values = lines[i].split(',').map(v => v.trim());
+        const payee = {
+          companyId: user.company.id,
+          name: values[headers.indexOf('name')] || values[0],
+          alias: values[headers.indexOf('alias')] || '',
+          mobile: values[headers.indexOf('mobile')] || values[1],
+          bankAccount: values[headers.indexOf('bank_account')] || values[headers.indexOf('bankaccount')] || '',
+          ifsc: values[headers.indexOf('ifsc')] || '',
+          upiId: values[headers.indexOf('upi')] || values[headers.indexOf('upi_id')] || ''
+        };
+        if (payee.name && payee.mobile) {
+          await api.createPayee(payee);
+          imported.push(payee.name);
+        }
+      }
+      
+      addToast(`Imported ${imported.length} payees successfully`, 'success');
+      setShowImportModal(false);
+      setImportData('');
+      refreshPayees();
+    } catch (error) {
+      addToast('Import failed: ' + error.message, 'error');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  if (loading) return <div className="loading-state"><div className="spinner"></div><p>Loading payees...</p></div>;
+
+  return (
+    <div className="page-container">
+      <div className="page-header">
+        <div>
+          <h1 className="page-title">Manage Payees</h1>
+          <p className="page-subtitle">Manage vendor and payee details</p>
+        </div>
+        <div style={{display: 'flex', gap: '0.75rem'}}>
+          <button className="btn btn-secondary" onClick={() => setShowImportModal(true)}>📥 Import CSV</button>
+          <button className="btn btn-primary" onClick={() => setShowAddModal(true)}>➕ Add Payee</button>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-body" style={{ padding: 0 }}>
+          <div className="table-container">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Alias</th>
+                  <th>Mobile</th>
+                  <th>Bank Account</th>
+                  <th>IFSC</th>
+                  <th>UPI ID</th>
+                  <th style={{textAlign: 'center'}}>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {payees.length === 0 ? (
+                  <tr><td colSpan="7" style={{textAlign: 'center', padding: '2rem', color: 'var(--text-secondary)'}}>No payees added yet. Click "Add Payee" to get started.</td></tr>
+                ) : (
+                  payees.map(p => (
+                    <tr key={p.id}>
+                      <td className="fw-600">{p.name}</td>
+                      <td>{p.alias || '-'}</td>
+                      <td>{p.mobile}</td>
+                      <td>{p.bank_account || '-'}</td>
+                      <td>{p.ifsc || '-'}</td>
+                      <td>{p.upi_id || '-'}</td>
+                      <td style={{textAlign: 'center'}}>
+                        <div style={{display: 'flex', gap: '0.5rem', justifyContent: 'center'}}>
+                          <button className="btn btn-sm btn-secondary" onClick={() => { setEditPayee(p); setShowEditModal(true); }}>✏️</button>
+                          <button className="btn btn-sm btn-danger" onClick={() => handleDeletePayee(p.id)}>🗑️</button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      {showAddModal && (
+        <div className="modal-overlay" onClick={() => setShowAddModal(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3 className="modal-title">➕ Add Payee</h3>
+              <button className="modal-close" onClick={() => setShowAddModal(false)}>×</button>
+            </div>
+            <div className="modal-body">
+              <div className="form-group">
+                <label className="form-label">Name *</label>
+                <input type="text" className="form-input" value={newPayee.name} onChange={e => setNewPayee({...newPayee, name: e.target.value})} placeholder="Vendor/Payee Name" />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Alias</label>
+                <input type="text" className="form-input" value={newPayee.alias} onChange={e => setNewPayee({...newPayee, alias: e.target.value})} placeholder="Short Name" />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Mobile *</label>
+                <input type="tel" className="form-input" value={newPayee.mobile} onChange={e => setNewPayee({...newPayee, mobile: e.target.value})} placeholder="10-digit mobile" />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Bank Account</label>
+                <input type="text" className="form-input" value={newPayee.bankAccount} onChange={e => setNewPayee({...newPayee, bankAccount: e.target.value})} placeholder="Account Number" />
+              </div>
+              <div className="form-group">
+                <label className="form-label">IFSC Code</label>
+                <input type="text" className="form-input" value={newPayee.ifsc} onChange={e => setNewPayee({...newPayee, ifsc: e.target.value})} placeholder="IFSC Code" />
+              </div>
+              <div className="form-group">
+                <label className="form-label">UPI ID</label>
+                <input type="text" className="form-input" value={newPayee.upiId} onChange={e => setNewPayee({...newPayee, upiId: e.target.value})} placeholder="user@bank" />
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setShowAddModal(false)}>Cancel</button>
+              <button className="btn btn-primary" onClick={handleAddPayee} disabled={submitting}>{submitting ? 'Adding...' : 'Add Payee'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showEditModal && (
+        <div className="modal-overlay" onClick={() => setShowEditModal(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3 className="modal-title">✏️ Edit Payee</h3>
+              <button className="modal-close" onClick={() => setShowEditModal(false)}>×</button>
+            </div>
+            <div className="modal-body">
+              <div className="form-group">
+                <label className="form-label">Name *</label>
+                <input type="text" className="form-input" value={editPayee.name} onChange={e => setEditPayee({...editPayee, name: e.target.value})} />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Alias</label>
+                <input type="text" className="form-input" value={editPayee.alias || ''} onChange={e => setEditPayee({...editPayee, alias: e.target.value})} />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Mobile *</label>
+                <input type="tel" className="form-input" value={editPayee.mobile} onChange={e => setEditPayee({...editPayee, mobile: e.target.value})} />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Bank Account</label>
+                <input type="text" className="form-input" value={editPayee.bank_account || ''} onChange={e => setEditPayee({...editPayee, bank_account: e.target.value})} />
+              </div>
+              <div className="form-group">
+                <label className="form-label">IFSC Code</label>
+                <input type="text" className="form-input" value={editPayee.ifsc || ''} onChange={e => setEditPayee({...editPayee, ifsc: e.target.value})} />
+              </div>
+              <div className="form-group">
+                <label className="form-label">UPI ID</label>
+                <input type="text" className="form-input" value={editPayee.upi_id || ''} onChange={e => setEditPayee({...editPayee, upi_id: e.target.value})} />
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setShowEditModal(false)}>Cancel</button>
+              <button className="btn btn-primary" onClick={handleEditPayee} disabled={submitting}>{submitting ? 'Updating...' : 'Update'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showImportModal && (
+        <div className="modal-overlay" onClick={() => setShowImportModal(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3 className="modal-title">📥 Import Payees (CSV)</h3>
+              <button className="modal-close" onClick={() => setShowImportModal(false)}>×</button>
+            </div>
+            <div className="modal-body">
+              <p style={{marginBottom: '1rem', color: 'var(--text-secondary)'}}>
+                Paste CSV data below. Format: <code>name,mobile,alias,bank_account,ifsc,upi_id</code>
+              </p>
+              <div className="form-group">
+                <textarea 
+                  className="form-input" 
+                  rows="10" 
+                  value={importData} 
+                  onChange={e => setImportData(e.target.value)}
+                  placeholder="name,mobile,alias,bank_account,ifsc,upi_id&#10;ABC Suppliers,9876543210,ABC,123456789,SBIN0001234,abc@upi&#10;XYZ Vendors,8765432109,XYZ,987654321,HDFC0005678,xyz@paytm"
+                  style={{fontFamily: 'monospace', fontSize: '0.875rem'}}
+                />
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setShowImportModal(false)}>Cancel</button>
+              <button className="btn btn-primary" onClick={handleImport} disabled={submitting}>{submitting ? 'Importing...' : 'Import'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// Accounts/Heads of Account Management Component
+const AccountsManagement = () => {
+  const { user, addToast } = useApp();
+  const [accounts, setAccounts] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [newAccount, setNewAccount] = useState('');
+  const [importData, setImportData] = useState('');
+
+  // Predefined accounts list
+  const defaultAccounts = [
+    'Salaries & Wages',
+    'Rent',
+    'Utilities - Electricity',
+    'Utilities - Water',
+    'Raw Materials',
+    'Packaging Materials',
+    'Transportation & Freight',
+    'Maintenance & Repairs',
+    'Professional Fees',
+    'Marketing & Advertising',
+    'Office Supplies',
+    'Insurance',
+    'Taxes & Duties',
+    'Bank Charges',
+    'Interest Expenses',
+    'Miscellaneous Expenses',
+    'Capital Expenditure',
+    'Petty Cash'
+  ];
+
+  useEffect(() => {
+    const stored = localStorage.getItem(`heads_of_account_${user.company.id}`);
+    if (stored) {
+      setAccounts(JSON.parse(stored));
+    } else {
+      setAccounts([...defaultAccounts]);
+      localStorage.setItem(`heads_of_account_${user.company.id}`, JSON.stringify(defaultAccounts));
+    }
+  }, [user.company.id]);
+
+  const saveAccounts = (newAccounts) => {
+    setAccounts(newAccounts);
+    localStorage.setItem(`heads_of_account_${user.company.id}`, JSON.stringify(newAccounts));
+  };
+
+  const handleAddAccount = () => {
+    if (!newAccount.trim()) {
+      addToast('Account name cannot be empty', 'error');
+      return;
+    }
+    
+    if (accounts.includes(newAccount.trim())) {
+      addToast('Account already exists', 'error');
+      return;
+    }
+
+    const updated = [...accounts, newAccount.trim()].sort();
+    saveAccounts(updated);
+    addToast('Account added successfully', 'success');
+    setNewAccount('');
+    setShowAddModal(false);
+  };
+
+  const handleDeleteAccount = (account) => {
+    if (!confirm(`Delete "${account}"?`)) return;
+    const updated = accounts.filter(a => a !== account);
+    saveAccounts(updated);
+    addToast('Account deleted successfully', 'success');
+  };
+
+  const handleImport = () => {
+    if (!importData.trim()) {
+      addToast('Please paste account names to import', 'error');
+      return;
+    }
+
+    const lines = importData.trim().split('\n').map(l => l.trim()).filter(l => l);
+    const newAccounts = [...new Set([...accounts, ...lines])].sort();
+    saveAccounts(newAccounts);
+    addToast(`Imported ${lines.length} accounts`, 'success');
+    setImportData('');
+    setShowImportModal(false);
+  };
+
+  return (
+    <div className="page-container">
+      <div className="page-header">
+        <div>
+          <h1 className="page-title">Heads of Account</h1>
+          <p className="page-subtitle">Manage expense and payment categories</p>
+        </div>
+        <div style={{display: 'flex', gap: '0.75rem'}}>
+          <button className="btn btn-secondary" onClick={() => setShowImportModal(true)}>📥 Import</button>
+          <button className="btn btn-primary" onClick={() => setShowAddModal(true)}>➕ Add Account</button>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-body">
+          <div style={{display: 'grid', gap: '0.75rem'}}>
+            {accounts.map(account => (
+              <div key={account} style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.75rem', border: '1px solid var(--border-color)', borderRadius: '8px'}}>
+                <span>{account}</span>
+                <button className="btn btn-sm btn-danger" onClick={() => handleDeleteAccount(account)}>🗑️</button>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {showAddModal && (
+        <div className="modal-overlay" onClick={() => setShowAddModal(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3 className="modal-title">➕ Add Head of Account</h3>
+              <button className="modal-close" onClick={() => setShowAddModal(false)}>×</button>
+            </div>
+            <div className="modal-body">
+              <div className="form-group">
+                <label className="form-label">Account Name</label>
+                <input 
+                  type="text" 
+                  className="form-input" 
+                  value={newAccount} 
+                  onChange={e => setNewAccount(e.target.value)}
+                  placeholder="e.g., Equipment Purchase"
+                  onKeyPress={e => e.key === 'Enter' && handleAddAccount()}
+                />
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setShowAddModal(false)}>Cancel</button>
+              <button className="btn btn-primary" onClick={handleAddAccount}>Add</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showImportModal && (
+        <div className="modal-overlay" onClick={() => setShowImportModal(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3 className="modal-title">📥 Import Accounts</h3>
+              <button className="modal-close" onClick={() => setShowImportModal(false)}>×</button>
+            </div>
+            <div className="modal-body">
+              <p style={{marginBottom: '1rem', color: 'var(--text-secondary)'}}>
+                Paste account names below (one per line)
+              </p>
+              <div className="form-group">
+                <textarea 
+                  className="form-input" 
+                  rows="10" 
+                  value={importData} 
+                  onChange={e => setImportData(e.target.value)}
+                  placeholder="Employee Benefits&#10;Legal Fees&#10;Training & Development&#10;Software Licenses"
+                />
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setShowImportModal(false)}>Cancel</button>
+              <button className="btn btn-primary" onClick={handleImport}>Import</button>
             </div>
           </div>
         </div>
@@ -1270,7 +1870,7 @@ const App = () => {
   if (!user) return <LoginPage onLogin={handleLogin} />;
 
   const contextValue = { user, vouchers, notifications, addToast, refreshVouchers, refreshNotifications };
-  const renderPage = () => { switch(currentPage) { case 'dashboard': return <Dashboard />; case 'create': return <CreateVoucher />; case 'pending': return <VoucherList filter="pending" />; case 'approved': return <VoucherList filter="approved" />; case 'completed': return <VoucherList filter="completed" />; case 'all': return <VoucherList filter="all" />; case 'users': return <UsersManagement />; default: return <Dashboard />; } };
+  const renderPage = () => { switch(currentPage) { case 'dashboard': return <Dashboard />; case 'create': return <CreateVoucher />; case 'pending': return <VoucherList filter="pending" />; case 'approved': return <VoucherList filter="approved" />; case 'completed': return <VoucherList filter="completed" />; case 'all': return <VoucherList filter="all" />; case 'users': return <UsersManagement />; case 'payees': return <PayeesManagement />; case 'accounts': return <AccountsManagement />; default: return <Dashboard />; } };
 
   const handleNavClick = (page) => {
     setCurrentPage(page);
@@ -1305,6 +1905,10 @@ const App = () => {
               <div className={`nav-item ${currentPage === 'completed' ? 'active' : ''}`} onClick={() => handleNavClick('completed')}>{Icons.checkCircle} Completed</div>
               <div className={`nav-item ${currentPage === 'all' ? 'active' : ''}`} onClick={() => handleNavClick('all')}>{Icons.fileText} All Vouchers</div>
             </div>
+            {user.role === 'accounts' && <div className="nav-section"><div className="nav-section-title">Master Data</div>
+              <div className={`nav-item ${currentPage === 'payees' ? 'active' : ''}`} onClick={() => handleNavClick('payees')}>{Icons.users} Manage Payees</div>
+              <div className={`nav-item ${currentPage === 'accounts' ? 'active' : ''}`} onClick={() => handleNavClick('accounts')}>{Icons.fileText} Heads of Account</div>
+            </div>}
             {user.role === 'admin' && <div className="nav-section"><div className="nav-section-title">Admin Dashboard</div><div className={`nav-item ${currentPage === 'users' ? 'active' : ''}`} onClick={() => handleNavClick('users')}>{Icons.users} User Management</div></div>}
           </aside>
           
@@ -1324,6 +1928,10 @@ const App = () => {
                   <div className={`nav-item ${currentPage === 'completed' ? 'active' : ''}`} onClick={() => handleNavClick('completed')}>{Icons.checkCircle} Completed</div>
                   <div className={`nav-item ${currentPage === 'all' ? 'active' : ''}`} onClick={() => handleNavClick('all')}>{Icons.fileText} All Vouchers</div>
                 </div>
+                {user.role === 'accounts' && <div className="nav-section"><div className="nav-section-title">Master Data</div>
+                  <div className={`nav-item ${currentPage === 'payees' ? 'active' : ''}`} onClick={() => handleNavClick('payees')}>{Icons.users} Manage Payees</div>
+                  <div className={`nav-item ${currentPage === 'accounts' ? 'active' : ''}`} onClick={() => handleNavClick('accounts')}>{Icons.fileText} Heads of Account</div>
+                </div>}
                 {user.role === 'admin' && <div className="nav-section"><div className="nav-section-title">Admin Dashboard</div><div className={`nav-item ${currentPage === 'users' ? 'active' : ''}`} onClick={() => handleNavClick('users')}>{Icons.users} User Management</div></div>}
               </aside>
             </>
