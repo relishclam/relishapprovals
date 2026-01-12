@@ -34,6 +34,7 @@ const api = {
   registerUser: (data) => fetch(`${API_BASE}/users/register`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
   verifyUserMobile: (userId) => fetch(`${API_BASE}/users/${userId}/verify-mobile`, { method: 'POST' }).then(r => r.json()),
   login: (data) => fetch(`${API_BASE}/users/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
+  switchCompany: (userId, companyId) => fetch(`${API_BASE}/users/${userId}/switch-company`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ companyId }) }).then(r => r.json()),
   getCompanyUsers: (companyId) => fetch(`${API_BASE}/companies/${companyId}/users`).then(r => r.json()),
   onboardUser: (data) => fetch(`${API_BASE}/admin/onboard-user`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
   updateUser: (userId, data) => fetch(`${API_BASE}/users/${userId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
@@ -192,6 +193,11 @@ const LoginPage = ({ onLogin }) => {
   const [username, setUsername] = useState('');
   const [otp, setOtp] = useState('');
   const [requiresOtp, setRequiresOtp] = useState(false);
+  const [requiresCompanySelection, setRequiresCompanySelection] = useState(false);
+  const [availableCompanies, setAvailableCompanies] = useState([]);
+  const [selectedCompanyId, setSelectedCompanyId] = useState('');
+  const [pendingUserId, setPendingUserId] = useState('');
+  const [pendingUserName, setPendingUserName] = useState('');
   const [reg, setReg] = useState({ companyId: '', name: '', mobile: '', aadhar: '', role: 'accounts', step: 1, userId: '', otp: '' });
 
   useEffect(() => { api.getCompanies().then(setCompanies).catch(console.error); }, []);
@@ -199,10 +205,39 @@ const LoginPage = ({ onLogin }) => {
   const handleLogin = async () => {
     setLoading(true); setError('');
     try {
-      const result = await api.login({ username, otp: requiresOtp ? otp : undefined });
-      if (result.requiresOtp) setRequiresOtp(true);
-      else if (result.success) onLogin(result.user);
-      else setError(result.error || 'Login failed');
+      const result = await api.login({ 
+        username, 
+        otp: requiresOtp ? otp : undefined,
+        companyId: selectedCompanyId || undefined
+      });
+      
+      if (result.requiresCompanySelection) {
+        // User has access to multiple companies - show selection
+        setRequiresCompanySelection(true);
+        setAvailableCompanies(result.companies);
+        setPendingUserId(result.userId);
+        setPendingUserName(result.userName);
+      } else if (result.requiresOtp) {
+        setRequiresOtp(true);
+      } else if (result.success) {
+        onLogin(result.user);
+      } else {
+        setError(result.error || 'Login failed');
+      }
+    } catch { setError('Connection error'); }
+    setLoading(false);
+  };
+
+  const handleCompanySelect = async (companyId) => {
+    setSelectedCompanyId(companyId);
+    setLoading(true); setError('');
+    try {
+      const result = await api.login({ username, companyId });
+      if (result.success) {
+        onLogin(result.user);
+      } else {
+        setError(result.error || 'Login failed');
+      }
     } catch { setError('Connection error'); }
     setLoading(false);
   };
@@ -222,6 +257,58 @@ const LoginPage = ({ onLogin }) => {
     } catch { setError('Connection error'); }
     setLoading(false);
   };
+
+  // Company Selection Screen
+  if (requiresCompanySelection) {
+    return (
+      <div className="login-container">
+        <div className="login-card">
+          <div className="login-logo"><img src="logo.png" alt="Relish" /></div>
+          <h1 className="login-title">Select Company</h1>
+          <p className="login-subtitle">Welcome, {pendingUserName}! Choose which company to work with:</p>
+          {error && <div className="alert alert-error">{error}</div>}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '20px' }}>
+            {availableCompanies.map(company => (
+              <button 
+                key={company.id}
+                className="btn btn-secondary" 
+                style={{ 
+                  width: '100%', 
+                  padding: '16px', 
+                  display: 'flex', 
+                  justifyContent: 'space-between', 
+                  alignItems: 'center',
+                  textAlign: 'left'
+                }}
+                onClick={() => handleCompanySelect(company.id)}
+                disabled={loading}
+              >
+                <div>
+                  <div style={{ fontWeight: 600 }}>{company.name}</div>
+                  <div style={{ fontSize: '12px', opacity: 0.7, marginTop: '4px' }}>
+                    Role: {company.role === 'admin' ? '🛡️ Admin / Approver' : '👤 Accounts'}
+                  </div>
+                </div>
+                <span style={{ fontSize: '20px' }}>→</span>
+              </button>
+            ))}
+          </div>
+          <button 
+            className="btn" 
+            style={{ width: '100%', marginTop: '20px', background: 'transparent', border: '1px solid #ddd' }}
+            onClick={() => {
+              setRequiresCompanySelection(false);
+              setAvailableCompanies([]);
+              setSelectedCompanyId('');
+              setUsername('');
+            }}
+          >
+            ← Back to Login
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="login-container">
@@ -273,15 +360,15 @@ const CreateVoucher = () => {
   const [loading, setLoading] = useState(false);
   const [payees, setPayees] = useState([]);
   const [heads, setHeads] = useState([]);
-  const [companies, setCompanies] = useState([]);
   const [showPayeeModal, setShowPayeeModal] = useState(false);
   const [showCustomAccount, setShowCustomAccount] = useState(false);
   const [customAccount, setCustomAccount] = useState('');
-  const [form, setForm] = useState({ voucherCompanyId: '', headOfAccount: '', narration: '', payeeId: '', paymentMode: 'UPI', amount: '' });
+  const [form, setForm] = useState({ headOfAccount: '', narration: '', payeeId: '', paymentMode: 'UPI', amount: '' });
   const [newPayee, setNewPayee] = useState({ name: '', alias: '', mobile: '', bankAccount: '', ifsc: '', upiId: '' });
 
   useEffect(() => { 
-    api.getCompanies().then(setCompanies);
+    // Load payees for user's company
+    api.getPayees(user.company.id).then(setPayees);
     // Load heads from localStorage based on user's company
     const stored = localStorage.getItem(`heads_of_account_${user.company.id}`);
     if (stored) {
@@ -289,22 +376,9 @@ const CreateVoucher = () => {
     }
   }, [user.company.id]);
 
-  useEffect(() => {
-    if (form.voucherCompanyId) {
-      api.getPayees(form.voucherCompanyId).then(setPayees);
-      setForm(prev => ({ ...prev, payeeId: '' })); // Reset payee when company changes
-    } else {
-      setPayees([]);
-    }
-  }, [form.voucherCompanyId]);
-
   const handleAddPayee = async () => {
-    if (!form.voucherCompanyId) {
-      addToast('Please select a company first', 'error');
-      return;
-    }
     setLoading(true);
-    try { const result = await api.addPayee({ companyId: form.voucherCompanyId, ...newPayee }); if (result.success) { addToast('Payee added', 'success'); setShowPayeeModal(false); setNewPayee({ name: '', alias: '', mobile: '', bankAccount: '', ifsc: '', upiId: '' }); api.getPayees(form.voucherCompanyId).then(setPayees); } } catch { addToast('Failed', 'error'); }
+    try { const result = await api.addPayee({ companyId: user.company.id, ...newPayee }); if (result.success) { addToast('Payee added', 'success'); setShowPayeeModal(false); setNewPayee({ name: '', alias: '', mobile: '', bankAccount: '', ifsc: '', upiId: '' }); api.getPayees(user.company.id).then(setPayees); } } catch { addToast('Failed', 'error'); }
     setLoading(false);
   };
 
@@ -317,9 +391,9 @@ const CreateVoucher = () => {
   };
 
   const handleSubmit = async () => {
-    if (!form.voucherCompanyId || !form.headOfAccount || !form.payeeId || !form.amount) { addToast('Fill all required fields including company selection', 'error'); return; }
+    if (!form.headOfAccount || !form.payeeId || !form.amount) { addToast('Fill all required fields', 'error'); return; }
     setLoading(true);
-    try { const result = await api.createVoucher({ companyId: form.voucherCompanyId, headOfAccount: form.headOfAccount, narration: form.narration, amount: parseFloat(form.amount), paymentMode: form.paymentMode, payeeId: form.payeeId, preparedBy: user.id }); if (result.success) { addToast(`Voucher ${result.serialNumber} created for ${companies.find(c => c.id === form.voucherCompanyId)?.name}`, 'success'); setForm({ voucherCompanyId: '', headOfAccount: '', narration: '', payeeId: '', paymentMode: 'UPI', amount: '' }); refreshVouchers(); } } catch { addToast('Failed', 'error'); }
+    try { const result = await api.createVoucher({ companyId: user.company.id, headOfAccount: form.headOfAccount, narration: form.narration, amount: parseFloat(form.amount), paymentMode: form.paymentMode, payeeId: form.payeeId, preparedBy: user.id }); if (result.success) { addToast(`Voucher ${result.serialNumber} created`, 'success'); setForm({ headOfAccount: '', narration: '', payeeId: '', paymentMode: 'UPI', amount: '' }); refreshVouchers(); } } catch { addToast('Failed', 'error'); }
     setLoading(false);
   };
 
@@ -329,25 +403,21 @@ const CreateVoucher = () => {
       <div className="card">
         <div className="card-header"><h3 className="card-title">{Icons.fileText} Voucher Details</h3></div>
         <div className="card-body">
-          <div className="form-group" style={{marginBottom: '1.5rem', padding: '1rem', background: 'var(--relish-cream)', borderRadius: '8px', border: '2px solid var(--relish-orange)'}}>
-            <label className="form-label" style={{fontSize: '1rem', fontWeight: 600, color: 'var(--relish-dark)'}}>{Icons.building} Select Company for this Voucher *</label>
-            <select className="form-select" value={form.voucherCompanyId} onChange={(e) => setForm({ ...form, voucherCompanyId: e.target.value })} style={{fontSize: '1rem', fontWeight: 500}}>
-              <option value="">-- Select Company --</option>
-              {companies.map(c => <option key={c.id} value={c.id}>{c.name} - GST: {c.gst}</option>)}
-            </select>
-            {form.voucherCompanyId && (
-              <div style={{marginTop: '0.5rem', fontSize: '0.85rem', color: '#666'}}>
-                {companies.find(c => c.id === form.voucherCompanyId)?.address}
-              </div>
-            )}
+          <div style={{marginBottom: '1.5rem', padding: '1rem', background: 'var(--relish-cream)', borderRadius: '8px', border: '2px solid var(--relish-orange)'}}>
+            <div style={{display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem'}}>
+              {Icons.building}
+              <span style={{fontSize: '1.1rem', fontWeight: 600, color: 'var(--relish-dark)'}}>{user.company.name}</span>
+            </div>
+            <div style={{fontSize: '0.85rem', color: '#666'}}>{user.company.address}</div>
+            <div style={{fontSize: '0.85rem', color: '#666'}}>GST: {user.company.gst}</div>
           </div>
           <div className="form-row">
             <div className="form-group">
               <label className="form-label form-label-row">
                 Head of Account *
-                <button className="btn btn-sm btn-secondary" onClick={() => setShowCustomAccount(true)} disabled={!form.voucherCompanyId} style={{fontSize: '0.75rem'}}>✏️ Enter Custom</button>
+                <button className="btn btn-sm btn-secondary" onClick={() => setShowCustomAccount(true)} style={{fontSize: '0.75rem'}}>✏️ Enter Custom</button>
               </label>
-              <select className="form-select" value={form.headOfAccount} onChange={(e) => setForm({ ...form, headOfAccount: e.target.value })} disabled={!form.voucherCompanyId}>
+              <select className="form-select" value={form.headOfAccount} onChange={(e) => setForm({ ...form, headOfAccount: e.target.value })}>
                 <option value="">Select</option>
                 {heads.map(h => <option key={h} value={h}>{h}</option>)}
               </select>
@@ -357,11 +427,11 @@ const CreateVoucher = () => {
                 </div>
               )}
             </div>
-            <div className="form-group"><label className="form-label">Payment Mode *</label><select className="form-select" value={form.paymentMode} onChange={(e) => setForm({ ...form, paymentMode: e.target.value })} disabled={!form.voucherCompanyId}><option value="UPI">UPI</option><option value="Account Transfer">Account Transfer</option><option value="Cash">Cash</option></select></div>
+            <div className="form-group"><label className="form-label">Payment Mode *</label><select className="form-select" value={form.paymentMode} onChange={(e) => setForm({ ...form, paymentMode: e.target.value })}><option value="UPI">UPI</option><option value="Account Transfer">Account Transfer</option><option value="Cash">Cash</option></select></div>
           </div>
-          <div className="form-group"><label className="form-label form-label-row">Payee *<button className="btn btn-sm btn-secondary" onClick={() => setShowPayeeModal(true)} disabled={!form.voucherCompanyId}>{Icons.plus} Add Payee</button></label><select className="form-select" value={form.payeeId} onChange={(e) => setForm({ ...form, payeeId: e.target.value })} disabled={!form.voucherCompanyId}><option value="">{form.voucherCompanyId ? 'Select Payee' : 'Select Company First'}</option>{payees.map(p => <option key={p.id} value={p.id}>{p.name} {p.alias && `(${p.alias})`}</option>)}</select></div>
-          <div className="form-group"><label className="form-label">Amount (₹) *</label><input type="number" className="form-input" placeholder="Enter amount" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} disabled={!form.voucherCompanyId} /></div>
-          <div className="form-group"><label className="form-label">Narration</label><textarea className="form-input" rows={2} placeholder="Enter payment description" value={form.narration} onChange={(e) => setForm({ ...form, narration: e.target.value })} disabled={!form.voucherCompanyId} /></div>
+          <div className="form-group"><label className="form-label form-label-row">Payee *<button className="btn btn-sm btn-secondary" onClick={() => setShowPayeeModal(true)}>{Icons.plus} Add Payee</button></label><select className="form-select" value={form.payeeId} onChange={(e) => setForm({ ...form, payeeId: e.target.value })}><option value="">Select Payee</option>{payees.map(p => <option key={p.id} value={p.id}>{p.name} {p.alias && `(${p.alias})`}</option>)}</select></div>
+          <div className="form-group"><label className="form-label">Amount (₹) *</label><input type="number" className="form-input" placeholder="Enter amount" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} /></div>
+          <div className="form-group"><label className="form-label">Narration</label><textarea className="form-input" rows={2} placeholder="Enter payment description" value={form.narration} onChange={(e) => setForm({ ...form, narration: e.target.value })} /></div>
           <div className="btn-group"><button className="btn btn-primary" onClick={handleSubmit} disabled={loading}>{loading && Icons.loader}{Icons.send} Submit for Approval</button></div>
         </div>
       </div>
@@ -698,6 +768,7 @@ const VoucherList = ({ filter }) => {
 const UsersManagement = () => {
   const { user, addToast } = useApp();
   const [users, setUsers] = useState([]);
+  const [allCompanies, setAllCompanies] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showOnboardModal, setShowOnboardModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
@@ -705,7 +776,7 @@ const UsersManagement = () => {
   const [showVerifyModal, setShowVerifyModal] = useState(false);
   const [selectedUser, setSelectedUser] = useState(null);
   const [submitting, setSubmitting] = useState(false);
-  const [newUser, setNewUser] = useState({ name: '', mobile: '', aadhar: '', role: 'accounts' });
+  const [newUser, setNewUser] = useState({ name: '', mobile: '', aadhar: '', role: 'accounts', companyAccess: [] });
   const [editUser, setEditUser] = useState({ name: '', mobile: '', aadhar: '', role: 'accounts' });
   const [onboardStep, setOnboardStep] = useState(1); // 1=form, 2=otp, 3=success
   const [otp, setOtp] = useState('');
@@ -718,22 +789,83 @@ const UsersManagement = () => {
     api.getCompanyUsers(user.company.id).then(setUsers).finally(() => setLoading(false));
   };
   
-  useEffect(() => { refreshUsers(); }, [user.company.id]);
+  useEffect(() => { 
+    refreshUsers(); 
+    // Load all companies for multi-company access selection
+    api.getCompanies().then(companies => {
+      setAllCompanies(companies);
+      // Pre-select current company with current role
+      setNewUser(prev => ({
+        ...prev,
+        companyAccess: [{
+          companyId: user.company.id,
+          companyName: user.company.name,
+          role: 'accounts',
+          isPrimary: true
+        }]
+      }));
+    }).catch(console.error);
+  }, [user.company.id]);
+  
+  const handleCompanyAccessChange = (companyId, companyName, checked) => {
+    setNewUser(prev => {
+      let newAccess = [...prev.companyAccess];
+      if (checked) {
+        // Add company with default role
+        newAccess.push({
+          companyId,
+          companyName,
+          role: prev.role, // Use current selected role
+          isPrimary: newAccess.length === 0
+        });
+      } else {
+        // Remove company
+        newAccess = newAccess.filter(ca => ca.companyId !== companyId);
+        // If removed the primary, make first one primary
+        if (newAccess.length > 0 && !newAccess.some(ca => ca.isPrimary)) {
+          newAccess[0].isPrimary = true;
+        }
+      }
+      return { ...prev, companyAccess: newAccess };
+    });
+  };
+  
+  const handleCompanyRoleChange = (companyId, newRole) => {
+    setNewUser(prev => ({
+      ...prev,
+      companyAccess: prev.companyAccess.map(ca => 
+        ca.companyId === companyId ? { ...ca, role: newRole } : ca
+      )
+    }));
+  };
   
   const handleOnboardSubmit = async () => {
-    if (!newUser.name?.trim() || !newUser.mobile?.trim() || !newUser.aadhar?.trim() || !newUser.role) {
+    if (!newUser.name?.trim() || !newUser.mobile?.trim() || !newUser.aadhar?.trim()) {
       addToast('All fields are required', 'error');
       console.log('Validation failed:', newUser);
       return;
     }
     
+    if (newUser.companyAccess.length === 0) {
+      addToast('Please select at least one company', 'error');
+      return;
+    }
+    
+    // Find primary company
+    const primaryCompany = newUser.companyAccess.find(ca => ca.isPrimary) || newUser.companyAccess[0];
+    
     const payload = {
       adminMobile: user.mobile,
-      companyId: user.company.id,
+      companyId: primaryCompany.companyId,
       name: newUser.name.trim(),
       mobile: newUser.mobile.trim(),
       aadhar: newUser.aadhar.trim(),
-      role: newUser.role
+      role: primaryCompany.role,
+      companyAccess: newUser.companyAccess.map(ca => ({
+        companyId: ca.companyId,
+        role: ca.role,
+        isPrimary: ca.isPrimary
+      }))
     };
     
     console.log('Onboard payload:', payload);
@@ -789,7 +921,18 @@ const UsersManagement = () => {
   };
   
   const resetOnboardForm = () => {
-    setNewUser({ name: '', mobile: '', aadhar: '', role: 'accounts' });
+    setNewUser({ 
+      name: '', 
+      mobile: '', 
+      aadhar: '', 
+      role: 'accounts',
+      companyAccess: [{
+        companyId: user.company.id,
+        companyName: user.company.name,
+        role: 'accounts',
+        isPrimary: true
+      }]
+    });
     setOnboardStep(1);
     setOtp('');
     setPendingUserId('');
@@ -1092,21 +1235,57 @@ const UsersManagement = () => {
                   </div>
                   
                   <div className="form-group">
-                    <label className="form-label">Role *</label>
-                    <select 
-                      className="form-select" 
-                      value={newUser.role} 
-                      onChange={(e) => setNewUser({ ...newUser, role: e.target.value })}
-                    >
-                      <option value="accounts">👤 Accounts (Can create vouchers)</option>
-                      <option value="admin">🛡 Admin (Can approve vouchers)</option>
-                    </select>
+                    <label className="form-label">Company Access *</label>
+                    <div style={{ border: '1px solid #ddd', borderRadius: '8px', padding: '12px', background: '#fafafa' }}>
+                      {allCompanies.map(company => {
+                        const access = newUser.companyAccess.find(ca => ca.companyId === company.id);
+                        const isChecked = !!access;
+                        return (
+                          <div key={company.id} style={{ 
+                            display: 'flex', 
+                            alignItems: 'center', 
+                            justifyContent: 'space-between',
+                            padding: '10px',
+                            marginBottom: '8px',
+                            background: isChecked ? '#e8f5e9' : '#fff',
+                            borderRadius: '6px',
+                            border: isChecked ? '1px solid #4caf50' : '1px solid #ddd'
+                          }}>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', flex: 1 }}>
+                              <input 
+                                type="checkbox"
+                                checked={isChecked}
+                                onChange={(e) => handleCompanyAccessChange(company.id, company.name, e.target.checked)}
+                                style={{ width: '18px', height: '18px' }}
+                              />
+                              <span style={{ fontWeight: 500 }}>{company.name}</span>
+                            </label>
+                            {isChecked && (
+                              <select 
+                                value={access.role}
+                                onChange={(e) => handleCompanyRoleChange(company.id, e.target.value)}
+                                style={{ padding: '6px 10px', borderRadius: '4px', border: '1px solid #ddd', fontSize: '13px' }}
+                              >
+                                <option value="accounts">👤 Accounts</option>
+                                <option value="admin">🛡️ Admin</option>
+                              </select>
+                            )}
+                          </div>
+                        );
+                      })}
+                      {allCompanies.length === 0 && (
+                        <div style={{ textAlign: 'center', color: '#666', padding: '10px' }}>Loading companies...</div>
+                      )}
+                    </div>
+                    <small style={{ color: '#666', fontSize: '0.85rem', marginTop: '6px', display: 'block' }}>
+                      Select companies this user can access and their role in each
+                    </small>
                   </div>
                   
                   <div style={{background: '#f8f9fa', padding: '1rem', borderRadius: '8px', fontSize: '0.9rem', color: '#666'}}>
                     <strong>ℹ️ Note:</strong> Username will be auto-generated as:<br/>
                     <code style={{background: '#fff', padding: '0.25rem 0.5rem', borderRadius: '4px', marginTop: '0.5rem', display: 'inline-block'}}>
-                      {newUser.role === 'admin' ? 'Approve' : 'Accounts'}-{newUser.name.split(' ')[0] || 'FirstName'}
+                      {(newUser.companyAccess[0]?.role || 'accounts') === 'admin' ? 'Approve' : 'Accounts'}-{newUser.name.split(' ')[0] || 'FirstName'}
                     </code>
                   </div>
                 </>
@@ -1157,7 +1336,7 @@ const UsersManagement = () => {
                   <button 
                     className="btn btn-primary" 
                     onClick={handleOnboardSubmit} 
-                    disabled={submitting || !newUser.name || !newUser.mobile || !newUser.aadhar || !newUser.role}
+                    disabled={submitting || !newUser.name || !newUser.mobile || !newUser.aadhar || newUser.companyAccess.length === 0}
                   >
                     {submitting && Icons.loader}
                     {Icons.send} Create User & Send OTP
@@ -1854,6 +2033,8 @@ const App = () => {
   const [currentPage, setCurrentPage] = useState('dashboard');
   const [showNotifications, setShowNotifications] = useState(false);
   const [showMobileMenu, setShowMobileMenu] = useState(false);
+  const [showCompanySwitcher, setShowCompanySwitcher] = useState(false);
+  const [switchingCompany, setSwitchingCompany] = useState(false);
   const [toasts, setToasts] = useState([]);
   const [pushEnabled, setPushEnabled] = useState(false);
   const lastNotificationCount = React.useRef(0);
@@ -1962,8 +2143,27 @@ const App = () => {
 
   const handleLogin = (userData) => { setUser(userData); setCurrentPage('dashboard'); };
   const handleLogout = () => { setUser(null); setVouchers([]); setNotifications([]); setCurrentPage('dashboard'); };
+  const handleSwitchCompany = async (companyId) => {
+    setSwitchingCompany(true);
+    try {
+      const result = await api.switchCompany(user.id, companyId);
+      if (result.success) {
+        setUser(result.user);
+        setVouchers([]);
+        setCurrentPage('dashboard');
+        setShowCompanySwitcher(false);
+        // Refresh data for new company
+        const newVouchers = await api.getVouchers(result.user.company.id);
+        setVouchers(newVouchers);
+      }
+    } catch (error) {
+      console.error('Failed to switch company:', error);
+    }
+    setSwitchingCompany(false);
+  };
   const unreadCount = notifications.filter(n => !n.read).length;
   const markAllRead = async () => { await api.markAllNotificationsRead(user.id); refreshNotifications(); };
+  const hasMultipleCompanies = user?.companies?.length > 1;
 
   if (!user) return <LoginPage onLogin={handleLogin} />;
 
@@ -1985,7 +2185,63 @@ const App = () => {
               {Icons.menu}
             </button>
             <div className="logo-container"><img src="logo.png" alt="Relish" style={{height:'40px'}} /></div>
-            <div className="company-badge">{Icons.building} {user.company.name}</div>
+            <div 
+              className="company-badge" 
+              onClick={() => hasMultipleCompanies && setShowCompanySwitcher(!showCompanySwitcher)}
+              style={{ cursor: hasMultipleCompanies ? 'pointer' : 'default', position: 'relative' }}
+            >
+              {Icons.building} {user.company.name}
+              {hasMultipleCompanies && <span style={{ marginLeft: '6px', fontSize: '10px' }}>▼</span>}
+              
+              {showCompanySwitcher && hasMultipleCompanies && (
+                <div style={{
+                  position: 'absolute',
+                  top: '100%',
+                  left: 0,
+                  marginTop: '8px',
+                  background: 'white',
+                  borderRadius: '8px',
+                  boxShadow: '0 4px 20px rgba(0,0,0,0.15)',
+                  minWidth: '280px',
+                  zIndex: 1000,
+                  border: '1px solid #eee'
+                }}>
+                  <div style={{ padding: '12px 16px', borderBottom: '1px solid #eee', fontWeight: 600, color: '#333' }}>
+                    Switch Company
+                  </div>
+                  {user.companies.map(company => (
+                    <div 
+                      key={company.id}
+                      onClick={(e) => { e.stopPropagation(); handleSwitchCompany(company.id); }}
+                      style={{
+                        padding: '12px 16px',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        background: company.id === user.company.id ? '#f0f7ff' : 'white',
+                        borderLeft: company.id === user.company.id ? '3px solid #2196f3' : '3px solid transparent'
+                      }}
+                    >
+                      <div>
+                        <div style={{ fontWeight: 500, color: '#333' }}>{company.name}</div>
+                        <div style={{ fontSize: '12px', color: '#666', marginTop: '2px' }}>
+                          {company.role === 'admin' ? '🛡️ Admin' : '👤 Accounts'}
+                        </div>
+                      </div>
+                      {company.id === user.company.id && (
+                        <span style={{ color: '#4caf50', fontSize: '16px' }}>✓</span>
+                      )}
+                    </div>
+                  ))}
+                  {switchingCompany && (
+                    <div style={{ padding: '12px', textAlign: 'center', color: '#666' }}>
+                      Switching...
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
           <div className="header-right">
             <div className="user-badge">{user.role === 'admin' ? Icons.shield : Icons.user} {user.username}</div>
@@ -1993,6 +2249,12 @@ const App = () => {
             <button className="logout-btn" onClick={handleLogout}>{Icons.logOut} Sign Out</button>
           </div>
         </header>
+        {showCompanySwitcher && (
+          <div 
+            onClick={() => setShowCompanySwitcher(false)} 
+            style={{ position: 'fixed', inset: 0, zIndex: 999 }} 
+          />
+        )}
         <div className="main-layout">
           <aside className="sidebar">
             <div className="nav-section"><div className="nav-section-title">Main</div><div className={`nav-item ${currentPage === 'dashboard' ? 'active' : ''}`} onClick={() => handleNavClick('dashboard')}>{Icons.home} Dashboard</div></div>

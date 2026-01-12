@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>SAMPLE PAYMENT VOUCHER - Relish Foods</title>
+  <style>
+    @page { size: A4; margin: 15mm; }
+    body { font-family: Arial, sans-serif; margin: 0; padding: 20px; font-size: 12px; background: #f5f5f5; }
+    .container { max-width: 800px; margin: 0 auto; background: white; padding: 20px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+    .sample-banner { background: #dc2626; color: white; text-align: center; padding: 10px; font-weight: bold; margin: -20px -20px 20px; }
+    .report-header { text-align: center; margin-bottom: 20px; border-bottom: 2px solid #333; padding-bottom: 10px; }
+    .report-title { font-size: 18px; font-weight: bold; margin-bottom: 5px; }
+    .report-subtitle { font-size: 12px; color: #666; }
+    .voucher { page-break-inside: avoid; margin-bottom: 30px; border: 1px solid #ddd; padding: 15px; }
+    .voucher-header { background: #f5f5f5; padding: 10px; margin: -15px -15px 15px; border-bottom: 2px solid #333; }
+    .company-name { font-size: 16px; font-weight: bold; color: #f5841f; }
+    .company-address { font-size: 10px; color: #666; margin-top: 3px; }
+    .voucher-title { font-size: 14px; font-weight: bold; text-align: center; margin-top: 8px; text-transform: uppercase; letter-spacing: 2px; }
+    .voucher-meta { display: table; width: 100%; margin-bottom: 15px; }
+    .meta-row { display: table-row; }
+    .meta-label { display: table-cell; font-weight: bold; width: 150px; padding: 4px 0; color: #555; }
+    .meta-value { display: table-cell; padding: 4px 0; }
+    .voucher-amount { font-size: 18px; font-weight: bold; text-align: right; margin: 15px 0; border-top: 2px solid #333; padding-top: 10px; color: #16a34a; }
+    .voucher-signatures { display: flex; justify-content: space-between; margin-top: 40px; }
+    .signature-box { text-align: center; flex: 1; }
+    .signature-line { border-top: 1px solid #000; padding-top: 5px; margin: 30px 10px 5px; font-weight: bold; }
+    .signature-label { font-size: 10px; color: #666; }
+    .status-badge { display: inline-block; padding: 4px 12px; border-radius: 4px; font-size: 11px; font-weight: bold; }
+    .status-completed { background: #dcfce7; color: #166534; }
+    .status-pending { background: #fef3c7; color: #92400e; }
+    .status-approved { background: #dbeafe; color: #1e40af; }
+    .footer-note { text-align: center; margin-top: 30px; padding-top: 15px; border-top: 1px dashed #ccc; color: #666; font-size: 10px; }
+    @media print {
+      .no-print { display: none !important; }
+      body { padding: 0; background: white; }
+      .container { box-shadow: none; padding: 0; }
+      .sample-banner { display: none; }
+    }
+    .print-btn { position: fixed; top: 20px; right: 20px; padding: 12px 24px; background: #f5841f; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 14px; box-shadow: 0 2px 10px rgba(0,0,0,0.2); }
+    .print-btn:hover { background: #e07318; }
+  </style>
+</head>
+<body>
+  <button class="print-btn no-print" onclick="window.print()">🖨️ Print Voucher</button>
+  
+  <div class="container">
+    <div class="sample-banner no-print">⚠️ SAMPLE VOUCHER - FOR REFERENCE ONLY</div>
+    
+    <div class="report-header">
+      <div class="report-title">Payment Voucher Report</div>
+      <div class="report-subtitle">Generated on 12/01/2026, 10:30:45 AM</div>
+    </div>
+    
+    <!-- SAMPLE VOUCHER 1: Completed -->
+    <div class="voucher">
+      <div class="voucher-header">
+        <div class="company-name">🍊 RELISH FOODS PRIVATE LIMITED</div>
+        <div class="company-address">No. 45, MG Road, Ernakulam, Kerala - 682016</div>
+        <div class="company-address">GST: 32AABCR1234M1ZP</div>
+        <div class="voucher-title">💳 Payment Voucher</div>
+      </div>
+      
+      <div class="voucher-meta">
+        <div class="meta-row">
+          <div class="meta-label">Voucher No:</div>
+          <div class="meta-value"><strong>RF/2025-26/0042</strong></div>
+        </div>
+        <div class="meta-row">
+          <div class="meta-label">Date:</div>
+          <div class="meta-value">12 Jan 2026</div>
+        </div>
+        <div class="meta-row">
+          <div class="meta-label">Payee:</div>
+          <div class="meta-value">Fresh Vegetables Suppliers (FVS)</div>
+        </div>
+        <div class="meta-row">
+          <div class="meta-label">Payee Mobile:</div>
+          <div class="meta-value">+91 98765 43210</div>
+        </div>
+        <div class="meta-row">
+          <div class="meta-label">Payment Mode:</div>
+          <div class="meta-value">NEFT</div>
+        </div>
+        <div class="meta-row">
+          <div class="meta-label">Head of Account:</div>
+          <div class="meta-value">Raw Materials - Vegetables</div>
+        </div>
+        <div class="meta-row">
+          <div class="meta-label">Narration:</div>
+          <div class="meta-value">Payment for weekly vegetable supply - Invoice #INV-2026-0078</div>
+        </div>
+        <div class="meta-row">
+          <div class="meta-label">Status:</div>
+          <div class="meta-value"><span class="status-badge status-completed">✅ COMPLETED</span></div>
+        </div>
+      </div>
+      
+      <div class="voucher-amount">AMOUNT: ₹ 45,750.00</div>
+      
+      <div class="voucher-signatures">
+        <div class="signature-box">
+          <div class="signature-line">Accounts-Sangeetha</div>
+          <div class="signature-label">Prepared By</div>
+          <div class="signature-label" style="margin-top: 5px; color: #999;">10 Jan 2026, 11:30 AM</div>
+        </div>
+        <div class="signature-box">
+          <div class="signature-line">Approve-Motty</div>
+          <div class="signature-label">Approved By</div>
+          <div class="signature-label" style="margin-top: 5px; color: #999;">10 Jan 2026, 2:15 PM</div>
+        </div>
+        <div class="signature-box">
+          <div class="signature-line">✓ OTP Verified</div>
+          <div class="signature-label">Payee Confirmation</div>
+          <div class="signature-label" style="margin-top: 5px; color: #999;">10 Jan 2026, 3:00 PM</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SAMPLE VOUCHER 2: Pending Approval -->
+    <div class="voucher">
+      <div class="voucher-header">
+        <div class="company-name">🍊 RELISH FOODS PRIVATE LIMITED</div>
+        <div class="company-address">No. 45, MG Road, Ernakulam, Kerala - 682016</div>
+        <div class="company-address">GST: 32AABCR1234M1ZP</div>
+        <div class="voucher-title">💳 Payment Voucher</div>
+      </div>
+      
+      <div class="voucher-meta">
+        <div class="meta-row">
+          <div class="meta-label">Voucher No:</div>
+          <div class="meta-value"><strong>RF/2025-26/0043</strong></div>
+        </div>
+        <div class="meta-row">
+          <div class="meta-label">Date:</div>
+          <div class="meta-value">12 Jan 2026</div>
+        </div>
+        <div class="meta-row">
+          <div class="meta-label">Payee:</div>
+          <div class="meta-value">Kerala Spices Trading Co.</div>
+        </div>
+        <div class="meta-row">
+          <div class="meta-label">Payment Mode:</div>
+          <div class="meta-value">UPI</div>
+        </div>
+        <div class="meta-row">
+          <div class="meta-label">Head of Account:</div>
+          <div class="meta-value">Raw Materials - Spices</div>
+        </div>
+        <div class="meta-row">
+          <div class="meta-label">Status:</div>
+          <div class="meta-value"><span class="status-badge status-pending">⏳ PENDING APPROVAL</span></div>
+        </div>
+      </div>
+      
+      <div class="voucher-amount">AMOUNT: ₹ 28,500.00</div>
+      
+      <div class="voucher-signatures">
+        <div class="signature-box">
+          <div class="signature-line">Accounts-Sangeetha</div>
+          <div class="signature-label">Prepared By</div>
+        </div>
+        <div class="signature-box">
+          <div class="signature-line">___________</div>
+          <div class="signature-label">Approved By</div>
+        </div>
+        <div class="signature-box">
+          <div class="signature-line">___________</div>
+          <div class="signature-label">Payee Confirmation</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SAMPLE VOUCHER 3: Awaiting Payee OTP -->
+    <div class="voucher">
+      <div class="voucher-header">
+        <div class="company-name">🍊 RELISH FOODS PRIVATE LIMITED</div>
+        <div class="company-address">No. 45, MG Road, Ernakulam, Kerala - 682016</div>
+        <div class="company-address">GST: 32AABCR1234M1ZP</div>
+        <div class="voucher-title">💳 Payment Voucher</div>
+      </div>
+      
+      <div class="voucher-meta">
+        <div class="meta-row">
+          <div class="meta-label">Voucher No:</div>
+          <div class="meta-value"><strong>RF/2025-26/0044</strong></div>
+        </div>
+        <div class="meta-row">
+          <div class="meta-label">Date:</div>
+          <div class="meta-value">12 Jan 2026</div>
+        </div>
+        <div class="meta-row">
+          <div class="meta-label">Payee:</div>
+          <div class="meta-value">Premium Packaging Solutions (PPS)</div>
+        </div>
+        <div class="meta-row">
+          <div class="meta-label">Payment Mode:</div>
+          <div class="meta-value">RTGS</div>
+        </div>
+        <div class="meta-row">
+          <div class="meta-label">Head of Account:</div>
+          <div class="meta-value">Packaging Materials</div>
+        </div>
+        <div class="meta-row">
+          <div class="meta-label">Narration:</div>
+          <div class="meta-value">Advance payment for Q1 2026 packaging supplies</div>
+        </div>
+        <div class="meta-row">
+          <div class="meta-label">Status:</div>
+          <div class="meta-value"><span class="status-badge status-approved">📱 AWAITING PAYEE OTP</span></div>
+        </div>
+      </div>
+      
+      <div class="voucher-amount">AMOUNT: ₹ 1,25,000.00</div>
+      
+      <div class="voucher-signatures">
+        <div class="signature-box">
+          <div class="signature-line">Accounts-Sangeetha</div>
+          <div class="signature-label">Prepared By</div>
+        </div>
+        <div class="signature-box">
+          <div class="signature-line">Approve-Motty</div>
+          <div class="signature-label">Approved By</div>
+        </div>
+        <div class="signature-box">
+          <div class="signature-line">___________</div>
+          <div class="signature-label">Payee Confirmation</div>
+          <div class="signature-label" style="margin-top: 5px; color: #dc2626;">OTP sent to payee mobile</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Summary Section -->
+    <div style="margin-top: 30px; padding: 15px; background: #f5f5f5; border: 1px solid #ddd; border-radius: 8px;">
+      <div style="font-size: 14px; font-weight: bold; margin-bottom: 10px; border-bottom: 1px solid #ccc; padding-bottom: 8px;">📊 Summary</div>
+      <div style="display: flex; justify-content: space-between; padding: 5px 0;">
+        <span>Total Vouchers:</span>
+        <span><strong>3</strong></span>
+      </div>
+      <div style="display: flex; justify-content: space-between; padding: 5px 0;">
+        <span>✅ Completed:</span>
+        <span>1</span>
+      </div>
+      <div style="display: flex; justify-content: space-between; padding: 5px 0;">
+        <span>⏳ Pending:</span>
+        <span>1</span>
+      </div>
+      <div style="display: flex; justify-content: space-between; padding: 5px 0;">
+        <span>📱 Awaiting OTP:</span>
+        <span>1</span>
+      </div>
+      <div style="display: flex; justify-content: space-between; padding: 10px 0; font-size: 16px; font-weight: bold; border-top: 2px solid #333; margin-top: 10px; color: #16a34a;">
+        <span>TOTAL AMOUNT:</span>
+        <span>₹ 1,99,250.00</span>
+      </div>
+    </div>
+
+    <div class="footer-note">
+      <p>This is a computer-generated voucher from <strong>Relish Payment Approval System</strong></p>
+      <p>Vouchers require OTP verification from the payee for completion</p>
+      <p style="margin-top: 10px;">© 2026 Relish Foods Pvt Ltd | Powered by Relish Approvals PWA</p>
+    </div>
+  </div>
+</body>
+</html>

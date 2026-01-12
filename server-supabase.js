@@ -99,9 +99,23 @@ app.post('/api/otp/verify', async (req, res) => {
 // DISABLED: Self-registration not allowed
 // Only admins can onboard users via /api/admin/onboard-user
 
+// Get all companies (for admin onboarding)
+app.get('/api/companies', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('companies')
+      .select('id, name, address, gst')
+      .order('name');
+    
+    if (error) throw error;
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Admin-only: Onboard new user
 app.post('/api/admin/onboard-user', async (req, res) => {
-  const { adminMobile, companyId, name, mobile, aadhar, role } = req.body;
+  const { adminMobile, companyId, name, mobile, aadhar, role, companyAccess } = req.body;
   if (!adminMobile || !companyId || !name || !mobile || !aadhar || !role) {
     return res.status(400).json({ error: 'All fields are required' });
   }
@@ -123,6 +137,7 @@ app.post('/api/admin/onboard-user', async (req, res) => {
     const username = `${rolePrefix}-${firstName}`;
     const formattedMobile = formatMobile(mobile);
     
+    // Create user with the primary company
     const { data, error } = await supabase.from('users').insert({
       company_id: companyId,
       name,
@@ -139,6 +154,26 @@ app.post('/api/admin/onboard-user', async (req, res) => {
         return res.status(400).json({ error: 'Mobile number or username already registered' });
       }
       throw error;
+    }
+    
+    // Insert into user_companies junction table
+    // If companyAccess is provided, use it; otherwise just add the primary company
+    const companiesToAdd = companyAccess && companyAccess.length > 0 
+      ? companyAccess 
+      : [{ companyId, role, isPrimary: true }];
+    
+    const userCompanyRecords = companiesToAdd.map((ca, index) => ({
+      user_id: data.id,
+      company_id: ca.companyId,
+      role: ca.role,
+      is_primary: ca.isPrimary || index === 0
+    }));
+    
+    const { error: ucError } = await supabase.from('user_companies').insert(userCompanyRecords);
+    
+    if (ucError) {
+      console.error('Error inserting user_companies:', ucError);
+      // Don't fail the whole operation, user is created
     }
     
     res.json({ 
@@ -234,7 +269,7 @@ app.delete('/api/users/:userId', async (req, res) => {
 
 // Login
 app.post('/api/users/login', async (req, res) => {
-  const { username, otp } = req.body;
+  const { username, otp, companyId } = req.body;
   if (!username) return res.status(400).json({ error: 'Username is required' });
   
   try {
@@ -245,6 +280,73 @@ app.post('/api/users/login', async (req, res) => {
     
     if (error || !user) return res.status(404).json({ error: 'User not found' });
     if (!user.mobile_verified) return res.status(400).json({ error: 'Mobile not verified' });
+    
+    // Get all companies this user has access to
+    const { data: userCompanies, error: ucError } = await supabase
+      .from('user_companies')
+      .select(`
+        company_id,
+        role,
+        is_primary,
+        companies:company_id (id, name, address, gst)
+      `)
+      .eq('user_id', user.id);
+    
+    // Fallback to legacy single company if user_companies table is empty
+    let companies = userCompanies || [];
+    if (companies.length === 0) {
+      // User hasn't been migrated yet, use legacy company_id
+      const { data: legacyCompany } = await supabase.from('companies')
+        .select('*')
+        .eq('id', user.company_id)
+        .single();
+      
+      if (legacyCompany) {
+        companies = [{
+          company_id: legacyCompany.id,
+          role: user.role,
+          is_primary: true,
+          companies: legacyCompany
+        }];
+      }
+    }
+    
+    if (companies.length === 0) {
+      return res.status(400).json({ error: 'User has no company access' });
+    }
+    
+    // If multiple companies and no company selected, return company list for selection
+    if (companies.length > 1 && !companyId) {
+      return res.json({
+        requiresCompanySelection: true,
+        companies: companies.map(uc => ({
+          id: uc.companies.id,
+          name: uc.companies.name,
+          role: uc.role
+        })),
+        userId: user.id,
+        userName: user.name
+      });
+    }
+    
+    // Determine which company to log into
+    let selectedCompany;
+    let selectedRole;
+    
+    if (companyId) {
+      // User selected a specific company
+      const match = companies.find(uc => uc.company_id === companyId);
+      if (!match) {
+        return res.status(403).json({ error: 'User does not have access to this company' });
+      }
+      selectedCompany = match.companies;
+      selectedRole = match.role;
+    } else {
+      // Single company or use primary
+      const primary = companies.find(uc => uc.is_primary) || companies[0];
+      selectedCompany = primary.companies;
+      selectedRole = primary.role;
+    }
     
     // First login requires OTP (bypassed in development if Twilio fails)
     if (!user.last_login) {
@@ -277,12 +379,6 @@ app.post('/api/users/login', async (req, res) => {
       .update({ last_login: new Date().toISOString() })
       .eq('id', user.id);
     
-    // Get company info
-    const { data: company } = await supabase.from('companies')
-      .select('*')
-      .eq('id', user.company_id)
-      .single();
-    
     // Get unread notifications count
     const { count } = await supabase.from('notifications')
       .select('*', { count: 'exact', head: true })
@@ -296,8 +392,86 @@ app.post('/api/users/login', async (req, res) => {
         name: user.name,
         username: user.username,
         mobile: user.mobile,
-        role: user.role,
-        company,
+        role: selectedRole,
+        company: selectedCompany,
+        companies: companies.map(uc => ({
+          id: uc.companies.id,
+          name: uc.companies.name,
+          role: uc.role,
+          isPrimary: uc.is_primary
+        })),
+        unreadNotifications: count || 0
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Switch company (for users with multi-company access)
+app.post('/api/users/:userId/switch-company', async (req, res) => {
+  const { userId } = req.params;
+  const { companyId } = req.body;
+  
+  if (!companyId) {
+    return res.status(400).json({ error: 'Company ID is required' });
+  }
+  
+  try {
+    // Verify user has access to this company
+    const { data: userCompany, error: ucError } = await supabase
+      .from('user_companies')
+      .select(`
+        company_id,
+        role,
+        companies:company_id (id, name, address, gst)
+      `)
+      .eq('user_id', userId)
+      .eq('company_id', companyId)
+      .single();
+    
+    if (ucError || !userCompany) {
+      return res.status(403).json({ error: 'User does not have access to this company' });
+    }
+    
+    // Get user info
+    const { data: user } = await supabase.from('users')
+      .select('id, name, username, mobile')
+      .eq('id', userId)
+      .single();
+    
+    // Get all companies for the user
+    const { data: allCompanies } = await supabase
+      .from('user_companies')
+      .select(`
+        company_id,
+        role,
+        is_primary,
+        companies:company_id (id, name, address, gst)
+      `)
+      .eq('user_id', userId);
+    
+    // Get unread notifications count
+    const { count } = await supabase.from('notifications')
+      .select('*', { count: 'exact', head: true })
+      .eq('user_id', userId)
+      .eq('read', false);
+    
+    res.json({
+      success: true,
+      user: {
+        id: user.id,
+        name: user.name,
+        username: user.username,
+        mobile: user.mobile,
+        role: userCompany.role,
+        company: userCompany.companies,
+        companies: allCompanies.map(uc => ({
+          id: uc.companies.id,
+          name: uc.companies.name,
+          role: uc.role,
+          isPrimary: uc.is_primary
+        })),
         unreadNotifications: count || 0
       }
     });

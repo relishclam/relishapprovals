@@ -83,6 +83,17 @@ CREATE TABLE IF NOT EXISTS notifications (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- User Companies Junction Table (Multi-Company Access)
+CREATE TABLE IF NOT EXISTS user_companies (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    company_id TEXT NOT NULL REFERENCES companies(id),
+    role TEXT NOT NULL CHECK(role IN ('accounts', 'admin')),
+    is_primary BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(user_id, company_id)
+);
+
 -- Insert Companies
 INSERT INTO companies (id, name, address, gst) VALUES 
 ('relish-foods', 'Relish Foods Pvt Ltd', '17/9B, Madhavapuram, Kanyakumari 629704. TN. India', '33AAACR7749E2ZD'),
@@ -98,6 +109,8 @@ ON CONFLICT (company_id) DO NOTHING;
 -- Create indexes for better performance
 CREATE INDEX IF NOT EXISTS idx_users_company ON users(company_id);
 CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
+CREATE INDEX IF NOT EXISTS idx_user_companies_user ON user_companies(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_companies_company ON user_companies(company_id);
 CREATE INDEX IF NOT EXISTS idx_vouchers_company ON vouchers(company_id);
 CREATE INDEX IF NOT EXISTS idx_vouchers_status ON vouchers(status);
 CREATE INDEX IF NOT EXISTS idx_vouchers_prepared_by ON vouchers(prepared_by);
@@ -107,6 +120,7 @@ CREATE INDEX IF NOT EXISTS idx_notifications_read ON notifications(read);
 -- Enable Row Level Security (RLS)
 ALTER TABLE companies ENABLE ROW LEVEL SECURITY;
 ALTER TABLE users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE user_companies ENABLE ROW LEVEL SECURITY;
 ALTER TABLE payees ENABLE ROW LEVEL SECURITY;
 ALTER TABLE voucher_series ENABLE ROW LEVEL SECURITY;
 ALTER TABLE vouchers ENABLE ROW LEVEL SECURITY;
@@ -117,6 +131,7 @@ ALTER TABLE notifications ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "Allow all operations for service role" ON companies FOR ALL USING (true);
 CREATE POLICY "Allow all operations for service role" ON users FOR ALL USING (true);
+CREATE POLICY "Allow all operations for service role" ON user_companies FOR ALL USING (true);
 CREATE POLICY "Allow all operations for service role" ON payees FOR ALL USING (true);
 CREATE POLICY "Allow all operations for service role" ON voucher_series FOR ALL USING (true);
 CREATE POLICY "Allow all operations for service role" ON vouchers FOR ALL USING (true);
