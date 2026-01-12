@@ -386,9 +386,6 @@ app.post('/api/users/login', async (req, res) => {
     }
     
     // Determine which company to log into
-    let selectedCompany;
-    let selectedRole;
-    
     // User must have selected a company at this point
     const match = companies.find(uc => uc.company_id === companyId);
     if (!match) {
