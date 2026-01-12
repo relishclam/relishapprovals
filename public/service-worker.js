@@ -1,5 +1,5 @@
-const CACHE_NAME = 'relish-approvals-v3';
-const DYNAMIC_CACHE = 'relish-approvals-dynamic-v3';
+const CACHE_NAME = 'relish-approvals-v4';
+const DYNAMIC_CACHE = 'relish-approvals-dynamic-v4';
 const urlsToCache = [
   '/',
   '/index.html',
@@ -138,8 +138,8 @@ self.addEventListener('push', (event) => {
   
   const options = {
     body: data.body || 'New voucher awaiting approval',
-    icon: '/icon-192.png',
-    badge: '/icon-72.png',
+    icon: '/android-launchericon-192-192.png',
+    badge: '/android-launchericon-96-96.png',
     vibrate: [200, 100, 200],
     data: {
       url: data.url || '/'
@@ -147,7 +147,10 @@ self.addEventListener('push', (event) => {
     actions: [
       { action: 'view', title: 'View' },
       { action: 'close', title: 'Close' }
-    ]
+    ],
+    requireInteraction: true,
+    tag: 'relish-approval',
+    renotify: true
   };
 
   event.waitUntil(

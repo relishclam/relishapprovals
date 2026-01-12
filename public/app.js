@@ -1855,10 +1855,108 @@ const App = () => {
   const [showNotifications, setShowNotifications] = useState(false);
   const [showMobileMenu, setShowMobileMenu] = useState(false);
   const [toasts, setToasts] = useState([]);
+  const [pushEnabled, setPushEnabled] = useState(false);
+  const lastNotificationCount = React.useRef(0);
+
+  // Notification sound (using Web Audio API for better compatibility)
+  const playNotificationSound = useCallback(() => {
+    try {
+      const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+      
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+      
+      // Pleasant notification chime
+      oscillator.frequency.setValueAtTime(880, audioContext.currentTime); // A5
+      oscillator.frequency.setValueAtTime(1108.73, audioContext.currentTime + 0.1); // C#6
+      oscillator.frequency.setValueAtTime(1318.51, audioContext.currentTime + 0.2); // E6
+      
+      gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.4);
+      
+      oscillator.start(audioContext.currentTime);
+      oscillator.stop(audioContext.currentTime + 0.4);
+    } catch (e) {
+      console.log('Audio not supported:', e);
+    }
+  }, []);
+
+  // Request push notification permission
+  const requestPushPermission = useCallback(async () => {
+    if (!('Notification' in window)) {
+      console.log('This browser does not support notifications');
+      return false;
+    }
+    
+    if (Notification.permission === 'granted') {
+      setPushEnabled(true);
+      return true;
+    }
+    
+    if (Notification.permission !== 'denied') {
+      const permission = await Notification.requestPermission();
+      if (permission === 'granted') {
+        setPushEnabled(true);
+        return true;
+      }
+    }
+    return false;
+  }, []);
+
+  // Show browser notification
+  const showBrowserNotification = useCallback((title, body, url = '/') => {
+    if (Notification.permission === 'granted' && document.hidden) {
+      const notification = new Notification(title, {
+        body,
+        icon: '/android-launchericon-192-192.png',
+        badge: '/android-launchericon-96-96.png',
+        vibrate: [200, 100, 200],
+        tag: 'relish-notification',
+        renotify: true
+      });
+      
+      notification.onclick = () => {
+        window.focus();
+        notification.close();
+      };
+    }
+  }, []);
 
   const addToast = useCallback((message, type = 'info') => { const id = Date.now(); setToasts(prev => [...prev, { id, message, type }]); setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 4000); }, []);
   const refreshVouchers = useCallback(async () => { if (user) { const data = await api.getVouchers(user.company.id); setVouchers(data); } }, [user]);
-  const refreshNotifications = useCallback(async () => { if (user) { const data = await api.getNotifications(user.id); setNotifications(data); } }, [user]);
+  const refreshNotifications = useCallback(async () => { 
+    if (user) { 
+      const data = await api.getNotifications(user.id); 
+      const newUnread = data.filter(n => !n.read).length;
+      
+      // Check if there are new notifications
+      if (newUnread > lastNotificationCount.current && lastNotificationCount.current !== 0) {
+        // Play sound
+        playNotificationSound();
+        
+        // Show browser notification if app is in background
+        const latestUnread = data.find(n => !n.read);
+        if (latestUnread) {
+          showBrowserNotification(latestUnread.title, latestUnread.message);
+        }
+        
+        // Show toast
+        addToast(`${newUnread - lastNotificationCount.current} new notification(s)`, 'info');
+      }
+      
+      lastNotificationCount.current = newUnread;
+      setNotifications(data); 
+    } 
+  }, [user, playNotificationSound, showBrowserNotification, addToast]);
+
+  // Request permission on login
+  useEffect(() => {
+    if (user) {
+      requestPushPermission();
+    }
+  }, [user, requestPushPermission]);
 
   useEffect(() => { if (user) { refreshVouchers(); refreshNotifications(); const interval = setInterval(() => { refreshVouchers(); refreshNotifications(); }, 30000); return () => clearInterval(interval); } }, [user, refreshVouchers, refreshNotifications]);
 
