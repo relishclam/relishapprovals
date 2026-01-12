@@ -2310,4 +2310,9 @@ const App = () => {
   );
 };
 
+// Mark app as loaded successfully
+window.__appLoaded = true;
+const loadingEl = document.getElementById('app-loading');
+if (loadingEl) loadingEl.style.display = 'none';
+
 ReactDOM.createRoot(document.getElementById('root')).render(<App />);
