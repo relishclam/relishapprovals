@@ -315,8 +315,8 @@ app.post('/api/users/login', async (req, res) => {
       return res.status(400).json({ error: 'User has no company access' });
     }
     
-    // If multiple companies and no company selected, return company list for selection
-    if (companies.length > 1 && !companyId) {
+    // Always require company selection if no company selected yet
+    if (!companyId) {
       return res.json({
         requiresCompanySelection: true,
         companies: companies.map(uc => ({
@@ -333,20 +333,13 @@ app.post('/api/users/login', async (req, res) => {
     let selectedCompany;
     let selectedRole;
     
-    if (companyId) {
-      // User selected a specific company
-      const match = companies.find(uc => uc.company_id === companyId);
-      if (!match) {
-        return res.status(403).json({ error: 'User does not have access to this company' });
-      }
-      selectedCompany = match.companies;
-      selectedRole = match.role;
-    } else {
-      // Single company or use primary
-      const primary = companies.find(uc => uc.is_primary) || companies[0];
-      selectedCompany = primary.companies;
-      selectedRole = primary.role;
+    // User must have selected a company at this point
+    const match = companies.find(uc => uc.company_id === companyId);
+    if (!match) {
+      return res.status(403).json({ error: 'User does not have access to this company' });
     }
+    const selectedCompany = match.companies;
+    const selectedRole = match.role;
     
     // First login requires OTP (bypassed in development if Twilio fails)
     if (!user.last_login) {
