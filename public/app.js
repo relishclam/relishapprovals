@@ -55,6 +55,7 @@ const api = {
   rejectVoucher: (voucherId, rejectedBy, reason) => fetch(`${API_BASE}/vouchers/${voucherId}/reject`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rejectedBy, reason }) }).then(r => r.json()),
   completeVoucher: (voucherId, otp) => fetch(`${API_BASE}/vouchers/${voucherId}/complete`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ otp }) }).then(r => r.json()),
   resendPayeeOtp: (voucherId) => fetch(`${API_BASE}/vouchers/${voucherId}/resend-otp`, { method: 'POST' }).then(r => r.json()),
+  deleteVoucher: (voucherId) => fetch(`${API_BASE}/vouchers/${voucherId}`, { method: 'DELETE' }).then(r => r.json()),
   getNotifications: (userId) => fetch(`${API_BASE}/users/${userId}/notifications`).then(r => r.json()),
   markAllNotificationsRead: (userId) => fetch(`${API_BASE}/users/${userId}/notifications/read-all`, { method: 'POST' }).then(r => r.json()),
   getHeadsOfAccount: () => fetch(`${API_BASE}/heads-of-account`).then(r => r.json()),
@@ -489,6 +490,7 @@ const VoucherList = ({ filter }) => {
   const [payeeOtp, setPayeeOtp] = useState('');
   const [rejectReason, setRejectReason] = useState('');
   const [showRejectModal, setShowRejectModal] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [showPrintModal, setShowPrintModal] = useState(false);
   const [printDateFrom, setPrintDateFrom] = useState('');
   const [printDateTo, setPrintDateTo] = useState('');
@@ -679,6 +681,7 @@ const VoucherList = ({ filter }) => {
   const handleReject = async () => { setLoading(true); try { await api.rejectVoucher(selectedVoucher.id, user.id, rejectReason); addToast('Voucher rejected', 'info'); refreshVouchers(); setShowRejectModal(false); setShowModal(false); } catch { addToast('Failed', 'error'); } setLoading(false); };
   const handleComplete = async () => { if (payeeOtp.length < 6) { addToast('Enter complete OTP', 'error'); return; } setLoading(true); try { const result = await api.completeVoucher(selectedVoucher.id, payeeOtp); if (result.success) { addToast('Voucher completed!', 'success'); refreshVouchers(); setShowModal(false); setPayeeOtp(''); } else addToast(result.error, 'error'); } catch { addToast('Failed', 'error'); } setLoading(false); };
   const handleResend = async () => { try { await api.resendPayeeOtp(selectedVoucher.id); addToast('OTP resent', 'success'); } catch { addToast('Failed', 'error'); } };
+  const handleDelete = async () => { setLoading(true); try { const result = await api.deleteVoucher(selectedVoucher.id); if (result.success) { addToast('Voucher deleted', 'success'); refreshVouchers(); setShowDeleteModal(false); setShowModal(false); } else addToast(result.error || 'Failed to delete', 'error'); } catch { addToast('Failed to delete voucher', 'error'); } setLoading(false); };
   const titles = { all: 'All Vouchers', pending: 'Pending Approval', approved: 'Approved / Awaiting OTP', completed: 'Completed Vouchers' };
 
   return (
@@ -706,6 +709,11 @@ const VoucherList = ({ filter }) => {
           <div className="modal-header">
             <h3 className="modal-title">Voucher Details</h3>
             <div style={{display: 'flex', gap: '0.5rem', alignItems: 'center'}}>
+              {user.role === 'admin' && (
+                <button className="btn btn-sm btn-danger" onClick={() => setShowDeleteModal(true)}>
+                  🗑️ Delete
+                </button>
+              )}
               <button className="btn btn-sm btn-secondary" onClick={() => handlePrintSingle(selectedVoucher)}>
                 {Icons.printer} Print
               </button>
@@ -714,7 +722,7 @@ const VoucherList = ({ filter }) => {
           </div>
           <div className="modal-body">
             <VoucherPreview voucher={selectedVoucher} />
-            {selectedVoucher.status === 'awaiting_payee_otp' && selectedVoucher.prepared_by === user.id && (
+            {selectedVoucher.status === 'awaiting_payee_otp' && (selectedVoucher.prepared_by === user.id || user.role === 'admin') && (
               <div className="otp-section">
                 {Icons.smartphone}<p style={{fontWeight:500,margin:'0.5rem 0'}}>Enter Payee OTP</p><p style={{fontSize:'0.85rem',color:'#666',marginBottom:'1rem'}}>OTP sent to payee: {selectedVoucher.payee_mobile?.replace(/\d(?=\d{4})/g, '*')}</p>
                 <OTPInput value={payeeOtp} onChange={setPayeeOtp} />
@@ -732,6 +740,22 @@ const VoucherList = ({ filter }) => {
           <div className="modal-header"><h3 className="modal-title">Reject Voucher</h3><button className="modal-close" onClick={() => setShowRejectModal(false)}>×</button></div>
           <div className="modal-body"><div className="form-group"><label className="form-label">Reason for Rejection</label><textarea className="form-input" rows={3} placeholder="Enter reason..." value={rejectReason} onChange={(e) => setRejectReason(e.target.value)} /></div></div>
           <div className="modal-footer"><button className="btn btn-secondary" onClick={() => setShowRejectModal(false)}>Cancel</button><button className="btn btn-danger" onClick={handleReject} disabled={loading}>{loading && Icons.loader}Confirm Rejection</button></div>
+        </div></div>
+      )}
+      {showDeleteModal && selectedVoucher && (
+        <div className="modal-overlay" onClick={() => setShowDeleteModal(false)}><div className="modal" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-header"><h3 className="modal-title">🗑️ Delete Voucher</h3><button className="modal-close" onClick={() => setShowDeleteModal(false)}>×</button></div>
+          <div className="modal-body">
+            <p style={{marginBottom: '1rem', color: '#dc2626', fontWeight: 500}}>⚠️ This action cannot be undone!</p>
+            <p>Are you sure you want to delete voucher <strong>{selectedVoucher.serial_number}</strong>?</p>
+            <div style={{background: '#fef2f2', padding: '1rem', borderRadius: '8px', marginTop: '1rem', fontSize: '0.9rem'}}>
+              <strong>Voucher Details:</strong><br/>
+              Payee: {selectedVoucher.payee_name}<br/>
+              Amount: ₹{selectedVoucher.amount?.toLocaleString('en-IN')}<br/>
+              Status: {selectedVoucher.status?.replace(/_/g, ' ')}
+            </div>
+          </div>
+          <div className="modal-footer"><button className="btn btn-secondary" onClick={() => setShowDeleteModal(false)}>Cancel</button><button className="btn btn-danger" onClick={handleDelete} disabled={loading}>{loading && Icons.loader}Delete Voucher</button></div>
         </div></div>
       )}
       {showPrintModal && (
@@ -1716,6 +1740,7 @@ const PayeesManagement = () => {
   const [newPayee, setNewPayee] = useState({ name: '', alias: '', mobile: '', bankAccount: '', ifsc: '', upiId: '' });
   const [editPayee, setEditPayee] = useState({ id: '', name: '', alias: '', mobile: '', bankAccount: '', ifsc: '', upiId: '' });
   const [importData, setImportData] = useState('');
+  const [importMethod, setImportMethod] = useState('excel'); // 'paste' or 'excel'
 
   const refreshPayees = () => {
     api.getPayees(user.company.id).then(setPayees).finally(() => setLoading(false));
@@ -1809,6 +1834,52 @@ const PayeesManagement = () => {
       refreshPayees();
     } catch (error) {
       addToast('Import failed: ' + error.message, 'error');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleExcelImport = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    
+    setSubmitting(true);
+    try {
+      // Use SheetJS (XLSX) library loaded from CDN
+      const data = await file.arrayBuffer();
+      const workbook = XLSX.read(data, { type: 'array' });
+      const sheetName = workbook.SheetNames[0];
+      const worksheet = workbook.Sheets[sheetName];
+      const jsonData = XLSX.utils.sheet_to_json(worksheet);
+      
+      const imported = [];
+      for (const row of jsonData) {
+        // Map common column names to our fields
+        const payee = {
+          companyId: user.company.id,
+          name: row['Name'] || row['name'] || row['Payee Name'] || row['payee_name'] || row['PAYEE NAME'] || '',
+          alias: row['Alias'] || row['alias'] || row['Short Name'] || '',
+          mobile: String(row['Mobile'] || row['mobile'] || row['Phone'] || row['phone'] || row['Mobile Number'] || row['MOBILE'] || ''),
+          bankAccount: row['Bank Account'] || row['bank_account'] || row['Account Number'] || row['Account No'] || row['ACCOUNT NO'] || '',
+          ifsc: row['IFSC'] || row['ifsc'] || row['IFSC Code'] || row['ifsc_code'] || '',
+          upiId: row['UPI'] || row['upi'] || row['UPI ID'] || row['upi_id'] || row['VPA'] || ''
+        };
+        
+        if (payee.name && payee.mobile) {
+          await api.createPayee(payee);
+          imported.push(payee.name);
+        }
+      }
+      
+      if (imported.length === 0) {
+        addToast('No valid payees found. Ensure Name and Mobile columns are present.', 'error');
+      } else {
+        addToast(`Imported ${imported.length} payees from Excel`, 'success');
+        setShowImportModal(false);
+        refreshPayees();
+      }
+    } catch (error) {
+      addToast('Failed to parse Excel file: ' + error.message, 'error');
     } finally {
       setSubmitting(false);
     }
@@ -1957,27 +2028,37 @@ const PayeesManagement = () => {
         <div className="modal-overlay" onClick={() => setShowImportModal(false)}>
           <div className="modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
-              <h3 className="modal-title">📥 Import Payees (CSV)</h3>
+              <h3 className="modal-title">📥 Import Payees</h3>
               <button className="modal-close" onClick={() => setShowImportModal(false)}>×</button>
             </div>
             <div className="modal-body">
-              <p style={{marginBottom: '1rem', color: 'var(--text-secondary)'}}>
-                Paste CSV data below. Format: <code>name,mobile,alias,bank_account,ifsc,upi_id</code>
-              </p>
-              <div className="form-group">
-                <textarea 
-                  className="form-input" 
-                  rows="10" 
-                  value={importData} 
-                  onChange={e => setImportData(e.target.value)}
-                  placeholder="name,mobile,alias,bank_account,ifsc,upi_id&#10;ABC Suppliers,9876543210,ABC,123456789,SBIN0001234,abc@upi&#10;XYZ Vendors,8765432109,XYZ,987654321,HDFC0005678,xyz@paytm"
-                  style={{fontFamily: 'monospace', fontSize: '0.875rem'}}
-                />
+              <div style={{display: 'flex', gap: '1rem', marginBottom: '1rem'}}>
+                <button className={`btn ${importMethod === 'excel' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setImportMethod('excel')} style={{flex: 1}}>📊 Import from Excel</button>
+                <button className={`btn ${importMethod === 'paste' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setImportMethod('paste')} style={{flex: 1}}>📋 Paste CSV</button>
               </div>
+              {importMethod === 'excel' ? (
+                <div>
+                  <p style={{marginBottom: '1rem', color: 'var(--text-secondary)'}}>Upload an Excel file (.xlsx, .xls) with payee details</p>
+                  <div className="form-group">
+                    <input type="file" accept=".xlsx,.xls,.csv" className="form-input" onChange={handleExcelImport} style={{padding: '0.75rem'}} />
+                  </div>
+                  <div style={{background: '#f8f9fa', padding: '1rem', borderRadius: '8px', marginTop: '1rem', fontSize: '0.85rem'}}>
+                    <strong>📋 Required Columns:</strong> Name, Mobile<br/>
+                    <strong>Optional:</strong> Alias, Bank Account, IFSC, UPI ID
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  <p style={{marginBottom: '1rem', color: 'var(--text-secondary)'}}>Paste CSV data below. Format: <code>name,mobile,alias,bank_account,ifsc,upi_id</code></p>
+                  <div className="form-group">
+                    <textarea className="form-input" rows="10" value={importData} onChange={e => setImportData(e.target.value)} placeholder="name,mobile,alias,bank_account,ifsc,upi_id&#10;ABC Suppliers,9876543210,ABC,123456789,SBIN0001234,abc@upi" style={{fontFamily: 'monospace', fontSize: '0.875rem'}} />
+                  </div>
+                </div>
+              )}
             </div>
             <div className="modal-footer">
               <button className="btn btn-secondary" onClick={() => setShowImportModal(false)}>Cancel</button>
-              <button className="btn btn-primary" onClick={handleImport} disabled={submitting}>{submitting ? 'Importing...' : 'Import'}</button>
+              {importMethod === 'paste' && <button className="btn btn-primary" onClick={handleImport} disabled={submitting}>{submitting ? 'Importing...' : 'Import'}</button>}
             </div>
           </div>
         </div>
@@ -1996,6 +2077,8 @@ const AccountsManagement = () => {
   const [submitting, setSubmitting] = useState(false);
   const [newAccount, setNewAccount] = useState('');
   const [importData, setImportData] = useState('');
+  const [importFile, setImportFile] = useState(null);
+  const [importMethod, setImportMethod] = useState('paste'); // 'paste' or 'excel'
 
   // Predefined accounts list
   const defaultAccounts = [
@@ -2073,6 +2156,40 @@ const AccountsManagement = () => {
     setShowImportModal(false);
   };
 
+  const handleExcelImport = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    
+    setSubmitting(true);
+    try {
+      // Use SheetJS (XLSX) library loaded from CDN
+      const data = await file.arrayBuffer();
+      const workbook = XLSX.read(data, { type: 'array' });
+      const sheetName = workbook.SheetNames[0];
+      const worksheet = workbook.Sheets[sheetName];
+      const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+      
+      // Extract account names from first column, skip header if present
+      const startRow = jsonData[0] && (jsonData[0][0]?.toString().toLowerCase().includes('account') || jsonData[0][0]?.toString().toLowerCase().includes('head')) ? 1 : 0;
+      const importedAccounts = jsonData.slice(startRow).map(row => row[0]?.toString().trim()).filter(name => name && name.length > 0);
+      
+      if (importedAccounts.length === 0) {
+        addToast('No accounts found in Excel file. Ensure account names are in the first column.', 'error');
+        return;
+      }
+      
+      const newAccounts = [...new Set([...accounts, ...importedAccounts])].sort();
+      saveAccounts(newAccounts);
+      addToast(`Imported ${importedAccounts.length} accounts from Excel`, 'success');
+      setShowImportModal(false);
+      setImportFile(null);
+    } catch (error) {
+      addToast('Failed to parse Excel file: ' + error.message, 'error');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   return (
     <div className="page-container">
       <div className="page-header">
@@ -2135,22 +2252,69 @@ const AccountsManagement = () => {
               <button className="modal-close" onClick={() => setShowImportModal(false)}>×</button>
             </div>
             <div className="modal-body">
-              <p style={{marginBottom: '1rem', color: 'var(--text-secondary)'}}>
-                Paste account names below (one per line)
-              </p>
-              <div className="form-group">
-                <textarea 
-                  className="form-input" 
-                  rows="10" 
-                  value={importData} 
-                  onChange={e => setImportData(e.target.value)}
-                  placeholder="Employee Benefits&#10;Legal Fees&#10;Training & Development&#10;Software Licenses"
-                />
+              <div style={{display: 'flex', gap: '1rem', marginBottom: '1rem'}}>
+                <button 
+                  className={`btn ${importMethod === 'excel' ? 'btn-primary' : 'btn-secondary'}`} 
+                  onClick={() => setImportMethod('excel')}
+                  style={{flex: 1}}
+                >
+                  📊 Import from Excel
+                </button>
+                <button 
+                  className={`btn ${importMethod === 'paste' ? 'btn-primary' : 'btn-secondary'}`} 
+                  onClick={() => setImportMethod('paste')}
+                  style={{flex: 1}}
+                >
+                  📋 Paste Text
+                </button>
               </div>
+              
+              {importMethod === 'excel' ? (
+                <div>
+                  <p style={{marginBottom: '1rem', color: 'var(--text-secondary)'}}>
+                    Upload an Excel file (.xlsx, .xls) with account names in the first column
+                  </p>
+                  <div className="form-group">
+                    <input 
+                      type="file" 
+                      accept=".xlsx,.xls,.csv" 
+                      className="form-input" 
+                      onChange={handleExcelImport}
+                      style={{padding: '0.75rem'}}
+                    />
+                  </div>
+                  <div style={{background: '#f8f9fa', padding: '1rem', borderRadius: '8px', marginTop: '1rem'}}>
+                    <strong>📋 Expected Format:</strong>
+                    <table style={{width: '100%', marginTop: '0.5rem', fontSize: '0.85rem'}}>
+                      <thead><tr><th style={{textAlign: 'left', padding: '0.25rem'}}>Head of Account</th></tr></thead>
+                      <tbody>
+                        <tr><td style={{padding: '0.25rem'}}>Salaries & Wages</td></tr>
+                        <tr><td style={{padding: '0.25rem'}}>Office Supplies</td></tr>
+                        <tr><td style={{padding: '0.25rem'}}>Transportation</td></tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  <p style={{marginBottom: '1rem', color: 'var(--text-secondary)'}}>
+                    Paste account names below (one per line)
+                  </p>
+                  <div className="form-group">
+                    <textarea 
+                      className="form-input" 
+                      rows="10" 
+                      value={importData} 
+                      onChange={e => setImportData(e.target.value)}
+                      placeholder="Employee Benefits&#10;Legal Fees&#10;Training & Development&#10;Software Licenses"
+                    />
+                  </div>
+                </div>
+              )}
             </div>
             <div className="modal-footer">
               <button className="btn btn-secondary" onClick={() => setShowImportModal(false)}>Cancel</button>
-              <button className="btn btn-primary" onClick={handleImport}>Import</button>
+              {importMethod === 'paste' && <button className="btn btn-primary" onClick={handleImport} disabled={submitting}>{submitting ? 'Importing...' : 'Import'}</button>}
             </div>
           </div>
         </div>

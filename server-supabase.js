@@ -329,12 +329,18 @@ app.post('/api/users/login', async (req, res) => {
   if (!username) return res.status(400).json({ error: 'Username is required' });
   
   try {
+    // Case-insensitive username search - trim whitespace
+    const cleanUsername = username.trim();
     const { data: user, error } = await supabase.from('users')
       .select('*')
-      .eq('username', username)
+      .ilike('username', cleanUsername)
       .single();
     
-    if (error || !user) return res.status(404).json({ error: 'User not found' });
+    if (error) {
+      console.error('Login query error:', error.message, 'for username:', cleanUsername);
+      return res.status(404).json({ error: 'User not found' });
+    }
+    if (!user) return res.status(404).json({ error: 'User not found' });
     if (!user.mobile_verified) return res.status(400).json({ error: 'Mobile not verified' });
     
     // Get all companies this user has access to
@@ -904,6 +910,27 @@ app.post('/api/vouchers/:voucherId/resend-otp', async (req, res) => {
       .verifications.create({ to: voucher.payee.mobile, channel: 'sms' });
     
     res.json({ success: true, message: 'OTP resent to payee' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Delete voucher (Admin only)
+app.delete('/api/vouchers/:voucherId', async (req, res) => {
+  try {
+    // First delete any notifications related to this voucher
+    await supabase.from('notifications')
+      .delete()
+      .eq('voucher_id', req.params.voucherId);
+    
+    // Then delete the voucher
+    const { error } = await supabase.from('vouchers')
+      .delete()
+      .eq('id', req.params.voucherId);
+    
+    if (error) throw error;
+    
+    res.json({ success: true, message: 'Voucher deleted successfully' });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
