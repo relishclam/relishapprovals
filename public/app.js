@@ -829,7 +829,7 @@ const UsersManagement = () => {
     }
   };
   
-  const handleVerifyOtp = async () => {
+  const handleVerifyExistingUserOtp = async () => {
     if (verifyOtp.length !== 6) {
       addToast('Please enter 6-digit OTP', 'error');
       return;
@@ -1377,7 +1377,7 @@ const UsersManagement = () => {
               <button className="btn btn-secondary" onClick={() => setShowVerifyModal(false)}>Cancel</button>
               <button 
                 className="btn btn-success" 
-                onClick={handleVerifyOtp} 
+                onClick={handleVerifyExistingUserOtp} 
                 disabled={submitting || verifyOtp.length !== 6}
               >
                 {submitting && Icons.loader}
