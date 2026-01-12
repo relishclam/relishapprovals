@@ -1,10 +1,14 @@
-const CACHE_NAME = 'relish-approvals-v1';
+const CACHE_NAME = 'relish-approvals-v3';
+const DYNAMIC_CACHE = 'relish-approvals-dynamic-v3';
 const urlsToCache = [
   '/',
   '/index.html',
   '/styles.css',
   '/app.js',
   '/logo.png',
+  '/manifest.json',
+  '/android-launchericon-192-192.png',
+  '/android-launchericon-512-512.png',
   'https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Space+Mono:wght@400;700&display=swap',
   'https://unpkg.com/react@18/umd/react.production.min.js',
   'https://unpkg.com/react-dom@18/umd/react-dom.production.min.js',
@@ -27,11 +31,12 @@ self.addEventListener('install', (event) => {
 // Activate event - clean up old caches
 self.addEventListener('activate', (event) => {
   console.log('[Service Worker] Activating...');
+  const cacheWhitelist = [CACHE_NAME, DYNAMIC_CACHE];
   event.waitUntil(
     caches.keys().then((cacheNames) => {
       return Promise.all(
         cacheNames.map((cacheName) => {
-          if (cacheName !== CACHE_NAME) {
+          if (!cacheWhitelist.includes(cacheName)) {
             console.log('[Service Worker] Deleting old cache:', cacheName);
             return caches.delete(cacheName);
           }
@@ -49,6 +54,30 @@ self.addEventListener('fetch', (event) => {
   // Skip chrome-extension and other non-http(s) requests
   if (!event.request.url.startsWith('http')) return;
 
+  // API calls: Network-first strategy (always fetch fresh data)
+  if (event.request.url.includes('/api/')) {
+    event.respondWith(
+      fetch(event.request)
+        .then((response) => {
+          // Clone and cache the fresh response for offline use
+          if (response && response.status === 200) {
+            const responseToCache = response.clone();
+            caches.open(DYNAMIC_CACHE).then((cache) => {
+              cache.put(event.request, responseToCache);
+            });
+          }
+          return response;
+        })
+        .catch(() => {
+          // Network failed, try to serve from cache
+          console.log('[Service Worker] Network failed, serving API from cache:', event.request.url);
+          return caches.match(event.request);
+        })
+    );
+    return;
+  }
+
+  // Static assets: Cache-first strategy
   event.respondWith(
     caches.match(event.request)
       .then((response) => {
@@ -65,16 +94,6 @@ self.addEventListener('fetch', (event) => {
           // Check if valid response
           if (!response || response.status !== 200 || response.type === 'error') {
             return response;
-          }
-
-          // Clone the response
-          const responseToCache = response.clone();
-
-          // Cache dynamic content (API calls)
-          if (event.request.url.includes('/api/')) {
-            caches.open(CACHE_NAME + '-dynamic').then((cache) => {
-              cache.put(event.request, responseToCache);
-            });
           }
 
           return response;
