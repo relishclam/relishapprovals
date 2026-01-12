@@ -37,7 +37,9 @@ const formatMobile = (mobile) => mobile.startsWith('+') ? mobile : `+91${mobile.
 // Get all companies
 app.get('/api/companies', async (req, res) => {
   try {
-    const { data, error } = await supabase.from('companies').select('*');
+    const { data, error } = await supabase.from('companies')
+      .select('id, name, address, gst')
+      .order('name');
     if (error) throw error;
     res.json(data);
   } catch (error) {
@@ -98,20 +100,6 @@ app.post('/api/otp/verify', async (req, res) => {
 
 // DISABLED: Self-registration not allowed
 // Only admins can onboard users via /api/admin/onboard-user
-
-// Get all companies (for admin onboarding)
-app.get('/api/companies', async (req, res) => {
-  try {
-    const { data, error } = await supabase.from('companies')
-      .select('id, name, address, gst')
-      .order('name');
-    
-    if (error) throw error;
-    res.json(data);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
 
 // Admin-only: Onboard new user
 app.post('/api/admin/onboard-user', async (req, res) => {
@@ -238,6 +226,74 @@ app.put('/api/users/:userId', async (req, res) => {
     res.json({ success: true, user: data });
   } catch (error) {
     res.status(500).json({ error: 'Failed to update user', details: error.message });
+  }
+});
+
+// Get user's company access
+app.get('/api/users/:userId/companies', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('user_companies')
+      .select(`
+        company_id,
+        role,
+        is_primary,
+        companies:company_id (id, name)
+      `)
+      .eq('user_id', req.params.userId);
+    
+    if (error) throw error;
+    
+    res.json(data.map(uc => ({
+      companyId: uc.company_id,
+      companyName: uc.companies.name,
+      role: uc.role,
+      isPrimary: uc.is_primary
+    })));
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Update user's company access
+app.put('/api/users/:userId/companies', async (req, res) => {
+  const { companyAccess } = req.body;
+  
+  if (!companyAccess || !Array.isArray(companyAccess) || companyAccess.length === 0) {
+    return res.status(400).json({ error: 'At least one company access is required' });
+  }
+  
+  try {
+    // Delete existing company access
+    await supabase
+      .from('user_companies')
+      .delete()
+      .eq('user_id', req.params.userId);
+    
+    // Insert new company access
+    const records = companyAccess.map((ca, index) => ({
+      user_id: req.params.userId,
+      company_id: ca.companyId,
+      role: ca.role,
+      is_primary: ca.isPrimary || index === 0
+    }));
+    
+    const { error } = await supabase
+      .from('user_companies')
+      .insert(records);
+    
+    if (error) throw error;
+    
+    // Also update the primary company_id and role in users table for backward compatibility
+    const primary = companyAccess.find(ca => ca.isPrimary) || companyAccess[0];
+    await supabase
+      .from('users')
+      .update({ company_id: primary.companyId, role: primary.role })
+      .eq('id', req.params.userId);
+    
+    res.json({ success: true, message: 'Company access updated' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
   }
 });
 

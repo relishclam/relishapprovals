@@ -38,6 +38,8 @@ const api = {
   getCompanyUsers: (companyId) => fetch(`${API_BASE}/companies/${companyId}/users`).then(r => r.json()),
   onboardUser: (data) => fetch(`${API_BASE}/admin/onboard-user`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
   updateUser: (userId, data) => fetch(`${API_BASE}/users/${userId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
+  getUserCompanies: (userId) => fetch(`${API_BASE}/users/${userId}/companies`).then(r => r.json()),
+  updateUserCompanies: (userId, companyAccess) => fetch(`${API_BASE}/users/${userId}/companies`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ companyAccess }) }).then(r => r.json()),
   deleteUser: (userId) => fetch(`${API_BASE}/users/${userId}`, { method: 'DELETE' }).then(r => r.json()),
   sendOtp: (mobile, purpose) => fetch(`${API_BASE}/otp/send`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mobile, purpose }) }).then(r => r.json()),
   verifyOtp: (mobile, code) => fetch(`${API_BASE}/otp/verify`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mobile, code }) }).then(r => r.json()),
@@ -777,7 +779,8 @@ const UsersManagement = () => {
   const [selectedUser, setSelectedUser] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [newUser, setNewUser] = useState({ name: '', mobile: '', aadhar: '', role: 'accounts', companyAccess: [] });
-  const [editUser, setEditUser] = useState({ name: '', mobile: '', aadhar: '', role: 'accounts' });
+  const [editUser, setEditUser] = useState({ name: '', mobile: '', aadhar: '', role: 'accounts', companyAccess: [] });
+  const [loadingCompanyAccess, setLoadingCompanyAccess] = useState(false);
   const [onboardStep, setOnboardStep] = useState(1); // 1=form, 2=otp, 3=success
   const [otp, setOtp] = useState('');
   const [verifyOtp, setVerifyOtp] = useState('');
@@ -1025,15 +1028,42 @@ const UsersManagement = () => {
     }
   };
   
-  const handleEditUser = (userToEdit) => {
+  const handleEditUser = async (userToEdit) => {
     setSelectedUser(userToEdit);
     setEditUser({ 
       name: userToEdit.name, 
       mobile: userToEdit.mobile, 
       aadhar: userToEdit.aadhar, 
-      role: userToEdit.role 
+      role: userToEdit.role,
+      companyAccess: []
     });
     setShowEditModal(true);
+    
+    // Load user's current company access
+    setLoadingCompanyAccess(true);
+    try {
+      const companyAccess = await api.getUserCompanies(userToEdit.id);
+      setEditUser(prev => ({ 
+        ...prev, 
+        companyAccess: companyAccess.map(ca => ({
+          companyId: ca.companyId,
+          role: ca.role,
+          isPrimary: ca.isPrimary
+        }))
+      }));
+    } catch (err) {
+      console.error('Failed to load company access:', err);
+      // Fallback to current company
+      setEditUser(prev => ({ 
+        ...prev, 
+        companyAccess: [{
+          companyId: user.company.id,
+          role: userToEdit.role,
+          isPrimary: true
+        }]
+      }));
+    }
+    setLoadingCompanyAccess(false);
   };
   
   const handleUpdateUser = async () => {
@@ -1042,11 +1072,29 @@ const UsersManagement = () => {
       return;
     }
     
+    if (!editUser.companyAccess || editUser.companyAccess.length === 0) {
+      addToast('At least one company access is required', 'error');
+      return;
+    }
+    
     setSubmitting(true);
     try {
-      const result = await api.updateUser(selectedUser.id, editUser);
+      // Update user basic info
+      const result = await api.updateUser(selectedUser.id, {
+        name: editUser.name,
+        mobile: editUser.mobile,
+        aadhar: editUser.aadhar,
+        role: editUser.companyAccess.find(ca => ca.isPrimary)?.role || editUser.companyAccess[0].role
+      });
+      
       if (result.success) {
-        addToast('User updated successfully', 'success');
+        // Update company access
+        const companyResult = await api.updateUserCompanies(selectedUser.id, editUser.companyAccess);
+        if (companyResult.success) {
+          addToast('User and company access updated successfully', 'success');
+        } else {
+          addToast('User updated but company access failed', 'warning');
+        }
         setShowEditModal(false);
         refreshUsers();
       } else {
@@ -1400,15 +1448,101 @@ const UsersManagement = () => {
               </div>
               
               <div className="form-group">
-                <label className="form-label">Role *</label>
-                <select 
-                  className="form-select" 
-                  value={editUser.role} 
-                  onChange={(e) => setEditUser({ ...editUser, role: e.target.value })}
-                >
-                  <option value="accounts">👤 Accounts (Can create vouchers)</option>
-                  <option value="admin">🛡 Admin (Can approve vouchers)</option>
-                </select>
+                <label className="form-label">🏢 Company Access *</label>
+                {loadingCompanyAccess ? (
+                  <div style={{ padding: '12px', textAlign: 'center', color: '#666' }}>{Icons.loader} Loading...</div>
+                ) : (
+                  <div style={{ border: '1px solid #e5e7eb', borderRadius: '8px', overflow: 'hidden' }}>
+                    {allCompanies.map(company => {
+                      const access = editUser.companyAccess?.find(ca => ca.companyId === company.id);
+                      const isEnabled = !!access;
+                      
+                      return (
+                        <div key={company.id} style={{
+                          padding: '12px 16px',
+                          borderBottom: '1px solid #e5e7eb',
+                          background: isEnabled ? '#f0f9ff' : '#fff'
+                        }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                            <input
+                              type="checkbox"
+                              checked={isEnabled}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  // Add company access
+                                  setEditUser(prev => ({
+                                    ...prev,
+                                    companyAccess: [...(prev.companyAccess || []), {
+                                      companyId: company.id,
+                                      role: 'accounts',
+                                      isPrimary: prev.companyAccess?.length === 0
+                                    }]
+                                  }));
+                                } else {
+                                  // Remove company access (but keep at least one)
+                                  if (editUser.companyAccess?.length <= 1) {
+                                    addToast('At least one company is required', 'error');
+                                    return;
+                                  }
+                                  const newAccess = editUser.companyAccess.filter(ca => ca.companyId !== company.id);
+                                  // If removed was primary, make first one primary
+                                  if (access?.isPrimary && newAccess.length > 0) {
+                                    newAccess[0].isPrimary = true;
+                                  }
+                                  setEditUser(prev => ({ ...prev, companyAccess: newAccess }));
+                                }
+                              }}
+                              style={{ width: '18px', height: '18px' }}
+                            />
+                            <div style={{ flex: 1 }}>
+                              <div style={{ fontWeight: 500 }}>{company.name}</div>
+                              {isEnabled && (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '8px' }}>
+                                  <select
+                                    className="form-select"
+                                    style={{ fontSize: '13px', padding: '4px 8px', width: 'auto' }}
+                                    value={access.role}
+                                    onChange={(e) => {
+                                      setEditUser(prev => ({
+                                        ...prev,
+                                        companyAccess: prev.companyAccess.map(ca => 
+                                          ca.companyId === company.id ? { ...ca, role: e.target.value } : ca
+                                        )
+                                      }));
+                                    }}
+                                  >
+                                    <option value="accounts">👤 Accounts</option>
+                                    <option value="admin">🛡 Admin</option>
+                                  </select>
+                                  <label style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px', color: '#666' }}>
+                                    <input
+                                      type="radio"
+                                      name="primaryCompanyEdit"
+                                      checked={access.isPrimary}
+                                      onChange={() => {
+                                        setEditUser(prev => ({
+                                          ...prev,
+                                          companyAccess: prev.companyAccess.map(ca => ({
+                                            ...ca,
+                                            isPrimary: ca.companyId === company.id
+                                          }))
+                                        }));
+                                      }}
+                                    />
+                                    Primary
+                                  </label>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+                <div style={{ fontSize: '12px', color: '#666', marginTop: '6px' }}>
+                  Select which companies this user can access and their role in each
+                </div>
               </div>
             </div>
             <div className="modal-footer">
@@ -1416,7 +1550,7 @@ const UsersManagement = () => {
               <button 
                 className="btn btn-primary" 
                 onClick={handleUpdateUser} 
-                disabled={submitting}
+                disabled={submitting || loadingCompanyAccess || !editUser.companyAccess?.length}
               >
                 {submitting && Icons.loader}
                 {Icons.check} Update User
