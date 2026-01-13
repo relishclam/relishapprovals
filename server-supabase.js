@@ -1148,16 +1148,120 @@ app.post('/api/users/:userId/notifications/read-all', async (req, res) => {
   }
 });
 
-// Heads of Account
-app.get('/api/heads-of-account', (req, res) => {
-  res.json([
-    'Salaries & Wages', 'Rent', 'Utilities - Electricity', 'Utilities - Water',
-    'Raw Materials', 'Packaging Materials', 'Transportation & Freight',
-    'Maintenance & Repairs', 'Professional Fees', 'Marketing & Advertising',
-    'Office Supplies', 'Insurance', 'Taxes & Duties', 'Bank Charges',
-    'Interest Expenses', 'Miscellaneous Expenses', 'Capital Expenditure',
-    'Vendor Payments', 'Contractor Payments'
-  ]);
+// ============ HEADS OF ACCOUNT ============
+
+// Get heads of account for a company
+app.get('/api/heads-of-account', async (req, res) => {
+  try {
+    const companyId = req.query.companyId;
+    if (!companyId) {
+      return res.status(400).json({ error: 'Company ID is required' });
+    }
+
+    const { data, error } = await supabase.from('heads_of_account')
+      .select('id, name')
+      .eq('company_id', companyId)
+      .order('name');
+    
+    if (error) throw error;
+    
+    // If no heads exist, insert defaults
+    if (!data || data.length === 0) {
+      const defaultHeads = [
+        'Salaries & Wages', 'Rent', 'Utilities - Electricity', 'Utilities - Water',
+        'Raw Materials', 'Packaging Materials', 'Transportation & Freight',
+        'Maintenance & Repairs', 'Professional Fees', 'Marketing & Advertising',
+        'Office Supplies', 'Insurance', 'Taxes & Duties', 'Bank Charges',
+        'Interest Expenses', 'Miscellaneous Expenses', 'Capital Expenditure', 'Petty Cash'
+      ];
+      
+      const insertData = defaultHeads.map(name => ({ company_id: companyId, name }));
+      const { data: inserted, error: insertError } = await supabase.from('heads_of_account')
+        .insert(insertData)
+        .select('id, name');
+      
+      if (insertError) throw insertError;
+      return res.json(inserted || []);
+    }
+    
+    res.json(data);
+  } catch (error) {
+    console.error('Error fetching heads of account:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Add a new head of account
+app.post('/api/heads-of-account', async (req, res) => {
+  try {
+    const { companyId, name } = req.body;
+    
+    if (!companyId || !name) {
+      return res.status(400).json({ error: 'Company ID and name are required' });
+    }
+
+    const { data, error } = await supabase.from('heads_of_account')
+      .insert({ company_id: companyId, name: name.trim() })
+      .select('id, name')
+      .single();
+    
+    if (error) {
+      if (error.code === '23505') { // Unique constraint violation
+        return res.status(400).json({ error: 'Account head already exists' });
+      }
+      throw error;
+    }
+    
+    res.json(data);
+  } catch (error) {
+    console.error('Error adding head of account:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Delete a head of account
+app.delete('/api/heads-of-account/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const { error } = await supabase.from('heads_of_account')
+      .delete()
+      .eq('id', id);
+    
+    if (error) throw error;
+    
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error deleting head of account:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Bulk import heads of account
+app.post('/api/heads-of-account/import', async (req, res) => {
+  try {
+    const { companyId, names } = req.body;
+    
+    if (!companyId || !names || !Array.isArray(names)) {
+      return res.status(400).json({ error: 'Company ID and names array are required' });
+    }
+
+    const insertData = names
+      .map(name => name.trim())
+      .filter(name => name.length > 0)
+      .map(name => ({ company_id: companyId, name }));
+    
+    const { data, error } = await supabase.from('heads_of_account')
+      .upsert(insertData, { onConflict: 'company_id,name', ignoreDuplicates: true })
+      .select('id, name');
+    
+    if (error) throw error;
+    
+    res.json({ success: true, imported: data?.length || 0 });
+  } catch (error) {
+    console.error('Error importing heads of account:', error);
+    res.status(500).json({ error: error.message });
+  }
 });
 
 // Health check

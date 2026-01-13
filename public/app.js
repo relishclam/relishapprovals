@@ -58,7 +58,10 @@ const api = {
   deleteVoucher: (voucherId) => fetch(`${API_BASE}/vouchers/${voucherId}`, { method: 'DELETE' }).then(r => r.json()),
   getNotifications: (userId) => fetch(`${API_BASE}/users/${userId}/notifications`).then(r => r.json()),
   markAllNotificationsRead: (userId) => fetch(`${API_BASE}/users/${userId}/notifications/read-all`, { method: 'POST' }).then(r => r.json()),
-  getHeadsOfAccount: () => fetch(`${API_BASE}/heads-of-account`).then(r => r.json()),
+  getHeadsOfAccount: (companyId) => fetch(`${API_BASE}/heads-of-account?companyId=${companyId}`).then(r => r.json()),
+  addHeadOfAccount: (companyId, name) => fetch(`${API_BASE}/heads-of-account`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ companyId, name }) }).then(r => r.json()),
+  deleteHeadOfAccount: (id) => fetch(`${API_BASE}/heads-of-account/${id}`, { method: 'DELETE' }).then(r => r.json()),
+  importHeadsOfAccount: (companyId, names) => fetch(`${API_BASE}/heads-of-account/import`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ companyId, names }) }).then(r => r.json()),
 };
 
 // Context
@@ -411,11 +414,12 @@ const CreateVoucher = () => {
   useEffect(() => { 
     // Load payees for user's company
     api.getPayees(user.company.id).then(setPayees);
-    // Load heads from localStorage based on user's company
-    const stored = localStorage.getItem(`heads_of_account_${user.company.id}`);
-    if (stored) {
-      setHeads(JSON.parse(stored));
-    }
+    // Load heads from database based on user's company
+    API.getHeadsOfAccount(user.company.id).then(data => {
+      if (Array.isArray(data)) {
+        setHeads(data.map(h => h.name));
+      }
+    });
   }, [user.company.id]);
 
   const handleAddPayee = async () => {
@@ -2125,7 +2129,7 @@ const PayeesManagement = () => {
 const AccountsManagement = () => {
   const { user, addToast } = useApp();
   const [accounts, setAccounts] = useState([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -2134,80 +2138,96 @@ const AccountsManagement = () => {
   const [importFile, setImportFile] = useState(null);
   const [importMethod, setImportMethod] = useState('paste'); // 'paste' or 'excel'
 
-  // Predefined accounts list
-  const defaultAccounts = [
-    'Salaries & Wages',
-    'Rent',
-    'Utilities - Electricity',
-    'Utilities - Water',
-    'Raw Materials',
-    'Packaging Materials',
-    'Transportation & Freight',
-    'Maintenance & Repairs',
-    'Professional Fees',
-    'Marketing & Advertising',
-    'Office Supplies',
-    'Insurance',
-    'Taxes & Duties',
-    'Bank Charges',
-    'Interest Expenses',
-    'Miscellaneous Expenses',
-    'Capital Expenditure',
-    'Petty Cash'
-  ];
-
-  useEffect(() => {
-    const stored = localStorage.getItem(`heads_of_account_${user.company.id}`);
-    if (stored) {
-      setAccounts(JSON.parse(stored));
-    } else {
-      setAccounts([...defaultAccounts]);
-      localStorage.setItem(`heads_of_account_${user.company.id}`, JSON.stringify(defaultAccounts));
+  // Load accounts from database
+  const loadAccounts = async () => {
+    try {
+      setLoading(true);
+      const data = await API.getHeadsOfAccount(user.company.id);
+      if (Array.isArray(data)) {
+        setAccounts(data.sort((a, b) => a.name.localeCompare(b.name)));
+      } else if (data.error) {
+        addToast('Failed to load accounts: ' + data.error, 'error');
+      }
+    } catch (error) {
+      addToast('Failed to load accounts', 'error');
+    } finally {
+      setLoading(false);
     }
-  }, [user.company.id]);
-
-  const saveAccounts = (newAccounts) => {
-    setAccounts(newAccounts);
-    localStorage.setItem(`heads_of_account_${user.company.id}`, JSON.stringify(newAccounts));
   };
 
-  const handleAddAccount = () => {
+  useEffect(() => {
+    loadAccounts();
+  }, [user.company.id]);
+
+  const handleAddAccount = async () => {
     if (!newAccount.trim()) {
       addToast('Account name cannot be empty', 'error');
       return;
     }
     
-    if (accounts.includes(newAccount.trim())) {
+    if (accounts.some(a => a.name === newAccount.trim())) {
       addToast('Account already exists', 'error');
       return;
     }
 
-    const updated = [...accounts, newAccount.trim()].sort();
-    saveAccounts(updated);
-    addToast('Account added successfully', 'success');
-    setNewAccount('');
-    setShowAddModal(false);
+    setSubmitting(true);
+    try {
+      const result = await API.addHeadOfAccount(user.company.id, newAccount.trim());
+      if (result.error) {
+        addToast(result.error, 'error');
+      } else {
+        addToast('Account added successfully', 'success');
+        setNewAccount('');
+        setShowAddModal(false);
+        loadAccounts();
+      }
+    } catch (error) {
+      addToast('Failed to add account', 'error');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
-  const handleDeleteAccount = (account) => {
-    if (!confirm(`Delete "${account}"?`)) return;
-    const updated = accounts.filter(a => a !== account);
-    saveAccounts(updated);
-    addToast('Account deleted successfully', 'success');
+  const handleDeleteAccount = async (account) => {
+    if (!confirm(`Delete "${account.name}"?`)) return;
+    
+    try {
+      const result = await API.deleteHeadOfAccount(account.id);
+      if (result.error) {
+        addToast(result.error, 'error');
+      } else {
+        addToast('Account deleted successfully', 'success');
+        loadAccounts();
+      }
+    } catch (error) {
+      addToast('Failed to delete account', 'error');
+    }
   };
 
-  const handleImport = () => {
+  const handleImport = async () => {
     if (!importData.trim()) {
       addToast('Please paste account names to import', 'error');
       return;
     }
 
     const lines = importData.trim().split('\n').map(l => l.trim()).filter(l => l);
-    const newAccounts = [...new Set([...accounts, ...lines])].sort();
-    saveAccounts(newAccounts);
-    addToast(`Imported ${lines.length} accounts`, 'success');
-    setImportData('');
-    setShowImportModal(false);
+    
+    setSubmitting(true);
+    try {
+      const result = await API.importHeadsOfAccount(user.company.id, lines);
+      if (result.error) {
+        addToast(result.error, 'error');
+      } else {
+        addToast(`Imported ${result.imported || lines.length} accounts`, 'success');
+        setImportData('');
+        setShowImportModal(false);
+        loadAccounts();
+      }
+    } catch (error) {
+      addToast('Failed to import accounts', 'error');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const handleExcelImport = async (e) => {
@@ -2232,11 +2252,15 @@ const AccountsManagement = () => {
         return;
       }
       
-      const newAccounts = [...new Set([...accounts, ...importedAccounts])].sort();
-      saveAccounts(newAccounts);
-      addToast(`Imported ${importedAccounts.length} accounts from Excel`, 'success');
-      setShowImportModal(false);
-      setImportFile(null);
+      const result = await API.importHeadsOfAccount(user.company.id, importedAccounts);
+      if (result.error) {
+        addToast(result.error, 'error');
+      } else {
+        addToast(`Imported ${result.imported || importedAccounts.length} accounts from Excel`, 'success');
+        setShowImportModal(false);
+        setImportFile(null);
+        loadAccounts();
+      }
     } catch (error) {
       addToast('Failed to parse Excel file: ' + error.message, 'error');
     } finally {
@@ -2259,14 +2283,20 @@ const AccountsManagement = () => {
 
       <div className="card">
         <div className="card-body">
-          <div style={{display: 'grid', gap: '0.75rem'}}>
-            {accounts.map(account => (
-              <div key={account} style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.75rem', border: '1px solid var(--border-color)', borderRadius: '8px'}}>
-                <span>{account}</span>
-                <button className="btn btn-sm btn-danger" onClick={() => handleDeleteAccount(account)}>🗑️</button>
-              </div>
-            ))}
-          </div>
+          {loading ? (
+            <div style={{textAlign: 'center', padding: '2rem'}}>Loading accounts...</div>
+          ) : accounts.length === 0 ? (
+            <div style={{textAlign: 'center', padding: '2rem', color: 'var(--text-secondary)'}}>No accounts found. Add your first head of account.</div>
+          ) : (
+            <div style={{display: 'grid', gap: '0.75rem'}}>
+              {accounts.map(account => (
+                <div key={account.id} style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.75rem', border: '1px solid var(--border-color)', borderRadius: '8px'}}>
+                  <span>{account.name}</span>
+                  <button className="btn btn-sm btn-danger" onClick={() => handleDeleteAccount(account)}>🗑️</button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
