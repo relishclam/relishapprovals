@@ -318,7 +318,7 @@ body {
   z-index: 1000;
   padding: 1rem;
   box-sizing: border-box;
-  overflow-y: auto;
+  overflow: hidden;
 }
 
 .modal {
@@ -331,7 +331,7 @@ body {
   flex-direction: column;
   overflow: hidden;
   box-sizing: border-box;
-  margin: auto;
+  position: relative;
 }
 
 .modal-lg { max-width: 700px; }
@@ -348,6 +348,9 @@ body {
   box-sizing: border-box;
   width: 100%;
   min-height: 60px;
+  position: sticky;
+  top: 0;
+  z-index: 10;
 }
 
 .modal-header .modal-title {
