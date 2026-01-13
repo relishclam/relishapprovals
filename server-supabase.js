@@ -919,15 +919,35 @@ app.get('/api/vouchers/:voucherId', async (req, res) => {
 // Approve voucher
 app.post('/api/vouchers/:voucherId/approve', async (req, res) => {
   const { approvedBy } = req.body;
+  console.log(`\n✅ APPROVE VOUCHER REQUEST`);
+  console.log(`   Voucher ID: ${req.params.voucherId}`);
+  console.log(`   Approved By: ${approvedBy}`);
   
   try {
-    const { data: voucher } = await supabase.from('vouchers')
+    const { data: voucher, error: voucherError } = await supabase.from('vouchers')
       .select('*, payee:payees(mobile)')
       .eq('id', req.params.voucherId)
       .single();
     
-    if (!voucher) return res.status(404).json({ error: 'Voucher not found' });
-    if (voucher.status !== 'pending') return res.status(400).json({ error: 'Voucher is not pending' });
+    if (voucherError) {
+      console.log(`   ❌ Database error: ${voucherError.message}`);
+      return res.status(500).json({ error: 'Database error', details: voucherError.message });
+    }
+    
+    if (!voucher) {
+      console.log(`   ❌ Voucher not found`);
+      return res.status(404).json({ error: 'Voucher not found' });
+    }
+    
+    if (voucher.status !== 'pending') {
+      console.log(`   ❌ Voucher is not pending, status: ${voucher.status}`);
+      return res.status(400).json({ error: 'Voucher is not pending' });
+    }
+    
+    if (!voucher.payee || !voucher.payee.mobile) {
+      console.log(`   ❌ Payee or mobile not found. Payee data: ${JSON.stringify(voucher.payee)}`);
+      return res.status(400).json({ error: 'Payee mobile number not found' });
+    }
     
     // Update voucher status
     await supabase.from('vouchers')
@@ -941,12 +961,16 @@ app.post('/api/vouchers/:voucherId/approve', async (req, res) => {
     // Send OTP to payee using 2Factor.in (default transactional SMS)
     try {
       const formattedMobile = formatMobile(voucher.payee.mobile);
+      console.log(`   Sending OTP to: ${formattedMobile}`);
+      
       const response = await fetch(`${TWOFACTOR_BASE_URL}/${TWOFACTOR_API_KEY}/SMS/${formattedMobile}/AUTOGEN`);
       const data = await response.json();
+      console.log(`   2Factor Response: ${JSON.stringify(data)}`);
       
       if (data.Status === 'Success') {
         // Store session for payee verification in Supabase
         await saveOtpSession(formattedMobile, data.Details, 'payee_verification', req.params.voucherId);
+        console.log(`   ✅ OTP sent successfully, session: ${data.Details}`);
         
         // Notify preparer
         await supabase.from('notifications').insert({
@@ -963,14 +987,15 @@ app.post('/api/vouchers/:voucherId/approve', async (req, res) => {
           payeeMobile: voucher.payee.mobile.replace(/\d(?=\d{4})/g, '*')
         });
       } else {
-        console.error('2Factor Error:', data);
-        res.status(500).json({ error: 'Failed to send OTP to payee' });
+        console.error('   ❌ 2Factor Error:', data);
+        res.status(500).json({ error: 'Failed to send OTP to payee', details: data.Details });
       }
     } catch (err) {
-      console.error('2Factor Error:', err.message);
-      res.status(500).json({ error: 'Failed to send OTP to payee' });
+      console.error('   ❌ 2Factor Exception:', err.message);
+      res.status(500).json({ error: 'Failed to send OTP to payee', details: err.message });
     }
   } catch (error) {
+    console.error('   ❌ Exception:', error.message);
     res.status(500).json({ error: error.message });
   }
 });
@@ -1089,14 +1114,29 @@ app.post('/api/vouchers/:voucherId/resend-otp', async (req, res) => {
   console.log(`   Voucher ID: ${req.params.voucherId}`);
   
   try {
-    const { data: voucher } = await supabase.from('vouchers')
+    const { data: voucher, error: voucherError } = await supabase.from('vouchers')
       .select('*, payee:payees(mobile)')
       .eq('id', req.params.voucherId)
       .single();
     
-    if (!voucher || voucher.status !== 'awaiting_payee_otp') {
-      console.log(`   ❌ Invalid voucher or status`);
-      return res.status(400).json({ error: 'Invalid voucher or status' });
+    if (voucherError) {
+      console.log(`   ❌ Database error: ${voucherError.message}`);
+      return res.status(500).json({ error: 'Database error', details: voucherError.message });
+    }
+    
+    if (!voucher) {
+      console.log(`   ❌ Voucher not found`);
+      return res.status(404).json({ error: 'Voucher not found' });
+    }
+    
+    if (voucher.status !== 'awaiting_payee_otp') {
+      console.log(`   ❌ Invalid status: ${voucher.status}`);
+      return res.status(400).json({ error: `Invalid voucher status: ${voucher.status}` });
+    }
+    
+    if (!voucher.payee || !voucher.payee.mobile) {
+      console.log(`   ❌ Payee or mobile not found. Payee: ${JSON.stringify(voucher.payee)}`);
+      return res.status(400).json({ error: 'Payee mobile number not found' });
     }
     
     const formattedMobile = formatMobile(voucher.payee.mobile);
