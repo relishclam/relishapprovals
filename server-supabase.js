@@ -138,6 +138,35 @@ app.get('/api/debug/otp-sessions', async (req, res) => {
 
 // ============ API ROUTES ============
 
+// Debug endpoint to test 2Factor.in API connection
+app.get('/api/debug/test-2factor', async (req, res) => {
+  try {
+    // Test API balance check (doesn't send SMS)
+    const url = `${TWOFACTOR_BASE_URL}/${TWOFACTOR_API_KEY}/BAL/SMS`;
+    console.log(`\n🔍 TESTING 2FACTOR.IN API`);
+    console.log(`   URL: ${url.replace(TWOFACTOR_API_KEY, 'API_KEY_HIDDEN')}`);
+    
+    const response = await fetch(url);
+    const data = await response.json();
+    
+    console.log(`   Response: ${JSON.stringify(data)}`);
+    
+    res.json({
+      apiKeyConfigured: !!TWOFACTOR_API_KEY,
+      apiKeyLength: TWOFACTOR_API_KEY ? TWOFACTOR_API_KEY.length : 0,
+      apiKeyPrefix: TWOFACTOR_API_KEY ? TWOFACTOR_API_KEY.substring(0, 8) + '...' : 'NOT SET',
+      baseUrl: TWOFACTOR_BASE_URL,
+      balanceCheck: data
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      error: error.message,
+      apiKeyConfigured: !!TWOFACTOR_API_KEY,
+      apiKeyLength: TWOFACTOR_API_KEY ? TWOFACTOR_API_KEY.length : 0
+    });
+  }
+});
+
 // Get all companies
 app.get('/api/companies', async (req, res) => {
   try {
