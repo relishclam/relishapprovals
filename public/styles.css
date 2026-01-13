@@ -350,6 +350,17 @@ body {
   min-height: 60px;
 }
 
+.modal-header .modal-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 1.25rem; 
+  font-weight: 600; 
+  margin: 0;
+}
+
 .modal-header > div {
   flex-shrink: 0;
 }
@@ -360,17 +371,6 @@ body {
   flex: 1 1 auto;
   box-sizing: border-box;
   min-height: 0;
-}
-
-.modal-title { 
-  font-size: 1.25rem; 
-  font-weight: 600; 
-  margin: 0; 
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 .modal-close { 
   background: none; 
@@ -1090,8 +1090,27 @@ body {
 /* Print Styles */
 @media print {
   body { background: white; }
-  .header, .sidebar, .btn, .modal-overlay, .toast-container, .pwa-install-banner { display: none !important; }
+  .header, .sidebar, .modal-overlay, .modal-header, .modal-footer, .toast-container, .pwa-install-banner, .otp-section { display: none !important; }
   .main-content { padding: 0; }
   .card { box-shadow: none; border: 1px solid #ddd; }
-  .voucher-preview { break-inside: avoid; }
+  .voucher-preview { 
+    break-inside: avoid; 
+    border: none;
+    padding: 0;
+    width: 100%;
+  }
+  .voucher-signatures {
+    grid-template-columns: repeat(3, 1fr);
+  }
+  .modal {
+    position: static;
+    max-width: 100%;
+    max-height: none;
+    box-shadow: none;
+    border: none;
+  }
+  .modal-body {
+    padding: 0;
+    overflow: visible;
+  }
 }
