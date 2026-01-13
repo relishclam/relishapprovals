@@ -26,20 +26,47 @@ const TWOFACTOR_API_KEY = process.env.TWOFACTOR_API_KEY;
 const TWOFACTOR_BASE_URL = 'https://2factor.in/API/V1';
 const TWOFACTOR_TEMPLATE_NAME = 'Relish-Approvals'; // Approved OTP template
 
-// Store OTP sessions (session_id from 2Factor)
-const otpSessions = new Map();
+// Store OTP sessions in Supabase (for serverless compatibility)
+// Helper functions for OTP session management
+const saveOtpSession = async (mobile, sessionId, purpose, voucherId = null) => {
+  // Delete any existing session for this mobile
+  await supabase.from('otp_sessions').delete().eq('mobile', mobile);
+  
+  // Insert new session
+  const { error } = await supabase.from('otp_sessions').insert({
+    mobile,
+    session_id: sessionId,
+    purpose,
+    voucher_id: voucherId
+  });
+  
+  if (error) console.error('Error saving OTP session:', error);
+  return !error;
+};
 
-// Clean up expired OTP sessions (older than 10 minutes)
-setInterval(() => {
-  const now = Date.now();
-  const TEN_MINUTES = 10 * 60 * 1000;
-  for (const [mobile, session] of otpSessions.entries()) {
-    if (now - session.createdAt > TEN_MINUTES) {
-      console.log(`🧹 Cleaning expired OTP session for: ${mobile}`);
-      otpSessions.delete(mobile);
-    }
+const getOtpSession = async (mobile) => {
+  const { data, error } = await supabase.from('otp_sessions')
+    .select('*')
+    .eq('mobile', mobile)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .single();
+  
+  if (error || !data) return null;
+  
+  // Check if session is expired (15 minutes)
+  const createdAt = new Date(data.created_at).getTime();
+  if (Date.now() - createdAt > 15 * 60 * 1000) {
+    await supabase.from('otp_sessions').delete().eq('id', data.id);
+    return null;
   }
-}, 60000); // Check every minute
+  
+  return { sessionId: data.session_id, purpose: data.purpose, voucherId: data.voucher_id };
+};
+
+const deleteOtpSession = async (mobile) => {
+  await supabase.from('otp_sessions').delete().eq('mobile', mobile);
+};
 
 // Helper function to format mobile number (remove +91 prefix, just use 10 digits)
 const formatMobile = (mobile) => {
@@ -80,18 +107,27 @@ const call2FactorAPI = async (endpoint, description) => {
 };
 
 // Debug endpoint to check OTP sessions
-app.get('/api/debug/otp-sessions', (req, res) => {
-  const sessions = [];
-  for (const [mobile, session] of otpSessions.entries()) {
-    sessions.push({
-      mobile: mobile.replace(/\d(?=\d{4})/g, '*'),
-      purpose: session.purpose,
-      sessionId: session.sessionId.substring(0, 8) + '...',
-      createdAt: new Date(session.createdAt).toISOString(),
-      ageSeconds: Math.floor((Date.now() - session.createdAt) / 1000)
-    });
+app.get('/api/debug/otp-sessions', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('otp_sessions')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(20);
+    
+    if (error) throw error;
+    
+    const sessions = data.map(s => ({
+      mobile: s.mobile.replace(/\d(?=\d{4})/g, '*'),
+      purpose: s.purpose,
+      sessionId: s.session_id.substring(0, 8) + '...',
+      createdAt: s.created_at,
+      ageSeconds: Math.floor((Date.now() - new Date(s.created_at).getTime()) / 1000)
+    }));
+    
+    res.json({ activeSessions: sessions.length, sessions });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
   }
-  res.json({ activeSessions: sessions.length, sessions });
 });
 
 // ============ API ROUTES ============
@@ -123,15 +159,10 @@ app.post('/api/otp/send', async (req, res) => {
   const result = await call2FactorAPI(`/SMS/${formattedMobile}/AUTOGEN/${TWOFACTOR_TEMPLATE_NAME}`, `Send OTP to ${formattedMobile}`);
   
   if (result.success) {
-    // Store session ID for verification
-    otpSessions.set(formattedMobile, {
-      sessionId: result.data.Details,
-      purpose,
-      createdAt: Date.now()
-    });
-    console.log(`   📝 Session stored for: ${formattedMobile}`);
+    // Store session in Supabase
+    await saveOtpSession(formattedMobile, result.data.Details, purpose);
+    console.log(`   📝 Session stored in DB for: ${formattedMobile}`);
     console.log(`   📝 Session ID: ${result.data.Details}`);
-    console.log(`   📝 Active sessions: ${otpSessions.size}`);
     res.json({ success: true, message: 'OTP sent successfully' });
   } else {
     res.status(500).json({ error: 'Failed to send OTP', details: result.data?.Details || result.error });
@@ -148,25 +179,20 @@ app.post('/api/otp/verify', async (req, res) => {
   console.log(`   Mobile: ${formattedMobile}`);
   console.log(`   Code: ${code}`);
   
-  const session = otpSessions.get(formattedMobile);
+  const session = await getOtpSession(formattedMobile);
   
   if (!session) {
-    console.log(`   ❌ No session found for: ${formattedMobile}`);
-    console.log(`   📝 Active sessions: ${otpSessions.size}`);
-    for (const [m, s] of otpSessions.entries()) {
-      console.log(`      - ${m} (${s.purpose})`);
-    }
+    console.log(`   ❌ No session found in DB for: ${formattedMobile}`);
     return res.status(400).json({ error: 'No OTP session found. Please request a new OTP.' });
   }
   
   console.log(`   📝 Session found: ${session.sessionId.substring(0, 8)}...`);
-  console.log(`   📝 Session age: ${Math.floor((Date.now() - session.createdAt) / 1000)}s`);
   
   const result = await call2FactorAPI(`/SMS/VERIFY/${session.sessionId}/${code}`, `Verify OTP for ${formattedMobile}`);
   
   if (result.success && result.data.Details === 'OTP Matched') {
     // Clear the session
-    otpSessions.delete(formattedMobile);
+    await deleteOtpSession(formattedMobile);
     console.log(`   ✅ OTP Verified! Session cleared.`);
     const signature = Buffer.from(`${formattedMobile}:${Date.now()}:verified`).toString('base64');
     res.json({ success: true, status: 'approved', signature });
@@ -487,12 +513,7 @@ app.post('/api/users/login', async (req, res) => {
           const data = await response.json();
           
           if (data.Status === 'Success') {
-            otpSessions.set(formattedMobile, {
-              sessionId: data.Details,
-              purpose: 'first_login',
-              userId: user.id,
-              createdAt: Date.now()
-            });
+            await saveOtpSession(formattedMobile, data.Details, 'first_login');
             return res.json({ requiresOtp: true, message: 'First login requires OTP. Sent to registered mobile.' });
           } else {
             console.error('2Factor OTP send error:', data.Details);
@@ -506,7 +527,7 @@ app.post('/api/users/login', async (req, res) => {
         // OTP provided, verify it
         try {
           const formattedMobile = formatMobile(user.mobile);
-          const session = otpSessions.get(formattedMobile);
+          const session = await getOtpSession(formattedMobile);
           
           if (!session) {
             return res.status(400).json({ error: 'No OTP session found. Please request a new OTP.' });
@@ -520,7 +541,7 @@ app.post('/api/users/login', async (req, res) => {
           }
           
           // Clear the session
-          otpSessions.delete(formattedMobile);
+          await deleteOtpSession(formattedMobile);
         } catch (err) {
           console.error('2Factor OTP verify error:', err.message);
           return res.status(500).json({ error: 'OTP verification failed' });
@@ -888,13 +909,8 @@ app.post('/api/vouchers/:voucherId/approve', async (req, res) => {
       const data = await response.json();
       
       if (data.Status === 'Success') {
-        // Store session for payee verification
-        otpSessions.set(formattedMobile, {
-          sessionId: data.Details,
-          purpose: 'payee_verification',
-          voucherId: req.params.voucherId,
-          createdAt: Date.now()
-        });
+        // Store session for payee verification in Supabase
+        await saveOtpSession(formattedMobile, data.Details, 'payee_verification', req.params.voucherId);
         
         // Notify preparer
         await supabase.from('notifications').insert({
@@ -981,14 +997,10 @@ app.post('/api/vouchers/:voucherId/complete', async (req, res) => {
     const formattedMobile = formatMobile(voucher.payee.mobile);
     console.log(`   Payee Mobile: ${formattedMobile}`);
     
-    const session = otpSessions.get(formattedMobile);
+    const session = await getOtpSession(formattedMobile);
     
     if (!session) {
-      console.log(`   ❌ No OTP session found for payee: ${formattedMobile}`);
-      console.log(`   📝 Active sessions: ${otpSessions.size}`);
-      for (const [m, s] of otpSessions.entries()) {
-        console.log(`      - ${m} (${s.purpose})`);
-      }
+      console.log(`   ❌ No OTP session found in DB for payee: ${formattedMobile}`);
       return res.status(400).json({ error: 'No OTP session found. Please click "Resend OTP" first.' });
     }
     
@@ -1003,7 +1015,7 @@ app.post('/api/vouchers/:voucherId/complete', async (req, res) => {
     
     // Clear the session
     console.log(`   ✅ OTP Verified! Completing voucher...`);
-    otpSessions.delete(formattedMobile);
+    await deleteOtpSession(formattedMobile);
     
     const signature = Buffer.from(
       `${voucher.payee.mobile}:${req.params.voucherId}:${Date.now()}:verified`
@@ -1057,14 +1069,9 @@ app.post('/api/vouchers/:voucherId/resend-otp', async (req, res) => {
     const result = await call2FactorAPI(`/SMS/${formattedMobile}/AUTOGEN/${TWOFACTOR_TEMPLATE_NAME}`, `Resend Payee OTP for voucher ${req.params.voucherId}`);
     
     if (result.success) {
-      // Store session ID for verification
-      otpSessions.set(formattedMobile, {
-        sessionId: result.data.Details,
-        purpose: 'payee_verification',
-        voucherId: req.params.voucherId,
-        createdAt: Date.now()
-      });
-      console.log(`   📝 Session stored for: ${formattedMobile}`);
+      // Store session ID in Supabase for verification
+      await saveOtpSession(formattedMobile, result.data.Details, 'payee_verification', req.params.voucherId);
+      console.log(`   📝 Session stored in Supabase for: ${formattedMobile}`);
       console.log(`   📝 Session ID: ${result.data.Details}`);
       res.json({ success: true, message: 'OTP resent to payee' });
     } else {
