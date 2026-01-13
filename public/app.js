@@ -415,7 +415,7 @@ const CreateVoucher = () => {
     // Load payees for user's company
     api.getPayees(user.company.id).then(setPayees);
     // Load heads from database based on user's company
-    API.getHeadsOfAccount(user.company.id).then(data => {
+    api.getHeadsOfAccount(user.company.id).then(data => {
       if (Array.isArray(data)) {
         setHeads(data.map(h => h.name));
       }
@@ -2142,7 +2142,7 @@ const AccountsManagement = () => {
   const loadAccounts = async () => {
     try {
       setLoading(true);
-      const data = await API.getHeadsOfAccount(user.company.id);
+      const data = await api.getHeadsOfAccount(user.company.id);
       if (Array.isArray(data)) {
         setAccounts(data.sort((a, b) => a.name.localeCompare(b.name)));
       } else if (data.error) {
@@ -2172,7 +2172,7 @@ const AccountsManagement = () => {
 
     setSubmitting(true);
     try {
-      const result = await API.addHeadOfAccount(user.company.id, newAccount.trim());
+      const result = await api.addHeadOfAccount(user.company.id, newAccount.trim());
       if (result.error) {
         addToast(result.error, 'error');
       } else {
@@ -2192,7 +2192,7 @@ const AccountsManagement = () => {
     if (!confirm(`Delete "${account.name}"?`)) return;
     
     try {
-      const result = await API.deleteHeadOfAccount(account.id);
+      const result = await api.deleteHeadOfAccount(account.id);
       if (result.error) {
         addToast(result.error, 'error');
       } else {
