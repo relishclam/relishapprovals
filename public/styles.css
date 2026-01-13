@@ -317,17 +317,19 @@ body {
   justify-content: center;
   z-index: 1000;
   padding: 1rem;
+  box-sizing: border-box;
 }
 
 .modal {
   background: white;
   border-radius: 16px;
   max-width: 500px;
-  width: 100%;
+  width: calc(100% - 2rem);
   max-height: 90vh;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  box-sizing: border-box;
 }
 
 .modal-lg { max-width: 700px; }
@@ -340,12 +342,28 @@ body {
   align-items: center;
   flex-shrink: 0;
   background: white;
+  gap: 0.5rem;
+  box-sizing: border-box;
+  width: 100%;
+}
+
+.modal-header .modal-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.modal-header > div {
+  flex-shrink: 0;
 }
 
 .modal-body {
   padding: 1.5rem;
   overflow-y: auto;
   flex: 1;
+  box-sizing: border-box;
 }
 
 .modal-title { font-size: 1.25rem; font-weight: 600; }
@@ -819,16 +837,18 @@ body {
     max-height: calc(100vh - 2rem);
     border-radius: 12px;
     margin: 0;
-    width: 100%;
+    width: calc(100% - 1rem);
+    max-width: calc(100% - 1rem);
   }
   
   .modal-lg {
-    max-width: 100%;
+    max-width: calc(100% - 1rem);
   }
   
   .modal-header {
     padding: 0.75rem 1rem;
     flex-shrink: 0;
+    gap: 0.5rem;
   }
   
   .modal-title {
