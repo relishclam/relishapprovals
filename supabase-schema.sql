@@ -94,6 +94,16 @@ CREATE TABLE IF NOT EXISTS user_companies (
     UNIQUE(user_id, company_id)
 );
 
+-- OTP Sessions Table (for serverless compatibility with 2Factor.in)
+CREATE TABLE IF NOT EXISTS otp_sessions (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    mobile TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    purpose TEXT NOT NULL,
+    voucher_id UUID REFERENCES vouchers(id),
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- Insert Companies
 INSERT INTO companies (id, name, address, gst) VALUES 
 ('relish-foods', 'Relish Foods Pvt Ltd', '17/9B, Madhavapuram, Kanyakumari 629704. TN. India', '33AAACR7749E2ZD'),
@@ -116,6 +126,7 @@ CREATE INDEX IF NOT EXISTS idx_vouchers_status ON vouchers(status);
 CREATE INDEX IF NOT EXISTS idx_vouchers_prepared_by ON vouchers(prepared_by);
 CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id);
 CREATE INDEX IF NOT EXISTS idx_notifications_read ON notifications(read);
+CREATE INDEX IF NOT EXISTS idx_otp_sessions_mobile ON otp_sessions(mobile);
 
 -- Enable Row Level Security (RLS)
 ALTER TABLE companies ENABLE ROW LEVEL SECURITY;
@@ -125,6 +136,7 @@ ALTER TABLE payees ENABLE ROW LEVEL SECURITY;
 ALTER TABLE voucher_series ENABLE ROW LEVEL SECURITY;
 ALTER TABLE vouchers ENABLE ROW LEVEL SECURITY;
 ALTER TABLE notifications ENABLE ROW LEVEL SECURITY;
+ALTER TABLE otp_sessions ENABLE ROW LEVEL SECURITY;
 
 -- Create policies for public read access (since we're using service role key on server)
 -- For a production app, you'd want more restrictive policies
@@ -136,6 +148,7 @@ CREATE POLICY "Allow all operations for service role" ON payees FOR ALL USING (t
 CREATE POLICY "Allow all operations for service role" ON voucher_series FOR ALL USING (true);
 CREATE POLICY "Allow all operations for service role" ON vouchers FOR ALL USING (true);
 CREATE POLICY "Allow all operations for service role" ON notifications FOR ALL USING (true);
+CREATE POLICY "Allow all operations for service role" ON otp_sessions FOR ALL USING (true);
 
 -- Function to get next voucher number
 CREATE OR REPLACE FUNCTION get_next_voucher_number(p_company_id TEXT)
