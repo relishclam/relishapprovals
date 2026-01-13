@@ -315,10 +315,10 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 1000;
-  padding: 1rem;
+  z-index: 1100;
+  padding: 2rem 1rem;
   box-sizing: border-box;
-  overflow: hidden;
+  overflow-y: auto;
 }
 
 .modal {
@@ -326,12 +326,13 @@ body {
   border-radius: 16px;
   max-width: 500px;
   width: calc(100% - 2rem);
-  max-height: calc(100vh - 2rem);
+  max-height: calc(100vh - 4rem);
   display: flex;
   flex-direction: column;
   overflow: hidden;
   box-sizing: border-box;
-  position: relative;
+  margin: auto;
+  flex-shrink: 0;
 }
 
 .modal-lg { max-width: 700px; }
