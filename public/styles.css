@@ -318,6 +318,7 @@ body {
   z-index: 1000;
   padding: 1rem;
   box-sizing: border-box;
+  overflow-y: auto;
 }
 
 .modal {
@@ -325,11 +326,12 @@ body {
   border-radius: 16px;
   max-width: 500px;
   width: calc(100% - 2rem);
-  max-height: 90vh;
+  max-height: calc(100vh - 2rem);
   display: flex;
   flex-direction: column;
   overflow: hidden;
   box-sizing: border-box;
+  margin: auto;
 }
 
 .modal-lg { max-width: 700px; }
@@ -345,14 +347,7 @@ body {
   gap: 0.5rem;
   box-sizing: border-box;
   width: 100%;
-}
-
-.modal-header .modal-title {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  min-height: 60px;
 }
 
 .modal-header > div {
@@ -362,13 +357,35 @@ body {
 .modal-body {
   padding: 1.5rem;
   overflow-y: auto;
-  flex: 1;
+  flex: 1 1 auto;
   box-sizing: border-box;
+  min-height: 0;
 }
 
-.modal-title { font-size: 1.25rem; font-weight: 600; }
-.modal-close { background: none; border: none; cursor: pointer; color: #888; padding: 0.5rem; font-size: 1.5rem; }
-.modal-body { padding: 1.5rem; }
+.modal-title { 
+  font-size: 1.25rem; 
+  font-weight: 600; 
+  margin: 0; 
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.modal-close { 
+  background: none; 
+  border: none; 
+  cursor: pointer; 
+  color: #888; 
+  padding: 0.5rem; 
+  font-size: 1.5rem;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.modal-close:hover {
+  color: #333;
+}
 
 .modal-footer {
   padding: 1rem 1.5rem;
@@ -376,6 +393,8 @@ body {
   display: flex;
   justify-content: flex-end;
   gap: 0.75rem;
+  flex-shrink: 0;
+  background: white;
 }
 
 .voucher-preview {
@@ -829,14 +848,14 @@ body {
 @media (max-width: 768px) {
   .modal-overlay {
     padding: 0.5rem;
-    align-items: flex-start;
-    padding-top: 1rem;
+    align-items: center;
+    justify-content: center;
   }
   
   .modal {
-    max-height: calc(100vh - 2rem);
+    max-height: calc(100vh - 1rem);
     border-radius: 12px;
-    margin: 0;
+    margin: auto;
     width: calc(100% - 1rem);
     max-width: calc(100% - 1rem);
   }
@@ -847,8 +866,7 @@ body {
   
   .modal-header {
     padding: 0.75rem 1rem;
-    flex-shrink: 0;
-    gap: 0.5rem;
+    min-height: 50px;
   }
   
   .modal-title {
@@ -870,9 +888,7 @@ body {
   }
   
   .modal-footer {
-    padding: 1rem;
-    flex-wrap: wrap;
-    flex-shrink: 0;
+    padding: 0.75rem 1rem;
   }
   
   .modal-footer .btn {
