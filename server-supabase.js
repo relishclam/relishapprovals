@@ -24,7 +24,7 @@ if (!process.env.TWOFACTOR_API_KEY) {
 }
 const TWOFACTOR_API_KEY = process.env.TWOFACTOR_API_KEY;
 const TWOFACTOR_BASE_URL = 'https://2factor.in/API/V1';
-const TWOFACTOR_TEMPLATE_NAME = 'Relish-Approvals'; // Approved OTP template
+// Using default transactional SMS OTP (no template required - sends via SMS by default)
 
 // Store OTP sessions in Supabase (for serverless compatibility)
 // Helper functions for OTP session management
@@ -84,7 +84,7 @@ const call2FactorAPI = async (endpoint, description) => {
   const url = `${TWOFACTOR_BASE_URL}/${TWOFACTOR_API_KEY}${endpoint}`;
   console.log(`\n📱 2FACTOR API CALL: ${description}`);
   console.log(`   Full Endpoint: ${endpoint}`);
-  console.log(`   Template Name: ${TWOFACTOR_TEMPLATE_NAME}`);
+  console.log(`   Using: Default Transactional SMS OTP`);
   console.log(`   Time: ${new Date().toISOString()}`);
   
   try {
@@ -162,7 +162,7 @@ app.post('/api/otp/send', async (req, res) => {
   console.log(`   Formatted: ${formattedMobile}`);
   console.log(`   Purpose: ${purpose}`);
   
-  const result = await call2FactorAPI(`/SMS/${formattedMobile}/AUTOGEN/${TWOFACTOR_TEMPLATE_NAME}`, `Send OTP to ${formattedMobile}`);
+  const result = await call2FactorAPI(`/SMS/${formattedMobile}/AUTOGEN`, `Send OTP to ${formattedMobile}`);
   
   if (result.success) {
     // Store session in Supabase
@@ -515,7 +515,7 @@ app.post('/api/users/login', async (req, res) => {
       if (!otp) {
         try {
           const formattedMobile = formatMobile(user.mobile);
-          const response = await fetch(`${TWOFACTOR_BASE_URL}/${TWOFACTOR_API_KEY}/SMS/${formattedMobile}/AUTOGEN/${TWOFACTOR_TEMPLATE_NAME}`);
+          const response = await fetch(`${TWOFACTOR_BASE_URL}/${TWOFACTOR_API_KEY}/SMS/${formattedMobile}/AUTOGEN`);
           const data = await response.json();
           
           if (data.Status === 'Success') {
@@ -908,10 +908,10 @@ app.post('/api/vouchers/:voucherId/approve', async (req, res) => {
       })
       .eq('id', req.params.voucherId);
     
-    // Send OTP to payee using 2Factor.in
+    // Send OTP to payee using 2Factor.in (default transactional SMS)
     try {
       const formattedMobile = formatMobile(voucher.payee.mobile);
-      const response = await fetch(`${TWOFACTOR_BASE_URL}/${TWOFACTOR_API_KEY}/SMS/${formattedMobile}/AUTOGEN/${TWOFACTOR_TEMPLATE_NAME}`);
+      const response = await fetch(`${TWOFACTOR_BASE_URL}/${TWOFACTOR_API_KEY}/SMS/${formattedMobile}/AUTOGEN`);
       const data = await response.json();
       
       if (data.Status === 'Success') {
@@ -1072,7 +1072,7 @@ app.post('/api/vouchers/:voucherId/resend-otp', async (req, res) => {
     const formattedMobile = formatMobile(voucher.payee.mobile);
     console.log(`   Payee Mobile: ${formattedMobile}`);
     
-    const result = await call2FactorAPI(`/SMS/${formattedMobile}/AUTOGEN/${TWOFACTOR_TEMPLATE_NAME}`, `Resend Payee OTP for voucher ${req.params.voucherId}`);
+    const result = await call2FactorAPI(`/SMS/${formattedMobile}/AUTOGEN`, `Resend Payee OTP for voucher ${req.params.voucherId}`);
     
     if (result.success) {
       // Store session ID in Supabase for verification
