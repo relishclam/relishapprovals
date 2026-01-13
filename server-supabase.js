@@ -2,7 +2,6 @@ require('dotenv').config();
 
 const express = require('express');
 const cors = require('cors');
-const twilio = require('twilio');
 const { createClient } = require('@supabase/supabase-js');
 
 const app = express();
@@ -19,18 +18,81 @@ const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
-// Twilio Configuration
-if (!process.env.TWILIO_ACCOUNT_SID || !process.env.TWILIO_AUTH_TOKEN || !process.env.TWILIO_VERIFY_SID) {
-  throw new Error('Missing required environment variables: TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_VERIFY_SID');
+// 2Factor.in Configuration
+if (!process.env.TWOFACTOR_API_KEY) {
+  throw new Error('Missing required environment variable: TWOFACTOR_API_KEY');
 }
-const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID;
-const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
-const TWILIO_VERIFY_SID = process.env.TWILIO_VERIFY_SID;
+const TWOFACTOR_API_KEY = process.env.TWOFACTOR_API_KEY;
+const TWOFACTOR_BASE_URL = 'https://2factor.in/API/V1';
+const TWOFACTOR_TEMPLATE_NAME = 'Relish-Approvals'; // Approved OTP template
 
-const twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
+// Store OTP sessions (session_id from 2Factor)
+const otpSessions = new Map();
 
-// Helper function to format mobile number
-const formatMobile = (mobile) => mobile.startsWith('+') ? mobile : `+91${mobile.replace(/^0/, '')}`;
+// Clean up expired OTP sessions (older than 10 minutes)
+setInterval(() => {
+  const now = Date.now();
+  const TEN_MINUTES = 10 * 60 * 1000;
+  for (const [mobile, session] of otpSessions.entries()) {
+    if (now - session.createdAt > TEN_MINUTES) {
+      console.log(`🧹 Cleaning expired OTP session for: ${mobile}`);
+      otpSessions.delete(mobile);
+    }
+  }
+}, 60000); // Check every minute
+
+// Helper function to format mobile number (remove +91 prefix, just use 10 digits)
+const formatMobile = (mobile) => {
+  // Remove any non-digit characters
+  let cleaned = mobile.replace(/\D/g, '');
+  // Remove country code if present
+  if (cleaned.startsWith('91') && cleaned.length === 12) {
+    cleaned = cleaned.substring(2);
+  }
+  return cleaned;
+};
+
+// Helper function to call 2Factor API with logging
+const call2FactorAPI = async (endpoint, description) => {
+  const url = `${TWOFACTOR_BASE_URL}/${TWOFACTOR_API_KEY}${endpoint}`;
+  console.log(`\n📱 2FACTOR API CALL: ${description}`);
+  console.log(`   URL: ${url.replace(TWOFACTOR_API_KEY, '***API_KEY***')}`);
+  console.log(`   Time: ${new Date().toISOString()}`);
+  
+  try {
+    const response = await fetch(url);
+    const data = await response.json();
+    
+    console.log(`   Status: ${data.Status}`);
+    console.log(`   Details: ${data.Details}`);
+    
+    if (data.Status === 'Success') {
+      console.log(`   ✅ SUCCESS`);
+    } else {
+      console.log(`   ❌ FAILED`);
+    }
+    
+    return { success: data.Status === 'Success', data };
+  } catch (error) {
+    console.log(`   ❌ ERROR: ${error.message}`);
+    return { success: false, error: error.message };
+  }
+};
+
+// Debug endpoint to check OTP sessions
+app.get('/api/debug/otp-sessions', (req, res) => {
+  const sessions = [];
+  for (const [mobile, session] of otpSessions.entries()) {
+    sessions.push({
+      mobile: mobile.replace(/\d(?=\d{4})/g, '*'),
+      purpose: session.purpose,
+      sessionId: session.sessionId.substring(0, 8) + '...',
+      createdAt: new Date(session.createdAt).toISOString(),
+      ageSeconds: Math.floor((Date.now() - session.createdAt) / 1000)
+    });
+  }
+  res.json({ activeSessions: sessions.length, sessions });
+});
 
 // ============ API ROUTES ============
 
@@ -47,54 +109,70 @@ app.get('/api/companies', async (req, res) => {
   }
 });
 
-// Send OTP
+// Send OTP using 2Factor.in
 app.post('/api/otp/send', async (req, res) => {
   const { mobile, purpose } = req.body;
   if (!mobile) return res.status(400).json({ error: 'Mobile number is required' });
   
   const formattedMobile = formatMobile(mobile);
-  console.log(`Sending OTP to: ${formattedMobile} (original: ${mobile})`);
+  console.log(`\n📤 SEND OTP REQUEST`);
+  console.log(`   Original: ${mobile}`);
+  console.log(`   Formatted: ${formattedMobile}`);
+  console.log(`   Purpose: ${purpose}`);
   
-  try {
-    const verification = await twilioClient.verify.v2.services(TWILIO_VERIFY_SID)
-      .verifications.create({ to: formattedMobile, channel: 'sms' });
-    console.log('OTP sent successfully:', verification.status);
+  const result = await call2FactorAPI(`/SMS/${formattedMobile}/AUTOGEN/${TWOFACTOR_TEMPLATE_NAME}`, `Send OTP to ${formattedMobile}`);
+  
+  if (result.success) {
+    // Store session ID for verification
+    otpSessions.set(formattedMobile, {
+      sessionId: result.data.Details,
+      purpose,
+      createdAt: Date.now()
+    });
+    console.log(`   📝 Session stored for: ${formattedMobile}`);
+    console.log(`   📝 Session ID: ${result.data.Details}`);
+    console.log(`   📝 Active sessions: ${otpSessions.size}`);
     res.json({ success: true, message: 'OTP sent successfully' });
-  } catch (error) {
-    console.error('Twilio OTP Send Error:');
-    console.error('Error code:', error.code);
-    console.error('Error message:', error.message);
-    console.error('Mobile number:', formattedMobile);
-    
-    // Development mode: Allow bypass if Twilio fails
-    if (process.env.NODE_ENV === 'development' || error.code === 60200) {
-      console.warn('⚠️ DEVELOPMENT MODE: Bypassing OTP send (Twilio unavailable)');
-      res.json({ success: true, message: 'OTP sent (dev mode - check console)', devMode: true });
-    } else {
-      res.status(500).json({ error: 'Failed to send OTP', details: error.message });
-    }
+  } else {
+    res.status(500).json({ error: 'Failed to send OTP', details: result.data?.Details || result.error });
   }
 });
 
-// Verify OTP
+// Verify OTP using 2Factor.in
 app.post('/api/otp/verify', async (req, res) => {
   const { mobile, code } = req.body;
   if (!mobile || !code) return res.status(400).json({ error: 'Mobile and OTP code are required' });
   
   const formattedMobile = formatMobile(mobile);
+  console.log(`\n🔐 VERIFY OTP REQUEST`);
+  console.log(`   Mobile: ${formattedMobile}`);
+  console.log(`   Code: ${code}`);
   
-  try {
-    const check = await twilioClient.verify.v2.services(TWILIO_VERIFY_SID)
-      .verificationChecks.create({ to: formattedMobile, code });
-    
-    if (check.status === 'approved') {
-      const signature = Buffer.from(`${formattedMobile}:${Date.now()}:verified`).toString('base64');
-      res.json({ success: true, status: 'approved', signature });
-    } else {
-      res.status(400).json({ success: false, message: 'Invalid OTP' });
+  const session = otpSessions.get(formattedMobile);
+  
+  if (!session) {
+    console.log(`   ❌ No session found for: ${formattedMobile}`);
+    console.log(`   📝 Active sessions: ${otpSessions.size}`);
+    for (const [m, s] of otpSessions.entries()) {
+      console.log(`      - ${m} (${s.purpose})`);
     }
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to verify OTP', details: error.message });
+    return res.status(400).json({ error: 'No OTP session found. Please request a new OTP.' });
+  }
+  
+  console.log(`   📝 Session found: ${session.sessionId.substring(0, 8)}...`);
+  console.log(`   📝 Session age: ${Math.floor((Date.now() - session.createdAt) / 1000)}s`);
+  
+  const result = await call2FactorAPI(`/SMS/VERIFY/${session.sessionId}/${code}`, `Verify OTP for ${formattedMobile}`);
+  
+  if (result.success && result.data.Details === 'OTP Matched') {
+    // Clear the session
+    otpSessions.delete(formattedMobile);
+    console.log(`   ✅ OTP Verified! Session cleared.`);
+    const signature = Buffer.from(`${formattedMobile}:${Date.now()}:verified`).toString('base64');
+    res.json({ success: true, status: 'approved', signature });
+  } else {
+    console.log(`   ❌ OTP verification failed: ${result.data?.Details || result.error}`);
+    res.status(400).json({ success: false, message: 'Invalid OTP', details: result.data?.Details });
   }
 });
 
@@ -400,27 +478,51 @@ app.post('/api/users/login', async (req, res) => {
     const selectedCompany = match.companies;
     const selectedRole = match.role;
     
-    // First login requires OTP (bypassed in development if Twilio fails)
+    // First login requires OTP
     if (!user.last_login) {
       if (!otp) {
         try {
-          await twilioClient.verify.v2.services(TWILIO_VERIFY_SID)
-            .verifications.create({ to: user.mobile, channel: 'sms' });
-          return res.json({ requiresOtp: true, message: 'First login requires OTP. Sent to registered mobile.' });
+          const formattedMobile = formatMobile(user.mobile);
+          const response = await fetch(`${TWOFACTOR_BASE_URL}/${TWOFACTOR_API_KEY}/SMS/${formattedMobile}/AUTOGEN/${TWOFACTOR_TEMPLATE_NAME}`);
+          const data = await response.json();
+          
+          if (data.Status === 'Success') {
+            otpSessions.set(formattedMobile, {
+              sessionId: data.Details,
+              purpose: 'first_login',
+              userId: user.id,
+              createdAt: Date.now()
+            });
+            return res.json({ requiresOtp: true, message: 'First login requires OTP. Sent to registered mobile.' });
+          } else {
+            console.error('2Factor OTP send error:', data.Details);
+            return res.status(500).json({ error: 'Failed to send OTP' });
+          }
         } catch (err) {
-          console.error('Twilio OTP send error:', err.message);
-          // Development bypass: Allow login without OTP if Twilio fails
-          console.warn('⚠️ Bypassing OTP requirement due to Twilio error (DEV MODE)');
-          // Continue to login without OTP check
+          console.error('2Factor OTP send error:', err.message);
+          return res.status(500).json({ error: 'Failed to send OTP' });
         }
       } else {
         // OTP provided, verify it
         try {
-          const check = await twilioClient.verify.v2.services(TWILIO_VERIFY_SID)
-            .verificationChecks.create({ to: user.mobile, code: otp });
-          if (check.status !== 'approved') return res.status(400).json({ error: 'Invalid OTP' });
+          const formattedMobile = formatMobile(user.mobile);
+          const session = otpSessions.get(formattedMobile);
+          
+          if (!session) {
+            return res.status(400).json({ error: 'No OTP session found. Please request a new OTP.' });
+          }
+          
+          const response = await fetch(`${TWOFACTOR_BASE_URL}/${TWOFACTOR_API_KEY}/SMS/VERIFY/${session.sessionId}/${otp}`);
+          const data = await response.json();
+          
+          if (data.Status !== 'Success' || data.Details !== 'OTP Matched') {
+            return res.status(400).json({ error: 'Invalid OTP' });
+          }
+          
+          // Clear the session
+          otpSessions.delete(formattedMobile);
         } catch (err) {
-          console.error('Twilio OTP verify error:', err.message);
+          console.error('2Factor OTP verify error:', err.message);
           return res.status(500).json({ error: 'OTP verification failed' });
         }
       }
@@ -779,26 +881,41 @@ app.post('/api/vouchers/:voucherId/approve', async (req, res) => {
       })
       .eq('id', req.params.voucherId);
     
-    // Send OTP to payee
+    // Send OTP to payee using 2Factor.in
     try {
-      await twilioClient.verify.v2.services(TWILIO_VERIFY_SID)
-        .verifications.create({ to: voucher.payee.mobile, channel: 'sms' });
+      const formattedMobile = formatMobile(voucher.payee.mobile);
+      const response = await fetch(`${TWOFACTOR_BASE_URL}/${TWOFACTOR_API_KEY}/SMS/${formattedMobile}/AUTOGEN/${TWOFACTOR_TEMPLATE_NAME}`);
+      const data = await response.json();
       
-      // Notify preparer
-      await supabase.from('notifications').insert({
-        user_id: voucher.prepared_by,
-        title: 'Voucher Approved - Payee OTP Required',
-        message: `Voucher ${voucher.serial_number} approved. OTP sent to payee. Please collect and enter the OTP.`,
-        type: 'otp_required',
-        voucher_id: req.params.voucherId
-      });
-      
-      res.json({
-        success: true,
-        message: 'Voucher approved. OTP sent to payee.',
-        payeeMobile: voucher.payee.mobile.replace(/\d(?=\d{4})/g, '*')
-      });
+      if (data.Status === 'Success') {
+        // Store session for payee verification
+        otpSessions.set(formattedMobile, {
+          sessionId: data.Details,
+          purpose: 'payee_verification',
+          voucherId: req.params.voucherId,
+          createdAt: Date.now()
+        });
+        
+        // Notify preparer
+        await supabase.from('notifications').insert({
+          user_id: voucher.prepared_by,
+          title: 'Voucher Approved - Payee OTP Required',
+          message: `Voucher ${voucher.serial_number} approved. OTP sent to payee. Please collect and enter the OTP.`,
+          type: 'otp_required',
+          voucher_id: req.params.voucherId
+        });
+        
+        res.json({
+          success: true,
+          message: 'Voucher approved. OTP sent to payee.',
+          payeeMobile: voucher.payee.mobile.replace(/\d(?=\d{4})/g, '*')
+        });
+      } else {
+        console.error('2Factor Error:', data);
+        res.status(500).json({ error: 'Failed to send OTP to payee' });
+      }
     } catch (err) {
+      console.error('2Factor Error:', err.message);
       res.status(500).json({ error: 'Failed to send OTP to payee' });
     }
   } catch (error) {
@@ -845,6 +962,10 @@ app.post('/api/vouchers/:voucherId/reject', async (req, res) => {
 app.post('/api/vouchers/:voucherId/complete', async (req, res) => {
   const { otp } = req.body;
   
+  console.log(`\n💳 COMPLETE VOUCHER REQUEST`);
+  console.log(`   Voucher ID: ${req.params.voucherId}`);
+  console.log(`   OTP: ${otp}`);
+  
   try {
     const { data: voucher } = await supabase.from('vouchers')
       .select('*, payee:payees(mobile)')
@@ -856,13 +977,33 @@ app.post('/api/vouchers/:voucherId/complete', async (req, res) => {
       return res.status(400).json({ error: 'Voucher is not awaiting payee OTP' });
     }
     
-    // Verify payee OTP
-    const check = await twilioClient.verify.v2.services(TWILIO_VERIFY_SID)
-      .verificationChecks.create({ to: voucher.payee.mobile, code: otp });
+    // Verify payee OTP using 2Factor.in
+    const formattedMobile = formatMobile(voucher.payee.mobile);
+    console.log(`   Payee Mobile: ${formattedMobile}`);
     
-    if (check.status !== 'approved') {
-      return res.status(400).json({ error: 'Invalid OTP' });
+    const session = otpSessions.get(formattedMobile);
+    
+    if (!session) {
+      console.log(`   ❌ No OTP session found for payee: ${formattedMobile}`);
+      console.log(`   📝 Active sessions: ${otpSessions.size}`);
+      for (const [m, s] of otpSessions.entries()) {
+        console.log(`      - ${m} (${s.purpose})`);
+      }
+      return res.status(400).json({ error: 'No OTP session found. Please click "Resend OTP" first.' });
     }
+    
+    console.log(`   📝 Session found: ${session.sessionId.substring(0, 8)}...`);
+    
+    const result = await call2FactorAPI(`/SMS/VERIFY/${session.sessionId}/${otp}`, `Verify Payee OTP for voucher ${req.params.voucherId}`);
+    
+    if (!result.success || result.data.Details !== 'OTP Matched') {
+      console.log(`   ❌ OTP verification failed: ${result.data?.Details || result.error}`);
+      return res.status(400).json({ error: 'Invalid OTP', details: result.data?.Details });
+    }
+    
+    // Clear the session
+    console.log(`   ✅ OTP Verified! Completing voucher...`);
+    otpSessions.delete(formattedMobile);
     
     const signature = Buffer.from(
       `${voucher.payee.mobile}:${req.params.voucherId}:${Date.now()}:verified`
@@ -894,8 +1035,11 @@ app.post('/api/vouchers/:voucherId/complete', async (req, res) => {
   }
 });
 
-// Resend payee OTP
+// Resend payee OTP using 2Factor.in
 app.post('/api/vouchers/:voucherId/resend-otp', async (req, res) => {
+  console.log(`\n🔄 RESEND PAYEE OTP REQUEST`);
+  console.log(`   Voucher ID: ${req.params.voucherId}`);
+  
   try {
     const { data: voucher } = await supabase.from('vouchers')
       .select('*, payee:payees(mobile)')
@@ -903,14 +1047,31 @@ app.post('/api/vouchers/:voucherId/resend-otp', async (req, res) => {
       .single();
     
     if (!voucher || voucher.status !== 'awaiting_payee_otp') {
+      console.log(`   ❌ Invalid voucher or status`);
       return res.status(400).json({ error: 'Invalid voucher or status' });
     }
     
-    await twilioClient.verify.v2.services(TWILIO_VERIFY_SID)
-      .verifications.create({ to: voucher.payee.mobile, channel: 'sms' });
+    const formattedMobile = formatMobile(voucher.payee.mobile);
+    console.log(`   Payee Mobile: ${formattedMobile}`);
     
-    res.json({ success: true, message: 'OTP resent to payee' });
+    const result = await call2FactorAPI(`/SMS/${formattedMobile}/AUTOGEN/${TWOFACTOR_TEMPLATE_NAME}`, `Resend Payee OTP for voucher ${req.params.voucherId}`);
+    
+    if (result.success) {
+      // Store session ID for verification
+      otpSessions.set(formattedMobile, {
+        sessionId: result.data.Details,
+        purpose: 'payee_verification',
+        voucherId: req.params.voucherId,
+        createdAt: Date.now()
+      });
+      console.log(`   📝 Session stored for: ${formattedMobile}`);
+      console.log(`   📝 Session ID: ${result.data.Details}`);
+      res.json({ success: true, message: 'OTP resent to payee' });
+    } else {
+      res.status(500).json({ error: 'Failed to resend OTP', details: result.data?.Details || result.error });
+    }
   } catch (error) {
+    console.log(`   ❌ Error: ${error.message}`);
     res.status(500).json({ error: error.message });
   }
 });
