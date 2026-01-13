@@ -760,16 +760,16 @@ const VoucherList = ({ filter }) => {
       </div></div>
       {showModal && selectedVoucher && (
         <div className="modal-overlay" onClick={() => setShowModal(false)}><div className="modal modal-lg" onClick={(e) => e.stopPropagation()}>
-          <div className="modal-header" style={{flexWrap: 'wrap', gap: '0.5rem'}}>
-            <h3 className="modal-title" style={{flex: '1 1 auto', minWidth: '120px'}}>Voucher Details</h3>
-            <div style={{display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap'}}>
+          <div className="modal-header">
+            <h3 className="modal-title">Voucher Details</h3>
+            <div style={{display: 'flex', gap: '0.5rem', alignItems: 'center'}}>
               {user.role === 'admin' && (
-                <button className="btn btn-sm btn-danger" onClick={() => setShowDeleteModal(true)}>
-                  🗑️
+                <button className="btn btn-sm btn-danger" onClick={(e) => { e.stopPropagation(); setShowDeleteModal(true); }}>
+                  🗑️ <span className="btn-text">Delete</span>
                 </button>
               )}
-              <button className="btn btn-sm btn-secondary" onClick={() => handlePrintSingle(selectedVoucher)}>
-                {Icons.printer}
+              <button className="btn btn-sm btn-secondary" onClick={(e) => { e.stopPropagation(); handlePrintSingle(selectedVoucher); }}>
+                {Icons.printer} <span className="btn-text">Print</span>
               </button>
               <button className="modal-close" onClick={() => setShowModal(false)}>×</button>
             </div>

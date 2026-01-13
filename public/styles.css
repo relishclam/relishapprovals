@@ -325,17 +325,27 @@ body {
   max-width: 500px;
   width: 100%;
   max-height: 90vh;
-  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .modal-lg { max-width: 700px; }
 
 .modal-header {
-  padding: 1.5rem;
+  padding: 1rem 1.5rem;
   border-bottom: 1px solid #eee;
   display: flex;
   justify-content: space-between;
   align-items: center;
+  flex-shrink: 0;
+  background: white;
+}
+
+.modal-body {
+  padding: 1.5rem;
+  overflow-y: auto;
+  flex: 1;
 }
 
 .modal-title { font-size: 1.25rem; font-weight: 600; }
@@ -818,22 +828,21 @@ body {
   
   .modal-header {
     padding: 0.75rem 1rem;
-    position: sticky;
-    top: 0;
-    background: white;
-    z-index: 10;
-    flex-wrap: wrap;
-    gap: 0.5rem;
+    flex-shrink: 0;
   }
   
   .modal-title {
     font-size: 1rem;
-    flex: 1 1 auto;
   }
   
   .modal-header .btn-sm {
     padding: 0.4rem 0.6rem;
     font-size: 0.8rem;
+  }
+  
+  /* Hide button text on small screens, show only icons */
+  .modal-header .btn-text {
+    display: none;
   }
   
   .modal-body {
@@ -843,18 +852,12 @@ body {
   .modal-footer {
     padding: 1rem;
     flex-wrap: wrap;
-    position: sticky;
-    bottom: 0;
-    background: white;
+    flex-shrink: 0;
   }
   
   .modal-footer .btn {
     flex: 1;
     min-width: calc(50% - 0.5rem);
-  }
-  
-  .modal-title {
-    font-size: 1.1rem;
   }
   
   .modal-close {
