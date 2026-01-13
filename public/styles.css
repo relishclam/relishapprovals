@@ -277,7 +277,7 @@ body {
 .status-completed { background: rgba(16,185,129,0.1); color: var(--success); }
 .status-rejected { background: rgba(239,68,68,0.1); color: var(--error); }
 
-.otp-container { display: flex; gap: 0.75rem; justify-content: center; margin: 1.5rem 0; }
+.otp-container { display: flex; gap: 0.75rem; justify-content: center; margin: 1.5rem 0; flex-wrap: wrap; }
 
 .otp-input {
   width: 50px;
@@ -294,6 +294,15 @@ body {
   outline: none;
   border-color: var(--relish-purple);
   box-shadow: 0 0 0 3px rgba(123,75,148,0.1);
+}
+
+/* OTP Actions Container - Mobile Friendly */
+.otp-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  justify-content: center;
+  margin-top: 1rem;
 }
 
 .modal-overlay {
@@ -378,9 +387,18 @@ body {
 }
 
 .voucher-signature { text-align: center; font-size: 0.8rem; }
-.voucher-signature-line { border-bottom: 1px solid #333; height: 40px; margin-bottom: 0.5rem; display: flex; align-items: flex-end; justify-content: center; padding-bottom: 0.25rem; }
-.voucher-signature-label { color: #666; }
-.signature-verified { color: var(--success); font-size: 0.75rem; }
+.voucher-signature-line { 
+  border-bottom: 1px solid #333; 
+  min-height: 60px; 
+  margin-bottom: 0.5rem; 
+  display: flex; 
+  align-items: flex-end; 
+  justify-content: center; 
+  padding-bottom: 0.35rem;
+  padding-top: 0.25rem;
+}
+.voucher-signature-label { color: #666; font-weight: 500; }
+.signature-verified { color: var(--success); font-size: 0.75rem; font-weight: 600; }
 
 .otp-section {
   margin-top: 1.5rem;
@@ -740,6 +758,280 @@ body {
   
   .pwa-install-actions .btn {
     flex: 1;
+  }
+}
+
+/* Mobile OTP Section Improvements */
+@media (max-width: 480px) {
+  .otp-container {
+    gap: 0.4rem;
+  }
+  
+  .otp-input {
+    width: 40px;
+    height: 50px;
+    font-size: 1.25rem;
+    border-radius: 8px;
+  }
+  
+  .otp-section {
+    padding: 1rem;
+  }
+  
+  .otp-section p {
+    font-size: 0.9rem;
+  }
+  
+  /* Ensure OTP action buttons are visible and stack on mobile */
+  .otp-section > div:last-child,
+  .otp-section div[style*="display:flex"],
+  .otp-section div[style*="display: flex"] {
+    flex-direction: column !important;
+    gap: 0.75rem !important;
+    width: 100%;
+  }
+  
+  .otp-section .btn {
+    width: 100% !important;
+    justify-content: center;
+  }
+}
+
+/* Mobile Modal Improvements */
+@media (max-width: 768px) {
+  .modal-overlay {
+    padding: 0.5rem;
+    align-items: flex-start;
+    padding-top: 2rem;
+  }
+  
+  .modal {
+    max-height: calc(100vh - 3rem);
+    border-radius: 12px;
+    margin: 0;
+  }
+  
+  .modal-lg {
+    max-width: 100%;
+  }
+  
+  .modal-header {
+    padding: 1rem;
+    position: sticky;
+    top: 0;
+    background: white;
+    z-index: 10;
+  }
+  
+  .modal-body {
+    padding: 1rem;
+  }
+  
+  .modal-footer {
+    padding: 1rem;
+    flex-wrap: wrap;
+    position: sticky;
+    bottom: 0;
+    background: white;
+  }
+  
+  .modal-footer .btn {
+    flex: 1;
+    min-width: calc(50% - 0.5rem);
+  }
+  
+  .modal-title {
+    font-size: 1.1rem;
+  }
+  
+  .modal-close {
+    padding: 0.25rem;
+  }
+}
+
+/* Very Small Screens (below 480px) */
+@media (max-width: 480px) {
+  .modal-footer {
+    flex-direction: column;
+  }
+  
+  .modal-footer .btn {
+    width: 100%;
+    min-width: 100%;
+  }
+  
+  .btn-group {
+    flex-direction: column;
+  }
+  
+  .btn-group .btn {
+    width: 100%;
+  }
+}
+
+/* Mobile Table Improvements */
+@media (max-width: 768px) {
+  .table th,
+  .table td {
+    padding: 0.75rem 0.5rem;
+    font-size: 0.8rem;
+  }
+  
+  .table-container {
+    margin: 0 -1rem;
+    width: calc(100% + 2rem);
+  }
+}
+
+/* Mobile Notifications Panel */
+@media (max-width: 768px) {
+  .notifications-panel {
+    width: 100%;
+    max-width: 100%;
+    left: 0;
+    right: 0;
+  }
+}
+
+/* Mobile Toast Notifications */
+@media (max-width: 768px) {
+  .toast-container {
+    left: 1rem;
+    right: 1rem;
+    bottom: 1rem;
+  }
+  
+  .toast {
+    min-width: auto;
+    width: 100%;
+  }
+}
+
+/* Mobile Header Improvements */
+@media (max-width: 768px) {
+  .header-right {
+    gap: 0.5rem;
+  }
+  
+  .user-badge {
+    display: none;
+  }
+  
+  .logout-btn span {
+    display: none;
+  }
+  
+  .logout-btn {
+    padding: 0.5rem;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    justify-content: center;
+  }
+}
+
+/* Mobile Voucher Preview */
+@media (max-width: 480px) {
+  .voucher-preview {
+    padding: 1rem;
+    font-size: 0.75rem;
+  }
+  
+  .voucher-meta {
+    grid-template-columns: 1fr;
+  }
+  
+  .voucher-company {
+    font-size: 0.95rem;
+  }
+  
+  .voucher-title {
+    font-size: 1rem;
+  }
+}
+
+/* Mobile Stats Grid */
+@media (max-width: 480px) {
+  .stats-grid {
+    gap: 0.75rem;
+  }
+  
+  .stat-card {
+    padding: 1rem;
+  }
+  
+  .stat-icon {
+    width: 36px;
+    height: 36px;
+    font-size: 1.2rem;
+    margin-bottom: 0.75rem;
+  }
+  
+  .stat-value {
+    font-size: 1.5rem;
+  }
+  
+  .stat-label {
+    font-size: 0.8rem;
+  }
+}
+
+/* Mobile Login Card */
+@media (max-width: 480px) {
+  .login-container {
+    padding: 1rem;
+  }
+  
+  .login-card {
+    padding: 1.5rem;
+    border-radius: 16px;
+  }
+  
+  .login-title {
+    font-size: 1.25rem;
+  }
+  
+  .login-subtitle {
+    font-size: 0.9rem;
+  }
+}
+
+/* Mobile Form Improvements */
+@media (max-width: 768px) {
+  .form-row-4 {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+}
+
+/* Mobile Card Improvements */
+@media (max-width: 480px) {
+  .card {
+    border-radius: 12px;
+    margin-bottom: 1rem;
+  }
+  
+  .card-header {
+    padding: 1rem;
+  }
+  
+  .card-title {
+    font-size: 1rem;
+  }
+  
+  .card-body {
+    padding: 1rem;
+  }
+}
+
+/* Mobile Page Title */
+@media (max-width: 480px) {
+  .page-title {
+    font-size: 1.35rem;
+  }
+  
+  .page-subtitle {
+    font-size: 0.85rem;
   }
 }
 

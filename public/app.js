@@ -162,6 +162,25 @@ const OTPInput = ({ length = 6, value = '', onChange }) => {
 const VoucherPreview = ({ voucher }) => {
   const formatDate = (d) => new Date(d).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
   const formatCurrency = (a) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(a);
+  
+  // Signature block renderer
+  const SignatureBlock = ({ name, role, timestamp, label, verified }) => (
+    <div className="voucher-signature">
+      <div className="voucher-signature-line">
+        {name ? (
+          <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:'2px',fontSize:'0.75rem'}}>
+            <span style={{fontWeight:600}}>{name}</span>
+            <span style={{color:'#666',fontSize:'0.7rem'}}>{role === 'admin' ? '🛡️ Approver' : '👤 Accounts'}</span>
+            <span style={{color:'#888',fontSize:'0.65rem'}}>{timestamp ? formatDate(timestamp) : ''}</span>
+          </div>
+        ) : verified ? (
+          <span className="signature-verified">✓ OTP Verified</span>
+        ) : '-'}
+      </div>
+      <div className="voucher-signature-label">{label}</div>
+    </div>
+  );
+  
   return (
     <div className="voucher-preview">
       <div className="voucher-header">
@@ -179,9 +198,29 @@ const VoucherPreview = ({ voucher }) => {
       {voucher.narration && <div className="voucher-meta-item mb-1"><span className="voucher-meta-label">Narration:</span><span className="voucher-meta-value">{voucher.narration}</span></div>}
       <div className="voucher-total">TOTAL: {formatCurrency(voucher.amount)}</div>
       <div className="voucher-signatures">
-        <div className="voucher-signature"><div className="voucher-signature-line">{voucher.preparer_username}</div><div className="voucher-signature-label">Prepared By</div></div>
-        <div className="voucher-signature"><div className="voucher-signature-line">{voucher.approver_username || '-'}</div><div className="voucher-signature-label">Approved By</div></div>
-        <div className="voucher-signature"><div className="voucher-signature-line">{voucher.payee_otp_verified ? <span className="signature-verified">✓ OTP Verified</span> : '-'}</div><div className="voucher-signature-label">Payee</div></div>
+        <SignatureBlock 
+          name={voucher.preparer_name} 
+          role="accounts" 
+          timestamp={voucher.created_at} 
+          label="Prepared By" 
+        />
+        <SignatureBlock 
+          name={voucher.approver_name} 
+          role="admin" 
+          timestamp={voucher.approved_at} 
+          label="Approved By" 
+        />
+        <div className="voucher-signature">
+          <div className="voucher-signature-line">
+            {voucher.payee_otp_verified ? (
+              <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:'2px',fontSize:'0.75rem'}}>
+                <span className="signature-verified">✓ OTP Verified</span>
+                <span style={{color:'#888',fontSize:'0.65rem'}}>{voucher.completed_at ? formatDate(voucher.completed_at) : ''}</span>
+              </div>
+            ) : '-'}
+          </div>
+          <div className="voucher-signature-label">Payee</div>
+        </div>
       </div>
     </div>
   );
@@ -635,15 +674,30 @@ const VoucherList = ({ filter }) => {
       
       <div class="voucher-signatures">
         <div class="signature-box">
-          <div class="signature-line">${v.preparer_username}</div>
+          <div class="signature-line">
+            ${v.preparer_name || v.preparer_username}<br/>
+            <span style="font-size:9px;color:#666">👤 Accounts</span><br/>
+            <span style="font-size:8px;color:#888">${formatDate(v.created_at)}</span>
+          </div>
           <div class="signature-label">Prepared By</div>
         </div>
         <div class="signature-box">
-          <div class="signature-line">${v.approver_username || '___________'}</div>
+          <div class="signature-line">
+            ${v.approver_name ? `
+              ${v.approver_name}<br/>
+              <span style="font-size:9px;color:#666">🛡️ Approver</span><br/>
+              <span style="font-size:8px;color:#888">${v.approved_at ? formatDate(v.approved_at) : ''}</span>
+            ` : '___________'}
+          </div>
           <div class="signature-label">Approved By</div>
         </div>
         <div class="signature-box">
-          <div class="signature-line">${v.payee_otp_verified ? '✓ OTP Verified' : '___________'}</div>
+          <div class="signature-line">
+            ${v.payee_otp_verified ? `
+              ✓ OTP Verified<br/>
+              <span style="font-size:8px;color:#888">${v.completed_at ? formatDate(v.completed_at) : ''}</span>
+            ` : '___________'}
+          </div>
           <div class="signature-label">Payee Signature</div>
         </div>
       </div>
@@ -726,7 +780,7 @@ const VoucherList = ({ filter }) => {
               <div className="otp-section">
                 {Icons.smartphone}<p style={{fontWeight:500,margin:'0.5rem 0'}}>Enter Payee OTP</p><p style={{fontSize:'0.85rem',color:'#666',marginBottom:'1rem'}}>OTP sent to payee: {selectedVoucher.payee_mobile?.replace(/\d(?=\d{4})/g, '*')}</p>
                 <OTPInput value={payeeOtp} onChange={setPayeeOtp} />
-                <div style={{display:'flex',gap:'1rem',justifyContent:'center',marginTop:'1rem'}}><button className="btn btn-secondary btn-sm" onClick={handleResend}>{Icons.refresh} Resend OTP</button><button className="btn btn-success" onClick={handleComplete} disabled={loading || payeeOtp.length < 6}>{loading && Icons.loader}{Icons.checkCircle} Complete Voucher</button></div>
+                <div className="otp-actions" style={{display:'flex',flexDirection:'row',flexWrap:'wrap',gap:'0.75rem',justifyContent:'center',marginTop:'1rem'}}><button className="btn btn-secondary btn-sm" style={{flex:'1 1 auto',minWidth:'140px'}} onClick={handleResend}>{Icons.refresh} Resend OTP</button><button className="btn btn-success" style={{flex:'1 1 auto',minWidth:'160px'}} onClick={handleComplete} disabled={loading || payeeOtp.length < 6}>{loading && Icons.loader}{Icons.checkCircle} Complete Voucher</button></div>
               </div>
             )}
           </div>
@@ -1375,7 +1429,7 @@ const UsersManagement = () => {
                   <button 
                     className="btn btn-sm btn-secondary" 
                     onClick={handleResendOtp}
-                    style={{marginTop: '1rem'}}
+                    style={{marginTop: '1rem', width: '100%', maxWidth: '200px'}}
                   >
                     {Icons.refresh} Resend OTP
                   </button>
@@ -1681,7 +1735,7 @@ const UsersManagement = () => {
       {/* OTP Verification Modal */}
       {showVerifyModal && verifyingUser && (
         <div className="modal-overlay" onClick={() => setShowVerifyModal(false)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{maxWidth: '400px'}}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} style={{maxWidth: '400px'}}>
             <div className="modal-header">
               <h2 className="modal-title">Verify User Mobile</h2>
               <button className="modal-close" onClick={() => setShowVerifyModal(false)}>×</button>
@@ -1694,7 +1748,7 @@ const UsersManagement = () => {
                 <label className="form-label">Enter 6-digit OTP</label>
                 <input
                   type="text"
-                  className="form-control"
+                  className="form-input"
                   placeholder="Enter OTP"
                   value={verifyOtp}
                   onChange={(e) => setVerifyOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
@@ -1705,7 +1759,7 @@ const UsersManagement = () => {
               <button 
                 className="btn btn-secondary btn-sm" 
                 onClick={() => handleResendVerification(verifyingUser.id, verifyingUser.mobile, verifyingUser.name)}
-                style={{marginTop: '0.5rem'}}
+                style={{marginTop: '0.5rem', width: '100%'}}
               >
                 {Icons.refresh} Resend OTP
               </button>
