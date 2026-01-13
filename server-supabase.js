@@ -83,20 +83,26 @@ const formatMobile = (mobile) => {
 const call2FactorAPI = async (endpoint, description) => {
   const url = `${TWOFACTOR_BASE_URL}/${TWOFACTOR_API_KEY}${endpoint}`;
   console.log(`\n📱 2FACTOR API CALL: ${description}`);
-  console.log(`   URL: ${url.replace(TWOFACTOR_API_KEY, '***API_KEY***')}`);
+  console.log(`   Full Endpoint: ${endpoint}`);
+  console.log(`   Template Name: ${TWOFACTOR_TEMPLATE_NAME}`);
   console.log(`   Time: ${new Date().toISOString()}`);
   
   try {
     const response = await fetch(url);
     const data = await response.json();
     
-    console.log(`   Status: ${data.Status}`);
-    console.log(`   Details: ${data.Details}`);
+    console.log(`   Response Status: ${data.Status}`);
+    console.log(`   Response Details: ${JSON.stringify(data.Details)}`);
+    
+    // Check if Voice was used (indicates template issue)
+    if (data.Details && typeof data.Details === 'string' && data.Details.includes('Voice')) {
+      console.log(`   ⚠️ WARNING: Voice OTP was triggered - possible template mismatch!`);
+    }
     
     if (data.Status === 'Success') {
       console.log(`   ✅ SUCCESS`);
     } else {
-      console.log(`   ❌ FAILED`);
+      console.log(`   ❌ FAILED: ${JSON.stringify(data)}`);
     }
     
     return { success: data.Status === 'Success', data };
