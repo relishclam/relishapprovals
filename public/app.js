@@ -760,8 +760,8 @@ const VoucherList = ({ filter }) => {
       </div></div>
       {showModal && selectedVoucher && (
         <div className="modal-overlay" onClick={() => setShowModal(false)}><div className="modal modal-lg" onClick={(e) => e.stopPropagation()}>
-          <div className="modal-header">
-            <h3 className="modal-title">Voucher Details</h3>
+          <div className="modal-header" style={{background: '#f5841f', color: 'white'}}>
+            <h3 className="modal-title" style={{color: 'white'}}>Voucher Details</h3>
             <div style={{display: 'flex', gap: '0.5rem', alignItems: 'center'}}>
               {user.role === 'admin' && (
                 <button className="btn btn-sm btn-danger" onClick={(e) => { e.stopPropagation(); setShowDeleteModal(true); }}>
@@ -771,7 +771,7 @@ const VoucherList = ({ filter }) => {
               <button className="btn btn-sm btn-secondary" onClick={(e) => { e.stopPropagation(); handlePrintSingle(selectedVoucher); }}>
                 {Icons.printer} <span className="btn-text">Print</span>
               </button>
-              <button className="modal-close" onClick={() => setShowModal(false)}>×</button>
+              <button className="modal-close" style={{color: 'white'}} onClick={() => setShowModal(false)}>×</button>
             </div>
           </div>
           <div className="modal-body">
