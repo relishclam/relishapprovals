@@ -139,6 +139,31 @@ app.get('/api/debug/otp-sessions', async (req, res) => {
 
 // ============ API ROUTES ============
 
+// Debug endpoint to test voucher and payee data
+app.get('/api/debug/voucher/:voucherId', async (req, res) => {
+  try {
+    const { data: voucher, error } = await supabase.from('vouchers')
+      .select('*, payee:payees(id, name, mobile)')
+      .eq('id', req.params.voucherId)
+      .single();
+    
+    if (error) {
+      return res.json({ error: error.message, code: error.code });
+    }
+    
+    res.json({
+      voucherId: voucher?.id,
+      status: voucher?.status,
+      payeeId: voucher?.payee_id,
+      payeeData: voucher?.payee,
+      hasPayee: !!voucher?.payee,
+      hasPayeeMobile: !!voucher?.payee?.mobile
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Debug endpoint to test 2Factor.in API connection
 app.get('/api/debug/test-2factor', async (req, res) => {
   try {
