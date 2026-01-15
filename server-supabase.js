@@ -716,15 +716,37 @@ app.post('/api/users/:userId/switch-company', async (req, res) => {
   }
 });
 
-// Get company users
+// Get company users (via user_companies junction table for multi-company support)
 app.get('/api/companies/:companyId/users', async (req, res) => {
   try {
-    const { data, error } = await supabase.from('users')
-      .select('id, name, username, mobile, aadhar, role, mobile_verified, last_login, created_at')
+    // Query users through the user_companies junction table
+    const { data, error } = await supabase.from('user_companies')
+      .select(`
+        role,
+        is_primary,
+        users:user_id (
+          id,
+          name,
+          username,
+          mobile,
+          aadhar,
+          mobile_verified,
+          last_login,
+          created_at
+        )
+      `)
       .eq('company_id', req.params.companyId);
     
     if (error) throw error;
-    res.json(data);
+    
+    // Flatten the response to match expected format
+    const users = data.map(uc => ({
+      ...uc.users,
+      role: uc.role,  // Use role from user_companies (company-specific role)
+      is_primary: uc.is_primary
+    }));
+    
+    res.json(users);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
