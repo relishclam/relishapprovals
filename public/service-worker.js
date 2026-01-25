@@ -1,5 +1,5 @@
-const CACHE_NAME = 'relish-approvals-v9';
-const DYNAMIC_CACHE = 'relish-approvals-dynamic-v8';
+const CACHE_NAME = 'relish-approvals-v10';
+const DYNAMIC_CACHE = 'relish-approvals-dynamic-v9';
 const urlsToCache = [
   '/',
   '/index.html',
@@ -131,26 +131,43 @@ async function syncVouchers() {
   // Would sync pending actions when back online
 }
 
-// Push notifications (for future use)
+// Push notifications with native device alerts
 self.addEventListener('push', (event) => {
   console.log('[Service Worker] Push notification received');
-  const data = event.data ? event.data.json() : {};
+  
+  let data = {};
+  try {
+    data = event.data ? event.data.json() : {};
+  } catch (e) {
+    data = { title: 'Relish Approvals', body: event.data?.text() || 'New notification' };
+  }
   
   const options = {
     body: data.body || 'New voucher awaiting approval',
-    icon: '/android-launchericon-192-192.png',
-    badge: '/android-launchericon-96-96.png',
-    vibrate: [200, 100, 200],
+    icon: data.icon || '/android-launchericon-192-192.png',
+    badge: data.badge || '/android-launchericon-96-96.png',
+    // Vibration pattern: vibrate 300ms, pause 100ms, vibrate 200ms, pause 100ms, vibrate 300ms
+    vibrate: [300, 100, 200, 100, 300],
+    // Sound is handled by the system based on notification settings
+    sound: '/notification.mp3', // Optional: custom sound file
     data: {
-      url: data.url || '/'
+      url: data.url || '/',
+      timestamp: data.timestamp || Date.now()
     },
     actions: [
-      { action: 'view', title: 'View' },
-      { action: 'close', title: 'Close' }
+      { action: 'view', title: '👁️ View', icon: '/android-launchericon-96-96.png' },
+      { action: 'dismiss', title: '✕ Dismiss' }
     ],
+    // Keep notification visible until user interacts
     requireInteraction: true,
-    tag: 'relish-approval',
-    renotify: true
+    // Unique tag - same tag replaces previous notification
+    tag: 'relish-voucher-' + (data.timestamp || Date.now()),
+    // Re-notify even if replacing a notification with same tag
+    renotify: true,
+    // Show notification silently (no sound/vibration) - set to false for alerts
+    silent: false,
+    // Timestamp for when the notification was created
+    timestamp: data.timestamp || Date.now()
   };
 
   event.waitUntil(
@@ -160,17 +177,25 @@ self.addEventListener('push', (event) => {
 
 // Notification click handler
 self.addEventListener('notificationclick', (event) => {
+  console.log('[Service Worker] Notification clicked:', event.action);
   event.notification.close();
 
+  // Handle dismiss action - just close the notification
+  if (event.action === 'dismiss') {
+    return;
+  }
+
+  // Handle view action or notification body click
   if (event.action === 'view' || !event.action) {
-    const urlToOpen = event.notification.data.url || '/';
+    const urlToOpen = event.notification.data?.url || '/';
     
     event.waitUntil(
       clients.matchAll({ type: 'window', includeUncontrolled: true })
         .then((clientList) => {
           // Check if app is already open
           for (let client of clientList) {
-            if (client.url === urlToOpen && 'focus' in client) {
+            if (client.url.includes(self.registration.scope) && 'focus' in client) {
+              client.postMessage({ type: 'NOTIFICATION_CLICK', url: urlToOpen });
               return client.focus();
             }
           }
@@ -181,4 +206,9 @@ self.addEventListener('notificationclick', (event) => {
         })
     );
   }
+});
+
+// Handle notification close (swipe away or timeout)
+self.addEventListener('notificationclose', (event) => {
+  console.log('[Service Worker] Notification closed:', event.notification.tag);
 });

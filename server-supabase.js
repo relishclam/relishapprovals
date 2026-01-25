@@ -3,6 +3,7 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const fetch = require('node-fetch');
+const webpush = require('web-push');
 const { createClient } = require('@supabase/supabase-js');
 
 const app = express();
@@ -27,6 +28,18 @@ const TWOFACTOR_API_KEY = process.env.TWOFACTOR_API_KEY;
 const TWOFACTOR_BASE_URL = 'https://2factor.in/API/V1';
 const TWOFACTOR_TEMPLATE_NAME = process.env.TWOFACTOR_TEMPLATE_NAME || 'Relish-Approvals';
 // Template: "Dear #VAR1#, Your ClamFlow OTP is #VAR2#." - Sender ID: Relish
+
+// Web Push Configuration (VAPID Keys)
+// Generate your own keys using: npx web-push generate-vapid-keys
+const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || 'BA7EAuWAKsBovb6XVV-C6YVod7AioJx3I6t50FVdvADoRUsgeeXVKgVddisOrNnFMvVxV0k1gy-ZZnU4Gfo-IeY';
+const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || 'hKFTYITnmaDCIjTJ0iv6qCcZaJd4CRsIOiCtM_il2Gk';
+
+// Configure web-push
+webpush.setVapidDetails(
+  'mailto:admin@relishfoods.in',
+  VAPID_PUBLIC_KEY,
+  VAPID_PRIVATE_KEY
+);
 
 // Store OTP sessions in Supabase (for serverless compatibility)
 // Helper functions for OTP session management
@@ -892,6 +905,16 @@ app.post('/api/vouchers', async (req, res) => {
       }));
       
       await supabase.from('notifications').insert(notifications);
+      
+      // Send push notifications to admins
+      for (const admin of admins) {
+        sendPushNotification(
+          admin.id,
+          '📋 New Voucher Pending Approval',
+          `Voucher ${serialNumber} by ${preparer.name} requires your approval.`,
+          '/'
+        );
+      }
     }
     
     res.json({ success: true, voucherId: voucher.id, serialNumber });
@@ -1037,6 +1060,14 @@ app.post('/api/vouchers/:voucherId/approve', async (req, res) => {
           voucher_id: req.params.voucherId
         });
         
+        // Send push notification to preparer
+        sendPushNotification(
+          voucher.prepared_by,
+          '✅ Voucher Approved - OTP Sent',
+          `Voucher ${voucher.serial_number} approved. Collect OTP from payee.`,
+          '/'
+        );
+        
         res.json({
           success: true,
           message: 'Voucher approved. OTP sent to payee.',
@@ -1084,6 +1115,14 @@ app.post('/api/vouchers/:voucherId/reject', async (req, res) => {
       type: 'rejected',
       voucher_id: req.params.voucherId
     });
+    
+    // Send push notification to preparer
+    sendPushNotification(
+      voucher.prepared_by,
+      '❌ Voucher Rejected',
+      `Voucher ${voucher.serial_number} rejected: ${reason || 'No reason specified'}`,
+      '/'
+    );
     
     res.json({ success: true });
   } catch (error) {
@@ -1156,6 +1195,14 @@ app.post('/api/vouchers/:voucherId/complete', async (req, res) => {
         type: 'completed',
         voucher_id: req.params.voucherId
       });
+      
+      // Send push notification to approver
+      sendPushNotification(
+        voucher.approved_by,
+        '💰 Voucher Ready for Payment',
+        `Voucher ${voucher.serial_number} is complete and ready for payment.`,
+        '/'
+      );
     }
     
     res.json({ success: true, signature, message: 'Voucher completed. Payment may be initiated.' });
@@ -1270,6 +1317,135 @@ app.post('/api/users/:userId/notifications/read-all', async (req, res) => {
       .update({ read: true })
       .eq('user_id', req.params.userId);
     res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============ PUSH NOTIFICATIONS ============
+
+// Get VAPID public key (client needs this to subscribe)
+app.get('/api/push/vapid-public-key', (req, res) => {
+  res.json({ publicKey: VAPID_PUBLIC_KEY });
+});
+
+// Save push subscription for a user
+app.post('/api/users/:userId/push-subscription', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const subscription = req.body;
+    
+    if (!subscription || !subscription.endpoint) {
+      return res.status(400).json({ error: 'Invalid subscription' });
+    }
+    
+    // Delete existing subscriptions for this endpoint
+    await supabase.from('push_subscriptions')
+      .delete()
+      .eq('endpoint', subscription.endpoint);
+    
+    // Insert new subscription
+    const { error } = await supabase.from('push_subscriptions').insert({
+      user_id: userId,
+      endpoint: subscription.endpoint,
+      p256dh: subscription.keys.p256dh,
+      auth: subscription.keys.auth,
+      subscription_json: JSON.stringify(subscription)
+    });
+    
+    if (error) throw error;
+    
+    res.json({ success: true, message: 'Push subscription saved' });
+  } catch (error) {
+    console.error('Error saving push subscription:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Delete push subscription
+app.delete('/api/users/:userId/push-subscription', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { endpoint } = req.body;
+    
+    await supabase.from('push_subscriptions')
+      .delete()
+      .eq('user_id', userId)
+      .eq('endpoint', endpoint);
+    
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Helper function to send push notification to a user
+const sendPushNotification = async (userId, title, body, url = '/') => {
+  try {
+    // Get all push subscriptions for this user
+    const { data: subscriptions, error } = await supabase.from('push_subscriptions')
+      .select('*')
+      .eq('user_id', userId);
+    
+    if (error || !subscriptions || subscriptions.length === 0) {
+      console.log('No push subscriptions found for user:', userId);
+      return { sent: 0 };
+    }
+    
+    const payload = JSON.stringify({
+      title,
+      body,
+      url,
+      icon: '/android-launchericon-192-192.png',
+      badge: '/android-launchericon-96-96.png',
+      timestamp: Date.now()
+    });
+    
+    let sentCount = 0;
+    let failedCount = 0;
+    
+    for (const sub of subscriptions) {
+      try {
+        const subscription = JSON.parse(sub.subscription_json);
+        await webpush.sendNotification(subscription, payload);
+        sentCount++;
+      } catch (pushError) {
+        console.error('Push notification failed:', pushError.message);
+        failedCount++;
+        
+        // If subscription is invalid (410 Gone or 404), remove it
+        if (pushError.statusCode === 410 || pushError.statusCode === 404) {
+          await supabase.from('push_subscriptions')
+            .delete()
+            .eq('id', sub.id);
+        }
+      }
+    }
+    
+    return { sent: sentCount, failed: failedCount };
+  } catch (error) {
+    console.error('Error sending push notifications:', error);
+    return { sent: 0, error: error.message };
+  }
+};
+
+// Test push notification endpoint
+app.post('/api/users/:userId/test-push', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const result = await sendPushNotification(
+      userId,
+      '🔔 Test Notification',
+      'Push notifications are working! You will receive alerts for new vouchers.',
+      '/'
+    );
+    
+    res.json({ 
+      success: true, 
+      message: result.sent > 0 
+        ? `Push notification sent to ${result.sent} device(s)` 
+        : 'No devices registered for push notifications'
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

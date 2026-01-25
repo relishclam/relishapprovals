@@ -2446,27 +2446,65 @@ const App = () => {
     }
   }, []);
 
-  // Request push notification permission
+  // Request push notification permission and subscribe to push
   const requestPushPermission = useCallback(async () => {
-    if (!('Notification' in window)) {
-      console.log('This browser does not support notifications');
+    if (!('Notification' in window) || !('serviceWorker' in navigator)) {
+      console.log('Push notifications not supported');
       return false;
     }
     
-    if (Notification.permission === 'granted') {
+    try {
+      // Request permission
+      if (Notification.permission !== 'granted') {
+        const permission = await Notification.requestPermission();
+        if (permission !== 'granted') {
+          console.log('Notification permission denied');
+          return false;
+        }
+      }
+      
+      // Get service worker registration
+      const registration = await navigator.serviceWorker.ready;
+      
+      // Get VAPID public key from server
+      const vapidResponse = await fetch(`${API_BASE}/push/vapid-public-key`);
+      const { publicKey } = await vapidResponse.json();
+      
+      // Convert VAPID key to Uint8Array
+      const urlBase64ToUint8Array = (base64String) => {
+        const padding = '='.repeat((4 - base64String.length % 4) % 4);
+        const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+        const rawData = window.atob(base64);
+        const outputArray = new Uint8Array(rawData.length);
+        for (let i = 0; i < rawData.length; ++i) {
+          outputArray[i] = rawData.charCodeAt(i);
+        }
+        return outputArray;
+      };
+      
+      // Subscribe to push notifications
+      const subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(publicKey)
+      });
+      
+      // Send subscription to server
+      if (user) {
+        await fetch(`${API_BASE}/users/${user.id}/push-subscription`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(subscription.toJSON())
+        });
+        console.log('Push subscription saved to server');
+      }
+      
       setPushEnabled(true);
       return true;
+    } catch (error) {
+      console.error('Failed to subscribe to push notifications:', error);
+      return false;
     }
-    
-    if (Notification.permission !== 'denied') {
-      const permission = await Notification.requestPermission();
-      if (permission === 'granted') {
-        setPushEnabled(true);
-        return true;
-      }
-    }
-    return false;
-  }, []);
+  }, [user]);
 
   // Show browser notification
   const showBrowserNotification = useCallback((title, body, url = '/') => {
