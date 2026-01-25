@@ -546,7 +546,7 @@ const VoucherList = ({ filter }) => {
   const handlePrintSingle = async (voucher) => {
     const full = voucher.company_name ? voucher : await api.getVoucher(voucher.id);
     const printWindow = window.open('', '_blank');
-    printWindow.document.write(generateVoucherHTML([full], 'Payment Voucher'));
+    printWindow.document.write(generateVoucherHTML([full], null));
     printWindow.document.close();
     setTimeout(() => printWindow.print(), 250);
   };
@@ -628,11 +628,12 @@ const VoucherList = ({ filter }) => {
   </style>
 </head>
 <body>
+  ${title ? `
   <div class="report-header">
     <div class="report-title">${title}</div>
     <div class="report-subtitle">Generated on ${new Date().toLocaleString('en-IN')}</div>
   </div>
-  
+  ` : ''}
   ${vouchers.map(v => `
     <div class="voucher">
       <div class="voucher-header">
