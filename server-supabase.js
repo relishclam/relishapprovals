@@ -70,13 +70,19 @@ const deleteOtpSession = async (mobile) => {
   await supabase.from('otp_sessions').delete().eq('mobile', mobile);
 };
 
-// Helper function to format mobile number (remove +91 prefix, just use 10 digits)
+// Helper function to format mobile number for 2Factor API (needs 91XXXXXXXXXX format)
 const formatMobile = (mobile) => {
   // Remove any non-digit characters
   let cleaned = mobile.replace(/\D/g, '');
-  // Remove country code if present
-  if (cleaned.startsWith('91') && cleaned.length === 12) {
-    cleaned = cleaned.substring(2);
+  // Ensure we have 91 prefix for 2Factor API
+  if (cleaned.length === 10) {
+    // Add country code if only 10 digits
+    cleaned = '91' + cleaned;
+  } else if (cleaned.startsWith('91') && cleaned.length === 12) {
+    // Already has country code, keep as is
+  } else if (cleaned.startsWith('0') && cleaned.length === 11) {
+    // Remove leading 0 and add 91
+    cleaned = '91' + cleaned.substring(1);
   }
   return cleaned;
 };
