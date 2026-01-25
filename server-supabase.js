@@ -25,7 +25,8 @@ if (!process.env.TWOFACTOR_API_KEY) {
 }
 const TWOFACTOR_API_KEY = process.env.TWOFACTOR_API_KEY;
 const TWOFACTOR_BASE_URL = 'https://2factor.in/API/V1';
-// Using default transactional SMS OTP (no template required - sends via SMS by default)
+const TWOFACTOR_TEMPLATE_NAME = process.env.TWOFACTOR_TEMPLATE_NAME || 'Relish-Approvals';
+// Template: "Dear #VAR1#, Your ClamFlow OTP is #VAR2#." - Sender ID: Relish
 
 // Store OTP sessions in Supabase (for serverless compatibility)
 // Helper functions for OTP session management
@@ -216,8 +217,9 @@ app.post('/api/otp/send', async (req, res) => {
   console.log(`   Original: ${mobile}`);
   console.log(`   Formatted: ${formattedMobile}`);
   console.log(`   Purpose: ${purpose}`);
+  console.log(`   Template: ${TWOFACTOR_TEMPLATE_NAME}`);
   
-  const result = await call2FactorAPI(`/SMS/${formattedMobile}/AUTOGEN`, `Send OTP to ${formattedMobile}`);
+  const result = await call2FactorAPI(`/SMS/${formattedMobile}/AUTOGEN/${TWOFACTOR_TEMPLATE_NAME}`, `Send OTP to ${formattedMobile}`);
   
   if (result.success) {
     // Store session in Supabase
@@ -1009,8 +1011,9 @@ app.post('/api/vouchers/:voucherId/approve', async (req, res) => {
     try {
       const formattedMobile = formatMobile(voucher.payee.mobile);
       console.log(`   Sending OTP to: ${formattedMobile}`);
+      console.log(`   Using Template: ${TWOFACTOR_TEMPLATE_NAME}`);
       
-      const response = await fetch(`${TWOFACTOR_BASE_URL}/${TWOFACTOR_API_KEY}/SMS/${formattedMobile}/AUTOGEN`);
+      const response = await fetch(`${TWOFACTOR_BASE_URL}/${TWOFACTOR_API_KEY}/SMS/${formattedMobile}/AUTOGEN/${TWOFACTOR_TEMPLATE_NAME}`);
       const data = await response.json();
       console.log(`   2Factor Response: ${JSON.stringify(data)}`);
       
@@ -1188,8 +1191,9 @@ app.post('/api/vouchers/:voucherId/resend-otp', async (req, res) => {
     
     const formattedMobile = formatMobile(voucher.payee.mobile);
     console.log(`   Payee Mobile: ${formattedMobile}`);
+    console.log(`   Using Template: ${TWOFACTOR_TEMPLATE_NAME}`);
     
-    const result = await call2FactorAPI(`/SMS/${formattedMobile}/AUTOGEN`, `Resend Payee OTP for voucher ${req.params.voucherId}`);
+    const result = await call2FactorAPI(`/SMS/${formattedMobile}/AUTOGEN/${TWOFACTOR_TEMPLATE_NAME}`, `Resend Payee OTP for voucher ${req.params.voucherId}`);
     
     if (result.success) {
       // Store session ID in Supabase for verification
