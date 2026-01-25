@@ -31,15 +31,20 @@ const TWOFACTOR_TEMPLATE_NAME = process.env.TWOFACTOR_TEMPLATE_NAME || 'Relish-A
 
 // Web Push Configuration (VAPID Keys)
 // Generate your own keys using: npx web-push generate-vapid-keys
-const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || 'BA7EAuWAKsBovb6XVV-C6YVod7AioJx3I6t50FVdvADoRUsgeeXVKgVddisOrNnFMvVxV0k1gy-ZZnU4Gfo-IeY';
-const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || 'hKFTYITnmaDCIjTJ0iv6qCcZaJd4CRsIOiCtM_il2Gk';
+// Set VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY in your environment variables
+const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY;
+const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY;
 
-// Configure web-push
-webpush.setVapidDetails(
-  'mailto:admin@relishfoods.in',
-  VAPID_PUBLIC_KEY,
-  VAPID_PRIVATE_KEY
-);
+// Configure web-push (only if VAPID keys are set)
+if (VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY) {
+  webpush.setVapidDetails(
+    'mailto:admin@relishfoods.in',
+    VAPID_PUBLIC_KEY,
+    VAPID_PRIVATE_KEY
+  );
+} else {
+  console.warn('⚠️ VAPID keys not configured - Push notifications will be disabled');
+}
 
 // Store OTP sessions in Supabase (for serverless compatibility)
 // Helper functions for OTP session management
@@ -1326,6 +1331,9 @@ app.post('/api/users/:userId/notifications/read-all', async (req, res) => {
 
 // Get VAPID public key (client needs this to subscribe)
 app.get('/api/push/vapid-public-key', (req, res) => {
+  if (!VAPID_PUBLIC_KEY) {
+    return res.status(503).json({ error: 'Push notifications not configured' });
+  }
   res.json({ publicKey: VAPID_PUBLIC_KEY });
 });
 
