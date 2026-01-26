@@ -104,6 +104,15 @@ CREATE TABLE IF NOT EXISTS otp_sessions (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Narration Items Table (Line items for voucher narration)
+CREATE TABLE IF NOT EXISTS narration_items (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    voucher_id UUID NOT NULL REFERENCES vouchers(id) ON DELETE CASCADE,
+    description TEXT NOT NULL,
+    amount DECIMAL(15,2) NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- Insert Companies
 INSERT INTO companies (id, name, address, gst) VALUES 
 ('relish-foods', 'Relish Foods Pvt Ltd', '17/9B, Madhavapuram, Kanyakumari 629704. TN. India', '33AAACR7749E2ZD'),
@@ -112,8 +121,8 @@ ON CONFLICT (id) DO UPDATE SET address = EXCLUDED.address, gst = EXCLUDED.gst;
 
 -- Initialize Voucher Series for Companies
 INSERT INTO voucher_series (company_id, current_number, prefix, financial_year) VALUES 
-('relish-foods', 0, 'VCH', '2024-25'),
-('relish-hhc', 0, 'VCH', '2024-25')
+('relish-foods', 0, 'VCH', '2025-26'),
+('relish-hhc', 0, 'VCH', '2025-26')
 ON CONFLICT (company_id) DO NOTHING;
 
 -- Create indexes for better performance
@@ -127,6 +136,7 @@ CREATE INDEX IF NOT EXISTS idx_vouchers_prepared_by ON vouchers(prepared_by);
 CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id);
 CREATE INDEX IF NOT EXISTS idx_notifications_read ON notifications(read);
 CREATE INDEX IF NOT EXISTS idx_otp_sessions_mobile ON otp_sessions(mobile);
+CREATE INDEX IF NOT EXISTS idx_narration_items_voucher ON narration_items(voucher_id);
 
 -- Enable Row Level Security (RLS)
 ALTER TABLE companies ENABLE ROW LEVEL SECURITY;
@@ -137,9 +147,21 @@ ALTER TABLE voucher_series ENABLE ROW LEVEL SECURITY;
 ALTER TABLE vouchers ENABLE ROW LEVEL SECURITY;
 ALTER TABLE notifications ENABLE ROW LEVEL SECURITY;
 ALTER TABLE otp_sessions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE narration_items ENABLE ROW LEVEL SECURITY;
 
 -- Create policies for public read access (since we're using service role key on server)
 -- For a production app, you'd want more restrictive policies
+
+-- Drop existing policies first (for idempotent execution)
+DROP POLICY IF EXISTS "Allow all operations for service role" ON companies;
+DROP POLICY IF EXISTS "Allow all operations for service role" ON users;
+DROP POLICY IF EXISTS "Allow all operations for service role" ON user_companies;
+DROP POLICY IF EXISTS "Allow all operations for service role" ON payees;
+DROP POLICY IF EXISTS "Allow all operations for service role" ON voucher_series;
+DROP POLICY IF EXISTS "Allow all operations for service role" ON vouchers;
+DROP POLICY IF EXISTS "Allow all operations for service role" ON notifications;
+DROP POLICY IF EXISTS "Allow all operations for service role" ON otp_sessions;
+DROP POLICY IF EXISTS "Allow all operations for service role" ON narration_items;
 
 CREATE POLICY "Allow all operations for service role" ON companies FOR ALL USING (true);
 CREATE POLICY "Allow all operations for service role" ON users FOR ALL USING (true);
@@ -149,6 +171,7 @@ CREATE POLICY "Allow all operations for service role" ON voucher_series FOR ALL 
 CREATE POLICY "Allow all operations for service role" ON vouchers FOR ALL USING (true);
 CREATE POLICY "Allow all operations for service role" ON notifications FOR ALL USING (true);
 CREATE POLICY "Allow all operations for service role" ON otp_sessions FOR ALL USING (true);
+CREATE POLICY "Allow all operations for service role" ON narration_items FOR ALL USING (true);
 
 -- Function to get next voucher number
 CREATE OR REPLACE FUNCTION get_next_voucher_number(p_company_id TEXT)

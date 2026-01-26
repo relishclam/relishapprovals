@@ -1118,3 +1118,81 @@ body {
     overflow: visible;
   }
 }
+
+/* Narration Items Table Styles */
+.narration-table-container {
+  background: #fafafa;
+  border: 1px solid #e5e5e5;
+  border-radius: 8px;
+  padding: 1rem;
+}
+
+.narration-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.narration-table th {
+  background: #f0f0f0;
+  padding: 8px 12px;
+  text-align: left;
+  font-weight: 600;
+  font-size: 0.8rem;
+  color: #555;
+  border-bottom: 2px solid #ddd;
+}
+
+.narration-table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid #eee;
+  vertical-align: middle;
+}
+
+.narration-table tfoot td {
+  padding: 10px 8px;
+  border-top: 2px solid #ddd;
+  background: #f5f5f5;
+}
+
+.narration-input {
+  padding: 6px 8px !important;
+  font-size: 0.85rem !important;
+  border-radius: 4px !important;
+}
+
+.narration-input:focus {
+  border-color: var(--relish-orange);
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(245, 132, 31, 0.1);
+}
+
+/* Status badge for draft */
+.status-badge.status-draft {
+  background: #fef3c7;
+  color: #92400e;
+  border: 1px solid #fcd34d;
+}
+
+/* Mobile responsive for narration table */
+@media (max-width: 768px) {
+  .narration-table-container {
+    overflow-x: auto;
+    padding: 0.75rem;
+  }
+  
+  .narration-table {
+    min-width: 500px;
+  }
+  
+  .narration-table th,
+  .narration-table td {
+    padding: 6px;
+    font-size: 0.8rem;
+  }
+  
+  .narration-input {
+    font-size: 0.8rem !important;
+    padding: 4px 6px !important;
+  }
+}

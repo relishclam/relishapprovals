@@ -56,6 +56,8 @@ const api = {
   completeVoucher: (voucherId, otp) => fetch(`${API_BASE}/vouchers/${voucherId}/complete`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ otp }) }).then(r => r.json()),
   resendPayeeOtp: (voucherId) => fetch(`${API_BASE}/vouchers/${voucherId}/resend-otp`, { method: 'POST' }).then(r => r.json()),
   deleteVoucher: (voucherId) => fetch(`${API_BASE}/vouchers/${voucherId}`, { method: 'DELETE' }).then(r => r.json()),
+  updateVoucher: (voucherId, data) => fetch(`${API_BASE}/vouchers/${voucherId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
+  submitVoucher: (voucherId) => fetch(`${API_BASE}/vouchers/${voucherId}/submit`, { method: 'POST' }).then(r => r.json()),
   getNotifications: (userId) => fetch(`${API_BASE}/users/${userId}/notifications`).then(r => r.json()),
   markAllNotificationsRead: (userId) => fetch(`${API_BASE}/users/${userId}/notifications/read-all`, { method: 'POST' }).then(r => r.json()),
   getHeadsOfAccount: (companyId) => fetch(`${API_BASE}/heads-of-account?companyId=${companyId}`).then(r => r.json()),
@@ -166,6 +168,11 @@ const VoucherPreview = ({ voucher }) => {
   const formatDate = (d) => new Date(d).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
   const formatCurrency = (a) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(a);
   
+  // Parse narration_items if it's a string
+  const narrationItems = typeof voucher.narration_items === 'string' 
+    ? JSON.parse(voucher.narration_items || '[]') 
+    : (voucher.narration_items || []);
+  
   // Signature block renderer
   const SignatureBlock = ({ name, role, timestamp, label, verified }) => (
     <div className="voucher-signature">
@@ -184,12 +191,56 @@ const VoucherPreview = ({ voucher }) => {
     </div>
   );
   
+  // Render narration items table
+  const NarrationTable = () => {
+    if (!narrationItems || narrationItems.length === 0) return null;
+    
+    // Filter items that have at least a description or amount
+    const validItems = narrationItems.filter(item => item.description || item.amount);
+    if (validItems.length === 0) return null;
+    
+    return (
+      <div className="voucher-narration-table" style={{margin: '1rem 0'}}>
+        <div style={{fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.5rem', color: '#666'}}>Particulars:</div>
+        <table style={{width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem'}}>
+          <thead>
+            <tr style={{background: '#f5f5f5'}}>
+              <th style={{padding: '8px', textAlign: 'left', borderBottom: '1px solid #ddd'}}>Description</th>
+              <th style={{padding: '8px', textAlign: 'center', borderBottom: '1px solid #ddd', width: '80px'}}>Qty</th>
+              <th style={{padding: '8px', textAlign: 'right', borderBottom: '1px solid #ddd', width: '100px'}}>Rate</th>
+              <th style={{padding: '8px', textAlign: 'right', borderBottom: '1px solid #ddd', width: '100px'}}>Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            {validItems.map((item, idx) => (
+              <tr key={idx}>
+                <td style={{padding: '8px', borderBottom: '1px solid #eee'}}>{item.description || '-'}</td>
+                <td style={{padding: '8px', textAlign: 'center', borderBottom: '1px solid #eee'}}>{item.quantity || '-'}</td>
+                <td style={{padding: '8px', textAlign: 'right', borderBottom: '1px solid #eee'}}>
+                  {item.rate ? `₹${parseFloat(item.rate).toLocaleString('en-IN')}` : '-'}
+                </td>
+                <td style={{padding: '8px', textAlign: 'right', borderBottom: '1px solid #eee', fontWeight: 500}}>
+                  {item.amount ? `₹${parseFloat(item.amount).toLocaleString('en-IN')}` : '-'}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  };
+  
   return (
     <div className="voucher-preview">
       <div className="voucher-header">
         <div className="voucher-company">{voucher.company_name}</div>
         <div className="voucher-address">{voucher.company_address}</div>
         <div className="voucher-title">PAYMENT VOUCHER</div>
+        {voucher.status === 'draft' && (
+          <div style={{background: '#fef3c7', color: '#92400e', padding: '4px 12px', borderRadius: '4px', fontSize: '0.8rem', fontWeight: 600, marginTop: '8px'}}>
+            📝 DRAFT - Not Submitted
+          </div>
+        )}
       </div>
       <div className="voucher-meta">
         <div className="voucher-meta-item"><span className="voucher-meta-label">Voucher No:</span><span className="voucher-meta-value">{voucher.serial_number}</span></div>
@@ -199,6 +250,7 @@ const VoucherPreview = ({ voucher }) => {
       </div>
       <div className="voucher-meta-item mb-1"><span className="voucher-meta-label">Head:</span><span className="voucher-meta-value">{voucher.head_of_account}</span></div>
       {voucher.narration && <div className="voucher-meta-item mb-1"><span className="voucher-meta-label">Narration:</span><span className="voucher-meta-value">{voucher.narration}</span></div>}
+      <NarrationTable />
       <div className="voucher-total">TOTAL: {formatCurrency(voucher.amount)}</div>
       <div className="voucher-signatures">
         <SignatureBlock 
@@ -375,11 +427,20 @@ const LoginPage = ({ onLogin }) => {
 // Dashboard
 const Dashboard = () => {
   const { user, vouchers } = useApp();
-  const stats = { pending: vouchers.filter(v => v.status === 'pending').length, approved: vouchers.filter(v => ['approved', 'awaiting_payee_otp'].includes(v.status)).length, completed: vouchers.filter(v => v.status === 'completed').length, total: vouchers.length };
+  const stats = { 
+    draft: vouchers.filter(v => v.status === 'draft').length,
+    pending: vouchers.filter(v => v.status === 'pending').length, 
+    approved: vouchers.filter(v => ['approved', 'awaiting_payee_otp'].includes(v.status)).length, 
+    completed: vouchers.filter(v => v.status === 'completed').length, 
+    total: vouchers.filter(v => v.status !== 'draft').length 
+  };
   return (
     <div>
       <div className="page-header"><h1 className="page-title">Dashboard</h1><p className="page-subtitle">Welcome back, {user.name}</p></div>
       <div className="stats-grid">
+        {user.role === 'accounts' && stats.draft > 0 && (
+          <div className="stat-card" style={{borderColor: '#fcd34d', background: '#fffbeb'}}><div className="stat-icon" style={{background: '#fef3c7', color: '#92400e'}}>📝</div><div className="stat-value">{stats.draft}</div><div className="stat-label">Saved Drafts</div></div>
+        )}
         <div className="stat-card"><div className="stat-icon orange">⏱</div><div className="stat-value">{stats.pending}</div><div className="stat-label">Pending Approval</div></div>
         <div className="stat-card"><div className="stat-icon purple">📋</div><div className="stat-value">{stats.approved}</div><div className="stat-label">Approved / Awaiting OTP</div></div>
         <div className="stat-card"><div className="stat-icon green">✓</div><div className="stat-value">{stats.completed}</div><div className="stat-label">Completed</div></div>
@@ -399,6 +460,127 @@ const Dashboard = () => {
   );
 };
 
+// Narration Items Table Component
+const NarrationItemsTable = ({ items, onChange, disabled }) => {
+  const addItem = () => {
+    onChange([...items, { description: '', quantity: '', rate: '', amount: '' }]);
+  };
+
+  const removeItem = (index) => {
+    const newItems = items.filter((_, i) => i !== index);
+    onChange(newItems);
+  };
+
+  const updateItem = (index, field, value) => {
+    const newItems = [...items];
+    newItems[index] = { ...newItems[index], [field]: value };
+    
+    // Auto-calculate amount if both quantity and rate are provided
+    if (field === 'quantity' || field === 'rate') {
+      const qty = parseFloat(newItems[index].quantity) || 0;
+      const rate = parseFloat(newItems[index].rate) || 0;
+      if (qty > 0 && rate > 0) {
+        newItems[index].amount = (qty * rate).toFixed(2);
+      }
+    }
+    
+    onChange(newItems);
+  };
+
+  const getTotal = () => {
+    return items.reduce((sum, item) => sum + (parseFloat(item.amount) || 0), 0);
+  };
+
+  return (
+    <div className="narration-table-container">
+      <table className="narration-table">
+        <thead>
+          <tr>
+            <th style={{width: '40%'}}>Description / Name</th>
+            <th style={{width: '15%'}}>Quantity</th>
+            <th style={{width: '18%'}}>Rate (₹)</th>
+            <th style={{width: '18%'}}>Amount (₹)</th>
+            <th style={{width: '9%'}}></th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((item, index) => (
+            <tr key={index}>
+              <td>
+                <input 
+                  type="text" 
+                  className="form-input narration-input" 
+                  placeholder="Item or person name"
+                  value={item.description} 
+                  onChange={(e) => updateItem(index, 'description', e.target.value)}
+                  disabled={disabled}
+                />
+              </td>
+              <td>
+                <input 
+                  type="text" 
+                  className="form-input narration-input" 
+                  placeholder="e.g., 2 days"
+                  value={item.quantity} 
+                  onChange={(e) => updateItem(index, 'quantity', e.target.value)}
+                  disabled={disabled}
+                />
+              </td>
+              <td>
+                <input 
+                  type="number" 
+                  className="form-input narration-input" 
+                  placeholder="0.00"
+                  value={item.rate} 
+                  onChange={(e) => updateItem(index, 'rate', e.target.value)}
+                  disabled={disabled}
+                />
+              </td>
+              <td>
+                <input 
+                  type="number" 
+                  className="form-input narration-input" 
+                  placeholder="0.00"
+                  value={item.amount} 
+                  onChange={(e) => updateItem(index, 'amount', e.target.value)}
+                  disabled={disabled}
+                />
+              </td>
+              <td>
+                {!disabled && (
+                  <button 
+                    type="button" 
+                    className="btn btn-sm btn-danger" 
+                    onClick={() => removeItem(index)}
+                    title="Remove item"
+                    style={{padding: '4px 8px'}}
+                  >
+                    ×
+                  </button>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+        {items.length > 0 && (
+          <tfoot>
+            <tr>
+              <td colSpan="3" style={{textAlign: 'right', fontWeight: 600}}>Total:</td>
+              <td style={{fontWeight: 600}}>₹{getTotal().toLocaleString('en-IN', {minimumFractionDigits: 2})}</td>
+              <td></td>
+            </tr>
+          </tfoot>
+        )}
+      </table>
+      {!disabled && (
+        <button type="button" className="btn btn-sm btn-secondary" onClick={addItem} style={{marginTop: '0.5rem'}}>
+          + Add Line Item
+        </button>
+      )}
+    </div>
+  );
+};
+
 // Create Voucher
 const CreateVoucher = () => {
   const { user, addToast, refreshVouchers } = useApp();
@@ -408,8 +590,9 @@ const CreateVoucher = () => {
   const [showPayeeModal, setShowPayeeModal] = useState(false);
   const [showCustomAccount, setShowCustomAccount] = useState(false);
   const [customAccount, setCustomAccount] = useState('');
-  const [form, setForm] = useState({ headOfAccount: '', narration: '', payeeId: '', paymentMode: 'UPI', amount: '' });
+  const [form, setForm] = useState({ headOfAccount: '', narration: '', narrationItems: [], payeeId: '', paymentMode: 'UPI', amount: '' });
   const [newPayee, setNewPayee] = useState({ name: '', alias: '', mobile: '', bankAccount: '', ifsc: '', upiId: '' });
+  const [useNarrationTable, setUseNarrationTable] = useState(false);
 
   useEffect(() => { 
     // Load payees for user's company
@@ -421,6 +604,21 @@ const CreateVoucher = () => {
       }
     });
   }, [user.company.id]);
+
+  // Calculate total from narration items
+  const calculateNarrationTotal = () => {
+    return form.narrationItems.reduce((sum, item) => sum + (parseFloat(item.amount) || 0), 0);
+  };
+
+  // Auto-update amount when narration items change (if using table)
+  useEffect(() => {
+    if (useNarrationTable && form.narrationItems.length > 0) {
+      const total = calculateNarrationTotal();
+      if (total > 0) {
+        setForm(f => ({ ...f, amount: total.toFixed(2) }));
+      }
+    }
+  }, [form.narrationItems, useNarrationTable]);
 
   const handleAddPayee = async () => {
     setLoading(true);
@@ -436,10 +634,33 @@ const CreateVoucher = () => {
     }
   };
 
-  const handleSubmit = async () => {
-    if (!form.headOfAccount || !form.payeeId || !form.amount) { addToast('Fill all required fields', 'error'); return; }
+  const handleSaveOrSubmit = async (saveAsDraft = false) => {
+    if (!form.headOfAccount || !form.payeeId || !form.amount) { 
+      addToast('Fill all required fields (Head of Account, Payee, Amount)', 'error'); 
+      return; 
+    }
     setLoading(true);
-    try { const result = await api.createVoucher({ companyId: user.company.id, headOfAccount: form.headOfAccount, narration: form.narration, amount: parseFloat(form.amount), paymentMode: form.paymentMode, payeeId: form.payeeId, preparedBy: user.id }); if (result.success) { addToast(`Voucher ${result.serialNumber} created`, 'success'); setForm({ headOfAccount: '', narration: '', payeeId: '', paymentMode: 'UPI', amount: '' }); refreshVouchers(); } } catch { addToast('Failed', 'error'); }
+    try { 
+      const result = await api.createVoucher({ 
+        companyId: user.company.id, 
+        headOfAccount: form.headOfAccount, 
+        narration: form.narration, 
+        narrationItems: form.narrationItems,
+        amount: parseFloat(form.amount), 
+        paymentMode: form.paymentMode, 
+        payeeId: form.payeeId, 
+        preparedBy: user.id,
+        saveAsDraft: saveAsDraft
+      }); 
+      if (result.success) { 
+        addToast(saveAsDraft ? `Draft ${result.serialNumber} saved` : `Voucher ${result.serialNumber} submitted`, 'success'); 
+        setForm({ headOfAccount: '', narration: '', narrationItems: [], payeeId: '', paymentMode: 'UPI', amount: '' }); 
+        setUseNarrationTable(false);
+        refreshVouchers(); 
+      } else {
+        addToast(result.error || 'Failed', 'error');
+      }
+    } catch { addToast('Failed', 'error'); }
     setLoading(false);
   };
 
@@ -476,9 +697,59 @@ const CreateVoucher = () => {
             <div className="form-group"><label className="form-label">Payment Mode *</label><select className="form-select" value={form.paymentMode} onChange={(e) => setForm({ ...form, paymentMode: e.target.value })}><option value="UPI">UPI</option><option value="Account Transfer">Account Transfer</option><option value="Cash">Cash</option></select></div>
           </div>
           <div className="form-group"><label className="form-label form-label-row">Payee *<button className="btn btn-sm btn-secondary" onClick={() => setShowPayeeModal(true)}>{Icons.plus} Add Payee</button></label><select className="form-select" value={form.payeeId} onChange={(e) => setForm({ ...form, payeeId: e.target.value })}><option value="">Select Payee</option>{payees.map(p => <option key={p.id} value={p.id}>{p.name} {p.alias && `(${p.alias})`}</option>)}</select></div>
-          <div className="form-group"><label className="form-label">Amount (₹) *</label><input type="number" className="form-input" placeholder="Enter amount" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} /></div>
-          <div className="form-group"><label className="form-label">Narration</label><textarea className="form-input" rows={2} placeholder="Enter payment description" value={form.narration} onChange={(e) => setForm({ ...form, narration: e.target.value })} /></div>
-          <div className="btn-group"><button className="btn btn-primary" onClick={handleSubmit} disabled={loading}>{loading && Icons.loader}{Icons.send} Submit for Approval</button></div>
+          
+          <div className="form-group">
+            <label className="form-label form-label-row">
+              Narration / Line Items
+              <label style={{display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem', cursor: 'pointer'}}>
+                <input 
+                  type="checkbox" 
+                  checked={useNarrationTable} 
+                  onChange={(e) => {
+                    setUseNarrationTable(e.target.checked);
+                    if (e.target.checked && form.narrationItems.length === 0) {
+                      setForm({ ...form, narrationItems: [{ description: '', quantity: '', rate: '', amount: '' }] });
+                    }
+                  }} 
+                />
+                Use Table Format
+              </label>
+            </label>
+            
+            {useNarrationTable ? (
+              <NarrationItemsTable 
+                items={form.narrationItems} 
+                onChange={(items) => setForm({ ...form, narrationItems: items })}
+              />
+            ) : (
+              <textarea className="form-input" rows={2} placeholder="Enter payment description" value={form.narration} onChange={(e) => setForm({ ...form, narration: e.target.value })} />
+            )}
+          </div>
+          
+          <div className="form-group">
+            <label className="form-label">Amount (₹) * {useNarrationTable && form.narrationItems.length > 0 && <span style={{color: '#666', fontWeight: 'normal'}}>(auto-calculated from items)</span>}</label>
+            <input 
+              type="number" 
+              className="form-input" 
+              placeholder="Enter amount" 
+              value={form.amount} 
+              onChange={(e) => setForm({ ...form, amount: e.target.value })} 
+              readOnly={useNarrationTable && form.narrationItems.some(i => parseFloat(i.amount) > 0)}
+              style={useNarrationTable && form.narrationItems.some(i => parseFloat(i.amount) > 0) ? {background: '#f5f5f5'} : {}}
+            />
+          </div>
+          
+          <div className="btn-group" style={{display: 'flex', gap: '1rem', flexWrap: 'wrap'}}>
+            <button className="btn btn-secondary" onClick={() => handleSaveOrSubmit(true)} disabled={loading}>
+              {loading && Icons.loader}💾 Save as Draft
+            </button>
+            <button className="btn btn-primary" onClick={() => handleSaveOrSubmit(false)} disabled={loading}>
+              {loading && Icons.loader}{Icons.send} Submit for Approval
+            </button>
+          </div>
+          <p style={{fontSize: '0.8rem', color: '#888', marginTop: '0.75rem'}}>
+            💡 Tip: Save as Draft if the payee isn't ready to receive the OTP yet. You can submit later from the Drafts list.
+          </p>
         </div>
       </div>
       {showPayeeModal && (
@@ -539,9 +810,32 @@ const VoucherList = ({ filter }) => {
   const [printDateTo, setPrintDateTo] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const filtered = vouchers.filter(v => { if (filter === 'pending') return v.status === 'pending'; if (filter === 'approved') return ['approved', 'awaiting_payee_otp'].includes(v.status); if (filter === 'completed') return v.status === 'completed'; return true; });
+  const filtered = vouchers.filter(v => { 
+    if (filter === 'draft') return v.status === 'draft';
+    if (filter === 'pending') return v.status === 'pending'; 
+    if (filter === 'approved') return ['approved', 'awaiting_payee_otp'].includes(v.status); 
+    if (filter === 'completed') return v.status === 'completed'; 
+    return true; 
+  });
   
   const openVoucher = async (v) => { const full = await api.getVoucher(v.id); setSelectedVoucher(full); setShowModal(true); };
+  
+  const handleSubmitDraft = async (voucher) => {
+    setLoading(true);
+    try {
+      const result = await api.submitVoucher(voucher.id);
+      if (result.success) {
+        addToast('Voucher submitted for approval', 'success');
+        refreshVouchers();
+        setShowModal(false);
+      } else {
+        addToast(result.error || 'Failed to submit', 'error');
+      }
+    } catch {
+      addToast('Failed to submit voucher', 'error');
+    }
+    setLoading(false);
+  };
   
   const handlePrintSingle = async (voucher) => {
     const full = voucher.company_name ? voucher : await api.getVoucher(voucher.id);
@@ -591,6 +885,42 @@ const VoucherList = ({ filter }) => {
     const formatCurrency = (a) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(a);
     const totalAmount = vouchers.reduce((sum, v) => sum + v.amount, 0);
     
+    // Helper to render narration items table
+    const renderNarrationItems = (v) => {
+      const items = typeof v.narration_items === 'string' 
+        ? JSON.parse(v.narration_items || '[]') 
+        : (v.narration_items || []);
+      const validItems = items.filter(item => item.description || item.amount);
+      
+      if (validItems.length === 0) return '';
+      
+      return `
+        <div class="particulars-section">
+          <div class="particulars-title">Particulars:</div>
+          <table class="particulars-table">
+            <thead>
+              <tr>
+                <th style="text-align:left;width:50%">Description</th>
+                <th style="text-align:center;width:15%">Qty</th>
+                <th style="text-align:right;width:17%">Rate</th>
+                <th style="text-align:right;width:18%">Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${validItems.map(item => `
+                <tr>
+                  <td style="text-align:left">${item.description || '-'}</td>
+                  <td style="text-align:center">${item.quantity || '-'}</td>
+                  <td style="text-align:right">${item.rate ? '₹' + parseFloat(item.rate).toLocaleString('en-IN') : '-'}</td>
+                  <td style="text-align:right;font-weight:500">${item.amount ? '₹' + parseFloat(item.amount).toLocaleString('en-IN') : '-'}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      `;
+    };
+    
     return `
 <!DOCTYPE html>
 <html>
@@ -608,10 +938,16 @@ const VoucherList = ({ filter }) => {
     .company-name { font-size: 16px; font-weight: bold; }
     .company-address { font-size: 10px; color: #666; margin-top: 3px; }
     .voucher-title { font-size: 14px; font-weight: bold; text-align: center; margin-top: 8px; }
+    .draft-badge { background: #fef3c7; color: #92400e; padding: 4px 12px; border-radius: 4px; font-size: 10px; font-weight: 600; display: inline-block; margin-top: 8px; }
     .voucher-meta { display: table; width: 100%; margin-bottom: 15px; }
     .meta-row { display: table-row; }
     .meta-label { display: table-cell; font-weight: bold; width: 150px; padding: 4px 0; }
     .meta-value { display: table-cell; padding: 4px 0; }
+    .particulars-section { margin: 15px 0; }
+    .particulars-title { font-weight: bold; margin-bottom: 8px; font-size: 11px; color: #666; }
+    .particulars-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+    .particulars-table th { background: #f5f5f5; padding: 6px 8px; border: 1px solid #ddd; font-weight: 600; }
+    .particulars-table td { padding: 6px 8px; border: 1px solid #eee; }
     .voucher-amount { font-size: 16px; font-weight: bold; text-align: right; margin: 15px 0; border-top: 1px solid #333; padding-top: 10px; }
     .voucher-signatures { display: flex; justify-content: space-between; margin-top: 40px; }
     .signature-box { text-align: center; flex: 1; }
@@ -641,6 +977,7 @@ const VoucherList = ({ filter }) => {
         <div class="company-address">${v.company_address}</div>
         <div class="company-address">GST: ${v.company_gst}</div>
         <div class="voucher-title">PAYMENT VOUCHER</div>
+        ${v.status === 'draft' ? '<div class="draft-badge">📝 DRAFT - Not Submitted</div>' : ''}
       </div>
       
       <div class="voucher-meta">
@@ -674,6 +1011,8 @@ const VoucherList = ({ filter }) => {
           <div class="meta-value">${v.status.replace(/_/g, ' ').toUpperCase()}</div>
         </div>
       </div>
+      
+      ${renderNarrationItems(v)}
       
       <div class="voucher-amount">AMOUNT: ${formatCurrency(v.amount)}</div>
       
@@ -741,7 +1080,7 @@ const VoucherList = ({ filter }) => {
   const handleComplete = async () => { if (payeeOtp.length < 6) { addToast('Enter complete OTP', 'error'); return; } setLoading(true); try { const result = await api.completeVoucher(selectedVoucher.id, payeeOtp); if (result.success) { addToast('Voucher completed!', 'success'); refreshVouchers(); setShowModal(false); setPayeeOtp(''); } else addToast(result.error, 'error'); } catch { addToast('Failed', 'error'); } setLoading(false); };
   const handleResend = async () => { try { await api.resendPayeeOtp(selectedVoucher.id); addToast('OTP resent', 'success'); } catch { addToast('Failed', 'error'); } };
   const handleDelete = async () => { setLoading(true); try { const result = await api.deleteVoucher(selectedVoucher.id); if (result.success) { addToast('Voucher deleted', 'success'); refreshVouchers(); setShowDeleteModal(false); setShowModal(false); } else addToast(result.error || 'Failed to delete', 'error'); } catch { addToast('Failed to delete voucher', 'error'); } setLoading(false); };
-  const titles = { all: 'All Vouchers', pending: 'Pending Approval', approved: 'Approved / Awaiting OTP', completed: 'Completed Vouchers' };
+  const titles = { all: 'All Vouchers', draft: 'Saved Drafts', pending: 'Pending Approval', approved: 'Approved / Awaiting OTP', completed: 'Completed Vouchers' };
 
   return (
     <div>
@@ -791,6 +1130,16 @@ const VoucherList = ({ filter }) => {
           </div>
           {user.role === 'admin' && selectedVoucher.status === 'pending' && (
             <div className="modal-footer"><button className="btn btn-danger" onClick={() => setShowRejectModal(true)}>{Icons.x} Reject</button><button className="btn btn-success" onClick={handleApprove} disabled={loading}>{loading && Icons.loader}{Icons.check} Approve & Send Payee OTP</button></div>
+          )}
+          {selectedVoucher.status === 'draft' && selectedVoucher.prepared_by === user.id && (
+            <div className="modal-footer" style={{background: '#fef3c7'}}>
+              <div style={{flex: 1, fontSize: '0.85rem', color: '#92400e'}}>
+                💡 This voucher is saved as a draft. Submit when the payee is ready to receive the OTP.
+              </div>
+              <button className="btn btn-primary" onClick={() => handleSubmitDraft(selectedVoucher)} disabled={loading}>
+                {loading && Icons.loader}{Icons.send} Submit for Approval
+              </button>
+            </div>
           )}
         </div></div>
       )}
@@ -2589,7 +2938,7 @@ const App = () => {
   if (!user) return <LoginPage onLogin={handleLogin} />;
 
   const contextValue = { user, vouchers, notifications, addToast, refreshVouchers, refreshNotifications };
-  const renderPage = () => { switch(currentPage) { case 'dashboard': return <Dashboard />; case 'create': return <CreateVoucher />; case 'pending': return <VoucherList filter="pending" />; case 'approved': return <VoucherList filter="approved" />; case 'completed': return <VoucherList filter="completed" />; case 'all': return <VoucherList filter="all" />; case 'users': return <UsersManagement />; case 'payees': return <PayeesManagement />; case 'accounts': return <AccountsManagement />; default: return <Dashboard />; } };
+  const renderPage = () => { switch(currentPage) { case 'dashboard': return <Dashboard />; case 'create': return <CreateVoucher />; case 'drafts': return <VoucherList filter="draft" />; case 'pending': return <VoucherList filter="pending" />; case 'approved': return <VoucherList filter="approved" />; case 'completed': return <VoucherList filter="completed" />; case 'all': return <VoucherList filter="all" />; case 'users': return <UsersManagement />; case 'payees': return <PayeesManagement />; case 'accounts': return <AccountsManagement />; default: return <Dashboard />; } };
 
   const handleNavClick = (page) => {
     setCurrentPage(page);
@@ -2681,6 +3030,7 @@ const App = () => {
             <div className="nav-section"><div className="nav-section-title">Main</div><div className={`nav-item ${currentPage === 'dashboard' ? 'active' : ''}`} onClick={() => handleNavClick('dashboard')}>{Icons.home} Dashboard</div></div>
             <div className="nav-section"><div className="nav-section-title">Vouchers</div>
               {user.role === 'accounts' && <div className={`nav-item ${currentPage === 'create' ? 'active' : ''}`} onClick={() => handleNavClick('create')}>{Icons.plus} Create Voucher</div>}
+              {user.role === 'accounts' && <div className={`nav-item ${currentPage === 'drafts' ? 'active' : ''}`} onClick={() => handleNavClick('drafts')}>📝 Drafts</div>}
               <div className={`nav-item ${currentPage === 'pending' ? 'active' : ''}`} onClick={() => handleNavClick('pending')}>{Icons.clock} Pending Approval</div>
               <div className={`nav-item ${currentPage === 'approved' ? 'active' : ''}`} onClick={() => handleNavClick('approved')}>{Icons.smartphone} Awaiting OTP</div>
               <div className={`nav-item ${currentPage === 'completed' ? 'active' : ''}`} onClick={() => handleNavClick('completed')}>{Icons.checkCircle} Completed</div>
@@ -2704,6 +3054,7 @@ const App = () => {
                 <div className="nav-section"><div className="nav-section-title">Main</div><div className={`nav-item ${currentPage === 'dashboard' ? 'active' : ''}`} onClick={() => handleNavClick('dashboard')}>{Icons.home} Dashboard</div></div>
                 <div className="nav-section"><div className="nav-section-title">Vouchers</div>
                   {user.role === 'accounts' && <div className={`nav-item ${currentPage === 'create' ? 'active' : ''}`} onClick={() => handleNavClick('create')}>{Icons.plus} Create Voucher</div>}
+                  {user.role === 'accounts' && <div className={`nav-item ${currentPage === 'drafts' ? 'active' : ''}`} onClick={() => handleNavClick('drafts')}>📝 Drafts</div>}
                   <div className={`nav-item ${currentPage === 'pending' ? 'active' : ''}`} onClick={() => handleNavClick('pending')}>{Icons.clock} Pending Approval</div>
                   <div className={`nav-item ${currentPage === 'approved' ? 'active' : ''}`} onClick={() => handleNavClick('approved')}>{Icons.smartphone} Awaiting OTP</div>
                   <div className={`nav-item ${currentPage === 'completed' ? 'active' : ''}`} onClick={() => handleNavClick('completed')}>{Icons.checkCircle} Completed</div>

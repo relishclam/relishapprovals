@@ -865,9 +865,9 @@ const getNextVoucherNumber = async (companyId) => {
   return data;
 };
 
-// Create voucher
+// Create voucher (submit for approval) or save as draft
 app.post('/api/vouchers', async (req, res) => {
-  const { companyId, headOfAccount, narration, amount, paymentMode, payeeId, preparedBy } = req.body;
+  const { companyId, headOfAccount, narration, narrationItems, amount, paymentMode, payeeId, preparedBy, saveAsDraft } = req.body;
   
   if (!companyId || !headOfAccount || !amount || !paymentMode || !payeeId || !preparedBy) {
     return res.status(400).json({ error: 'Missing required fields' });
@@ -875,36 +875,145 @@ app.post('/api/vouchers', async (req, res) => {
   
   try {
     const serialNumber = await getNextVoucherNumber(companyId);
+    const status = saveAsDraft ? 'draft' : 'pending';
     
     const { data: voucher, error } = await supabase.from('vouchers').insert({
       company_id: companyId,
       serial_number: serialNumber,
       head_of_account: headOfAccount,
       narration: narration || '',
+      narration_items: narrationItems || [],
       amount,
       payment_mode: paymentMode,
       payee_id: payeeId,
-      prepared_by: preparedBy
+      prepared_by: preparedBy,
+      status: status,
+      submitted_at: saveAsDraft ? null : new Date().toISOString()
     }).select().single();
     
     if (error) throw error;
     
+    // Only notify admins if submitting (not drafts)
+    if (!saveAsDraft) {
+      const { data: admins } = await supabase.from('users')
+        .select('id')
+        .eq('company_id', companyId)
+        .eq('role', 'admin');
+      
+      const { data: preparer } = await supabase.from('users')
+        .select('name')
+        .eq('id', preparedBy)
+        .single();
+      
+      if (admins && admins.length > 0) {
+        const notifications = admins.map(admin => ({
+          user_id: admin.id,
+          title: 'New Voucher Pending Approval',
+          message: `Voucher ${serialNumber} prepared by ${preparer.name} requires your approval.`,
+          type: 'approval_required',
+          voucher_id: voucher.id
+        }));
+        
+        await supabase.from('notifications').insert(notifications);
+        
+        // Send push notifications to admins
+        for (const admin of admins) {
+          sendPushNotification(
+            admin.id,
+            '📋 New Voucher Pending Approval',
+            `Voucher ${serialNumber} by ${preparer.name} requires your approval.`,
+            '/'
+          );
+        }
+      }
+    }
+    
+    res.json({ 
+      success: true, 
+      voucherId: voucher.id, 
+      serialNumber,
+      status: status,
+      message: saveAsDraft ? 'Voucher saved as draft' : 'Voucher submitted for approval'
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Update draft voucher
+app.put('/api/vouchers/:voucherId', async (req, res) => {
+  const { headOfAccount, narration, narrationItems, amount, paymentMode, payeeId } = req.body;
+  
+  try {
+    // First check if voucher exists and is a draft
+    const { data: existing, error: fetchError } = await supabase.from('vouchers')
+      .select('status')
+      .eq('id', req.params.voucherId)
+      .single();
+    
+    if (fetchError) throw fetchError;
+    if (!existing) return res.status(404).json({ error: 'Voucher not found' });
+    if (existing.status !== 'draft') {
+      return res.status(400).json({ error: 'Only draft vouchers can be edited' });
+    }
+    
+    const updateData = {};
+    if (headOfAccount !== undefined) updateData.head_of_account = headOfAccount;
+    if (narration !== undefined) updateData.narration = narration;
+    if (narrationItems !== undefined) updateData.narration_items = narrationItems;
+    if (amount !== undefined) updateData.amount = amount;
+    if (paymentMode !== undefined) updateData.payment_mode = paymentMode;
+    if (payeeId !== undefined) updateData.payee_id = payeeId;
+    
+    const { data: voucher, error } = await supabase.from('vouchers')
+      .update(updateData)
+      .eq('id', req.params.voucherId)
+      .select()
+      .single();
+    
+    if (error) throw error;
+    
+    res.json({ success: true, voucher });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Submit draft voucher for approval
+app.post('/api/vouchers/:voucherId/submit', async (req, res) => {
+  try {
+    const { data: voucher, error: fetchError } = await supabase.from('vouchers')
+      .select('*, preparer:users!vouchers_prepared_by_fkey(name)')
+      .eq('id', req.params.voucherId)
+      .single();
+    
+    if (fetchError) throw fetchError;
+    if (!voucher) return res.status(404).json({ error: 'Voucher not found' });
+    if (voucher.status !== 'draft') {
+      return res.status(400).json({ error: 'Only draft vouchers can be submitted' });
+    }
+    
+    // Update status to pending
+    const { error: updateError } = await supabase.from('vouchers')
+      .update({ 
+        status: 'pending',
+        submitted_at: new Date().toISOString()
+      })
+      .eq('id', req.params.voucherId);
+    
+    if (updateError) throw updateError;
+    
     // Notify admins
     const { data: admins } = await supabase.from('users')
       .select('id')
-      .eq('company_id', companyId)
+      .eq('company_id', voucher.company_id)
       .eq('role', 'admin');
-    
-    const { data: preparer } = await supabase.from('users')
-      .select('name')
-      .eq('id', preparedBy)
-      .single();
     
     if (admins && admins.length > 0) {
       const notifications = admins.map(admin => ({
         user_id: admin.id,
         title: 'New Voucher Pending Approval',
-        message: `Voucher ${serialNumber} prepared by ${preparer.name} requires your approval.`,
+        message: `Voucher ${voucher.serial_number} prepared by ${voucher.preparer?.name || 'Unknown'} requires your approval.`,
         type: 'approval_required',
         voucher_id: voucher.id
       }));
@@ -916,13 +1025,13 @@ app.post('/api/vouchers', async (req, res) => {
         sendPushNotification(
           admin.id,
           '📋 New Voucher Pending Approval',
-          `Voucher ${serialNumber} by ${preparer.name} requires your approval.`,
+          `Voucher ${voucher.serial_number} by ${voucher.preparer?.name || 'Unknown'} requires your approval.`,
           '/'
         );
       }
     }
     
-    res.json({ success: true, voucherId: voucher.id, serialNumber });
+    res.json({ success: true, message: 'Voucher submitted for approval' });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
