@@ -28,6 +28,61 @@ const Icons = {
   menu: <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="3" x2="21" y1="12" y2="12"/><line x1="3" x2="21" y1="6" y2="6"/><line x1="3" x2="21" y1="18" y2="18"/></svg>,
 };
 
+// Number to Words Converter for Indian Rupees
+const numberToWordsIndian = (num) => {
+  if (num === 0) return 'Zero Rupees Only';
+  
+  const ones = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine'];
+  const tens = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
+  const teens = ['Ten', 'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen', 'Seventeen', 'Eighteen', 'Nineteen'];
+  
+  const convertLessThan100 = (n) => {
+    if (n < 10) return ones[n];
+    if (n >= 10 && n < 20) return teens[n - 10];
+    return tens[Math.floor(n / 10)] + (n % 10 !== 0 ? ' ' + ones[n % 10] : '');
+  };
+  
+  const convertLessThan1000 = (n) => {
+    if (n < 100) return convertLessThan100(n);
+    return ones[Math.floor(n / 100)] + ' Hundred' + (n % 100 !== 0 ? ' ' + convertLessThan100(n % 100) : '');
+  };
+  
+  const [rupeesStr, paiseStr] = num.toFixed(2).split('.');
+  let remainingRupees = parseInt(rupeesStr, 10);
+  const paise = parseInt(paiseStr, 10);
+  let words = '';
+  
+  if (remainingRupees >= 10000000) {
+    const crores = Math.floor(remainingRupees / 10000000);
+    words += convertLessThan1000(crores) + ' Crore ';
+    remainingRupees %= 10000000;
+  }
+  
+  if (remainingRupees >= 100000) {
+    const lakhs = Math.floor(remainingRupees / 100000);
+    words += convertLessThan1000(lakhs) + ' Lakh ';
+    remainingRupees %= 100000;
+  }
+  
+  if (remainingRupees >= 1000) {
+    const thousands = Math.floor(remainingRupees / 1000);
+    words += convertLessThan1000(thousands) + ' Thousand ';
+    remainingRupees %= 1000;
+  }
+  
+  if (remainingRupees > 0) {
+    words += convertLessThan1000(remainingRupees);
+  }
+  
+  words = words.trim() + ' Rupees';
+  
+  if (paise > 0) {
+    words += ' and ' + convertLessThan100(paise) + ' Paise';
+  }
+  
+  return words.trim() + ' Only';
+};
+
 // API Functions
 const api = {
   getCompanies: () => fetch(`${API_BASE}/companies`).then(r => r.json()),
@@ -191,7 +246,7 @@ const VoucherPreview = ({ voucher }) => {
     </div>
   );
   
-  // Render narration items table
+  // Render narration items table with enhanced styling
   const NarrationTable = () => {
     if (!narrationItems || narrationItems.length === 0) return null;
     
@@ -199,32 +254,44 @@ const VoucherPreview = ({ voucher }) => {
     const validItems = narrationItems.filter(item => item.description || item.amount);
     if (validItems.length === 0) return null;
     
+    // Calculate total from items
+    const total = validItems.reduce((sum, item) => sum + (parseFloat(item.amount) || 0), 0);
+    
     return (
       <div className="voucher-narration-table" style={{margin: '1rem 0'}}>
-        <div style={{fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.5rem', color: '#666'}}>Particulars:</div>
-        <table style={{width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem'}}>
+        <div style={{fontSize: '0.9rem', fontWeight: 600, marginBottom: '0.75rem', color: '#333', borderBottom: '2px solid #f59e0b', paddingBottom: '0.5rem'}}>Particulars</div>
+        <table style={{width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem', border: '1px solid #ddd'}}>
           <thead>
-            <tr style={{background: '#f5f5f5'}}>
-              <th style={{padding: '8px', textAlign: 'left', borderBottom: '1px solid #ddd'}}>Description</th>
-              <th style={{padding: '8px', textAlign: 'center', borderBottom: '1px solid #ddd', width: '80px'}}>Qty</th>
-              <th style={{padding: '8px', textAlign: 'right', borderBottom: '1px solid #ddd', width: '100px'}}>Rate</th>
-              <th style={{padding: '8px', textAlign: 'right', borderBottom: '1px solid #ddd', width: '100px'}}>Amount</th>
+            <tr style={{background: '#f59e0b', color: 'white'}}>
+              <th style={{padding: '10px 12px', textAlign: 'center', borderRight: '1px solid rgba(255,255,255,0.2)', width: '60px'}}>S.No.</th>
+              <th style={{padding: '10px 12px', textAlign: 'left', borderRight: '1px solid rgba(255,255,255,0.2)'}}>Description</th>
+              <th style={{padding: '10px 12px', textAlign: 'right', width: '140px'}}>Amount (₹)</th>
             </tr>
           </thead>
           <tbody>
             {validItems.map((item, idx) => (
-              <tr key={idx}>
-                <td style={{padding: '8px', borderBottom: '1px solid #eee'}}>{item.description || '-'}</td>
-                <td style={{padding: '8px', textAlign: 'center', borderBottom: '1px solid #eee'}}>{item.quantity || '-'}</td>
-                <td style={{padding: '8px', textAlign: 'right', borderBottom: '1px solid #eee'}}>
-                  {item.rate ? `₹${parseFloat(item.rate).toLocaleString('en-IN')}` : '-'}
-                </td>
-                <td style={{padding: '8px', textAlign: 'right', borderBottom: '1px solid #eee', fontWeight: 500}}>
-                  {item.amount ? `₹${parseFloat(item.amount).toLocaleString('en-IN')}` : '-'}
+              <tr key={idx} style={{borderBottom: '1px solid #eee', background: idx % 2 === 0 ? '#fff' : '#fafafa'}}>
+                <td style={{padding: '10px 12px', textAlign: 'center', borderRight: '1px solid #eee', fontWeight: 600, color: '#666'}}>{idx + 1}</td>
+                <td style={{padding: '10px 12px', borderRight: '1px solid #eee'}}>{item.description || '-'}</td>
+                <td style={{padding: '10px 12px', textAlign: 'right', fontWeight: 600, fontFamily: 'monospace'}}>
+                  {item.amount ? `₹${parseFloat(item.amount).toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}` : '-'}
                 </td>
               </tr>
             ))}
           </tbody>
+          <tfoot>
+            <tr style={{background: '#fef3c7', fontWeight: 700}}>
+              <td colSpan="2" style={{padding: '12px', textAlign: 'right', fontSize: '0.95rem', borderTop: '2px solid #f59e0b'}}>TOTAL:</td>
+              <td style={{padding: '12px', textAlign: 'right', fontSize: '1rem', fontFamily: 'monospace', color: '#f59e0b', borderTop: '2px solid #f59e0b'}}>
+                ₹{total.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+              </td>
+            </tr>
+            <tr style={{background: '#fffbeb'}}>
+              <td colSpan="3" style={{padding: '10px 12px', fontSize: '0.8rem', fontStyle: 'italic', color: '#92400e'}}>
+                <strong>Amount in Words:</strong> {numberToWordsIndian(total)}
+              </td>
+            </tr>
+          </tfoot>
         </table>
       </div>
     );
@@ -252,6 +319,9 @@ const VoucherPreview = ({ voucher }) => {
       {voucher.narration && <div className="voucher-meta-item mb-1"><span className="voucher-meta-label">Narration:</span><span className="voucher-meta-value">{voucher.narration}</span></div>}
       <NarrationTable />
       <div className="voucher-total">TOTAL: {formatCurrency(voucher.amount)}</div>
+      <div style={{fontSize: '0.85rem', fontStyle: 'italic', color: '#666', marginTop: '0.5rem', marginBottom: '1rem', background: '#fffbeb', padding: '0.75rem', borderRadius: '6px', border: '1px solid #fcd34d'}}>
+        <strong style={{color: '#92400e'}}>In Words:</strong> {numberToWordsIndian(voucher.amount)}
+      </div>
       <div className="voucher-signatures">
         <SignatureBlock 
           name={voucher.preparer_name} 
@@ -460,8 +530,167 @@ const Dashboard = () => {
   );
 };
 
-// Narration Items Table Component
+// Narration Items Table Component with Sequential Entry
 const NarrationItemsTable = ({ items, onChange, disabled }) => {
+  const [currentItem, setCurrentItem] = useState({ description: '', amount: '' });
+
+  const addItem = () => {
+    if (!currentItem.description.trim() || !currentItem.amount || parseFloat(currentItem.amount) <= 0) {
+      return;
+    }
+    
+    onChange([...items, { 
+      description: currentItem.description.trim(), 
+      amount: parseFloat(currentItem.amount).toFixed(2) 
+    }]);
+    
+    setCurrentItem({ description: '', amount: '' });
+    setTimeout(() => document.getElementById('narration-desc-input')?.focus(), 100);
+  };
+
+  const removeItem = (index) => {
+    onChange(items.filter((_, i) => i !== index));
+  };
+
+  const getTotal = () => {
+    return items.reduce((sum, item) => sum + (parseFloat(item.amount) || 0), 0);
+  };
+
+  const handleKeyPress = (e, field) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (field === 'description' && currentItem.description.trim()) {
+        document.getElementById('narration-amt-input')?.focus();
+      } else if (field === 'amount' && currentItem.amount) {
+        addItem();
+      }
+    }
+  };
+
+  return (
+    <div className="narration-table-container" style={{border: '2px solid #f59e0b', borderRadius: '8px', padding: '1rem', background: '#fffbeb'}}>
+      <div style={{marginBottom: '1rem'}}>
+        <h4 style={{fontSize: '0.95rem', fontWeight: 600, color: '#92400e', marginBottom: '0.75rem'}}>📋 Add Line Items (Sequential Entry)</h4>
+        
+        {!disabled && (
+          <div style={{background: 'white', padding: '1rem', borderRadius: '6px', border: '1px solid #fcd34d', marginBottom: '1rem'}}>
+            <div className="form-group" style={{marginBottom: '0.75rem'}}>
+              <label className="form-label" style={{fontSize: '0.85rem', color: '#92400e'}}>
+                1️⃣ Description / Item Name * <span style={{fontSize: '0.75rem', fontWeight: 'normal'}}>(Press Enter to continue)</span>
+              </label>
+              <input 
+                id="narration-desc-input"
+                type="text" 
+                className="form-input" 
+                placeholder="Enter item description..."
+                value={currentItem.description} 
+                onChange={(e) => setCurrentItem({...currentItem, description: e.target.value})}
+                onKeyPress={(e) => handleKeyPress(e, 'description')}
+                disabled={disabled}
+                autoFocus
+                style={{borderColor: '#f59e0b', fontSize: '1rem'}}
+              />
+            </div>
+            
+            {currentItem.description.trim() && (
+              <div className="form-group" style={{marginBottom: '0.75rem'}}>
+                <label className="form-label" style={{fontSize: '0.85rem', color: '#92400e'}}>
+                  2️⃣ Amount (₹) * <span style={{fontSize: '0.75rem', fontWeight: 'normal'}}>(Press Enter to add)</span>
+                </label>
+                <input 
+                  id="narration-amt-input"
+                  type="number" 
+                  className="form-input" 
+                  placeholder="0.00"
+                  value={currentItem.amount} 
+                  onChange={(e) => setCurrentItem({...currentItem, amount: e.target.value})}
+                  onKeyPress={(e) => handleKeyPress(e, 'amount')}
+                  disabled={disabled}
+                  step="0.01"
+                  min="0"
+                  style={{borderColor: '#f59e0b', fontSize: '1rem'}}
+                />
+              </div>
+            )}
+            
+            {currentItem.description.trim() && currentItem.amount && (
+              <button 
+                type="button" 
+                className="btn btn-primary btn-sm" 
+                onClick={addItem}
+                style={{width: '100%', background: '#f59e0b', borderColor: '#f59e0b', padding: '0.75rem'}}
+              >
+                ➕ Add Item to List
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+
+      {items.length > 0 && (
+        <>
+          <table style={{width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem', background: 'white', borderRadius: '6px', overflow: 'hidden'}}>
+            <thead>
+              <tr style={{background: '#f59e0b', color: 'white'}}>
+                <th style={{padding: '10px 12px', textAlign: 'center', width: '60px'}}>S.No.</th>
+                <th style={{padding: '10px 12px', textAlign: 'left'}}>Description</th>
+                <th style={{padding: '10px 12px', textAlign: 'right', width: '140px'}}>Amount (₹)</th>
+                {!disabled && <th style={{padding: '10px 12px', textAlign: 'center', width: '60px'}}>Action</th>}
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((item, index) => (
+                <tr key={index} style={{borderBottom: '1px solid #fcd34d', background: index % 2 === 0 ? 'white' : '#fffbeb'}}>
+                  <td style={{padding: '10px 12px', textAlign: 'center', fontWeight: 600, color: '#92400e'}}>{index + 1}</td>
+                  <td style={{padding: '10px 12px'}}>{item.description}</td>
+                  <td style={{padding: '10px 12px', textAlign: 'right', fontWeight: 600, fontFamily: 'monospace'}}>
+                    ₹{parseFloat(item.amount).toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+                  </td>
+                  {!disabled && (
+                    <td style={{padding: '10px 12px', textAlign: 'center'}}>
+                      <button 
+                        type="button" 
+                        className="btn btn-sm btn-danger" 
+                        onClick={() => removeItem(index)}
+                        title="Remove item"
+                        style={{padding: '4px 10px', fontSize: '0.85rem'}}
+                      >
+                        ×
+                      </button>
+                    </td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr style={{background: '#fef3c7', fontWeight: 700}}>
+                <td colSpan={!disabled ? "3" : "2"} style={{padding: '12px', textAlign: 'right', fontSize: '0.95rem'}}>TOTAL:</td>
+                <td style={{padding: '12px', textAlign: 'right', fontSize: '1rem', fontFamily: 'monospace', color: '#f59e0b'}}>
+                  ₹{getTotal().toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+                </td>
+                {!disabled && <td></td>}
+              </tr>
+              <tr style={{background: '#fffbeb'}}>
+                <td colSpan={!disabled ? "4" : "3"} style={{padding: '10px 12px', fontSize: '0.8rem', fontStyle: 'italic', color: '#92400e'}}>
+                  <strong>In Words:</strong> {numberToWordsIndian(getTotal())}
+                </td>
+              </tr>
+            </tfoot>
+          </table>
+        </>
+      )}
+      
+      {items.length === 0 && disabled && (
+        <div style={{textAlign: 'center', padding: '2rem', color: '#92400e', fontSize: '0.9rem'}}>
+          No line items added
+        </div>
+      )}
+    </div>
+  );
+};
+
+// Legacy Narration Items Table Component (for backwards compatibility)
+const LegacyNarrationItemsTable = ({ items, onChange, disabled }) => {
   const addItem = () => {
     onChange([...items, { description: '', quantity: '', rate: '', amount: '' }]);
   };
@@ -701,18 +930,18 @@ const CreateVoucher = () => {
           <div className="form-group">
             <label className="form-label form-label-row">
               Narration / Line Items
-              <label style={{display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem', cursor: 'pointer'}}>
+              <label style={{display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem', cursor: 'pointer', background: '#f59e0b', color: 'white', padding: '0.35rem 0.75rem', borderRadius: '6px'}}>
                 <input 
                   type="checkbox" 
                   checked={useNarrationTable} 
                   onChange={(e) => {
                     setUseNarrationTable(e.target.checked);
                     if (e.target.checked && form.narrationItems.length === 0) {
-                      setForm({ ...form, narrationItems: [{ description: '', quantity: '', rate: '', amount: '' }] });
+                      setForm({ ...form, narrationItems: [] });
                     }
                   }} 
                 />
-                Use Table Format
+                ✨ Use Tabulated Format
               </label>
             </label>
             
@@ -727,7 +956,10 @@ const CreateVoucher = () => {
           </div>
           
           <div className="form-group">
-            <label className="form-label">Amount (₹) * {useNarrationTable && form.narrationItems.length > 0 && <span style={{color: '#666', fontWeight: 'normal'}}>(auto-calculated from items)</span>}</label>
+            <label className="form-label">
+              Amount (₹) * 
+              {useNarrationTable && form.narrationItems.length > 0 && <span style={{color: '#f59e0b', fontWeight: 'normal', marginLeft: '0.5rem'}}>(auto-calculated from items)</span>}
+            </label>
             <input 
               type="number" 
               className="form-input" 
@@ -735,11 +967,16 @@ const CreateVoucher = () => {
               value={form.amount} 
               onChange={(e) => setForm({ ...form, amount: e.target.value })} 
               readOnly={useNarrationTable && form.narrationItems.some(i => parseFloat(i.amount) > 0)}
-              style={useNarrationTable && form.narrationItems.some(i => parseFloat(i.amount) > 0) ? {background: '#f5f5f5'} : {}}
+              style={useNarrationTable && form.narrationItems.some(i => parseFloat(i.amount) > 0) ? {background: '#f5f5f5', fontWeight: 600, fontSize: '1.1rem'} : {}}
             />
+            {form.amount > 0 && (
+              <div style={{marginTop: '0.5rem', fontSize: '0.85rem', color: '#666', fontStyle: 'italic', background: '#fffbeb', padding: '0.75rem', borderRadius: '6px', border: '1px solid #fcd34d'}}>
+                <strong style={{color: '#92400e'}}>In Words:</strong> {numberToWordsIndian(parseFloat(form.amount))}
+              </div>
+            )}
           </div>
           
-          <div className="btn-group" style={{display: 'flex', gap: '1rem', flexWrap: 'wrap'}}>
+          <div className="btn-group" style={{display: 'flex', gap: '1rem', flexWrap: 'wrap', marginTop: '1.5rem'}}>
             <button className="btn btn-secondary" onClick={() => handleSaveOrSubmit(true)} disabled={loading}>
               {loading && Icons.loader}💾 Save as Draft
             </button>
@@ -885,7 +1122,24 @@ const VoucherList = ({ filter }) => {
     const formatCurrency = (a) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(a);
     const totalAmount = vouchers.reduce((sum, v) => sum + v.amount, 0);
     
-    // Helper to render narration items table
+    // Helper to convert number to words for print
+    const numToWords = (num) => {
+      if (num === 0) return 'Zero Rupees Only';
+      const ones = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine'];
+      const tens = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
+      const teens = ['Ten', 'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen', 'Seventeen', 'Eighteen', 'Nineteen'];
+      const convertLessThan100 = (n) => { if (n < 10) return ones[n]; if (n >= 10 && n < 20) return teens[n - 10]; return tens[Math.floor(n / 10)] + (n % 10 !== 0 ? ' ' + ones[n % 10] : ''); };
+      const convertLessThan1000 = (n) => { if (n < 100) return convertLessThan100(n); return ones[Math.floor(n / 100)] + ' Hundred' + (n % 100 !== 0 ? ' ' + convertLessThan100(n % 100) : ''); };
+      const [rupeesStr, paiseStr] = num.toFixed(2).split('.'); let remainingRupees = parseInt(rupeesStr, 10); const paise = parseInt(paiseStr, 10); let words = '';
+      if (remainingRupees >= 10000000) { const crores = Math.floor(remainingRupees / 10000000); words += convertLessThan1000(crores) + ' Crore '; remainingRupees %= 10000000; }
+      if (remainingRupees >= 100000) { const lakhs = Math.floor(remainingRupees / 100000); words += convertLessThan1000(lakhs) + ' Lakh '; remainingRupees %= 100000; }
+      if (remainingRupees >= 1000) { const thousands = Math.floor(remainingRupees / 1000); words += convertLessThan1000(thousands) + ' Thousand '; remainingRupees %= 1000; }
+      if (remainingRupees > 0) { words += convertLessThan1000(remainingRupees); }
+      words = words.trim() + ' Rupees'; if (paise > 0) { words += ' and ' + convertLessThan100(paise) + ' Paise'; }
+      return words.trim() + ' Only';
+    };
+    
+    // Helper to render narration items table with enhanced styling
     const renderNarrationItems = (v) => {
       const items = typeof v.narration_items === 'string' 
         ? JSON.parse(v.narration_items || '[]') 
@@ -894,28 +1148,39 @@ const VoucherList = ({ filter }) => {
       
       if (validItems.length === 0) return '';
       
+      const itemsTotal = validItems.reduce((sum, item) => sum + (parseFloat(item.amount) || 0), 0);
+      
       return `
         <div class="particulars-section">
-          <div class="particulars-title">Particulars:</div>
+          <div class="particulars-title">Particulars</div>
           <table class="particulars-table">
             <thead>
-              <tr>
-                <th style="text-align:left;width:50%">Description</th>
-                <th style="text-align:center;width:15%">Qty</th>
-                <th style="text-align:right;width:17%">Rate</th>
-                <th style="text-align:right;width:18%">Amount</th>
+              <tr style="background: #f59e0b; color: white;">
+                <th style="text-align:center;width:10%">S.No.</th>
+                <th style="text-align:left;width:60%">Description</th>
+                <th style="text-align:right;width:30%">Amount (₹)</th>
               </tr>
             </thead>
             <tbody>
-              ${validItems.map(item => `
-                <tr>
+              ${validItems.map((item, idx) => `
+                <tr style="background: ${idx % 2 === 0 ? '#fff' : '#fafafa'}">
+                  <td style="text-align:center;font-weight:600;color:#666">${idx + 1}</td>
                   <td style="text-align:left">${item.description || '-'}</td>
-                  <td style="text-align:center">${item.quantity || '-'}</td>
-                  <td style="text-align:right">${item.rate ? '₹' + parseFloat(item.rate).toLocaleString('en-IN') : '-'}</td>
-                  <td style="text-align:right;font-weight:500">${item.amount ? '₹' + parseFloat(item.amount).toLocaleString('en-IN') : '-'}</td>
+                  <td style="text-align:right;font-weight:600;font-family:monospace">${item.amount ? '₹' + parseFloat(item.amount).toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '-'}</td>
                 </tr>
               `).join('')}
             </tbody>
+            <tfoot>
+              <tr style="background:#fef3c7;font-weight:700">
+                <td colspan="2" style="text-align:right;padding:10px;border-top:2px solid #f59e0b">TOTAL:</td>
+                <td style="text-align:right;padding:10px;font-family:monospace;color:#f59e0b;border-top:2px solid #f59e0b">₹${itemsTotal.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
+              </tr>
+              <tr style="background:#fffbeb">
+                <td colspan="3" style="padding:8px;font-size:10px;font-style:italic;color:#92400e">
+                  <strong>In Words:</strong> ${numToWords(itemsTotal)}
+                </td>
+              </tr>
+            </tfoot>
           </table>
         </div>
       `;
@@ -1015,6 +1280,9 @@ const VoucherList = ({ filter }) => {
       ${renderNarrationItems(v)}
       
       <div class="voucher-amount">AMOUNT: ${formatCurrency(v.amount)}</div>
+      <div style="font-size:11px;font-style:italic;color:#666;margin-bottom:15px;background:#fffbeb;padding:8px;border-radius:4px;border:1px solid #fcd34d">
+        <strong style="color:#92400e">In Words:</strong> ${numToWords(v.amount)}
+      </div>
       
       <div class="voucher-signatures">
         <div class="signature-box">
