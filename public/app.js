@@ -821,7 +821,7 @@ const CreateVoucher = () => {
   const [customAccount, setCustomAccount] = useState('');
   const [form, setForm] = useState({ headOfAccount: '', narration: '', narrationItems: [], payeeId: '', paymentMode: 'UPI', amount: '' });
   const [newPayee, setNewPayee] = useState({ name: '', alias: '', mobile: '', bankAccount: '', ifsc: '', upiId: '' });
-  const [useNarrationTable, setUseNarrationTable] = useState(false);
+  const [useNarrationTable, setUseNarrationTable] = useState(true);  // Default to TRUE for tabulated format
 
   useEffect(() => { 
     // Load payees for user's company
@@ -930,18 +930,19 @@ const CreateVoucher = () => {
           <div className="form-group">
             <label className="form-label form-label-row">
               Narration / Line Items
-              <label style={{display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem', cursor: 'pointer', background: '#f59e0b', color: 'white', padding: '0.35rem 0.75rem', borderRadius: '6px'}}>
+              <label style={{display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem', cursor: 'pointer', background: useNarrationTable ? '#f59e0b' : '#888', color: 'white', padding: '0.35rem 0.75rem', borderRadius: '6px'}}>
                 <input 
                   type="checkbox" 
                   checked={useNarrationTable} 
                   onChange={(e) => {
                     setUseNarrationTable(e.target.checked);
-                    if (e.target.checked && form.narrationItems.length === 0) {
+                    if (!e.target.checked) {
+                      // Switching to simple mode - clear items
                       setForm({ ...form, narrationItems: [] });
                     }
                   }} 
                 />
-                ✨ Use Tabulated Format
+                {useNarrationTable ? '📋 Multiple Items Mode' : '📝 Simple Text Mode'}
               </label>
             </label>
             
