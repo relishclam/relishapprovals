@@ -7,6 +7,7 @@ const Icons = {
   building: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 22V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v18Z"/><path d="M6 12H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2"/><path d="M18 9h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2"/></svg>,
   fileText: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>,
   bell: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>,
+  bellOff: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M8.7 3A6 6 0 0 1 18 8c0 2.6.7 4.8 1.7 6.5"/><path d="M6 17H3s3-2 3-9a4.6 4.6 0 0 1 .3-1.7"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/><path d="M17 17H6"/><line x1="2" x2="22" y1="2" y2="22"/></svg>,
   logOut: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></svg>,
   plus: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M5 12h14"/><path d="M12 5v14"/></svg>,
   check: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 6 9 17l-5-5"/></svg>,
@@ -3118,12 +3119,73 @@ const App = () => {
       }
       
       setPushEnabled(true);
+      addToast('Push notifications enabled!', 'success');
       return true;
     } catch (error) {
       console.error('Failed to subscribe to push notifications:', error);
+      addToast('Failed to enable push notifications', 'error');
       return false;
     }
-  }, [user]);
+  }, [user, addToast]);
+
+  // Disable push notifications
+  const disablePushNotifications = useCallback(async () => {
+    if (!('serviceWorker' in navigator)) {
+      return false;
+    }
+    
+    try {
+      const registration = await navigator.serviceWorker.ready;
+      const subscription = await registration.pushManager.getSubscription();
+      
+      if (subscription) {
+        // Unsubscribe from push
+        await subscription.unsubscribe();
+        
+        // Remove subscription from server
+        if (user) {
+          await fetch(`${API_BASE}/users/${user.id}/push-subscription`, {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+      }
+      
+      setPushEnabled(false);
+      addToast('Push notifications disabled', 'info');
+      return true;
+    } catch (error) {
+      console.error('Failed to unsubscribe from push notifications:', error);
+      addToast('Failed to disable push notifications', 'error');
+      return false;
+    }
+  }, [user, addToast]);
+
+  // Toggle push notifications
+  const togglePushNotifications = useCallback(async () => {
+    if (pushEnabled) {
+      await disablePushNotifications();
+    } else {
+      await requestPushPermission();
+    }
+  }, [pushEnabled, disablePushNotifications, requestPushPermission]);
+
+  // Check push status on component mount
+  useEffect(() => {
+    const checkPushStatus = async () => {
+      if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+        return;
+      }
+      try {
+        const registration = await navigator.serviceWorker.ready;
+        const subscription = await registration.pushManager.getSubscription();
+        setPushEnabled(!!subscription);
+      } catch (e) {
+        console.log('Could not check push status:', e);
+      }
+    };
+    checkPushStatus();
+  }, []);
 
   // Show browser notification
   const showBrowserNotification = useCallback((title, body, url = '/') => {
@@ -3340,7 +3402,21 @@ const App = () => {
           <main className="main-content">{renderPage()}</main>
           {showNotifications && (
             <div className="notifications-panel">
-              <div className="notifications-header"><h3 style={{fontSize:'1rem',fontWeight:600}}>Notifications</h3>{unreadCount > 0 && <button className="btn btn-sm btn-secondary" onClick={markAllRead}>Mark all read</button>}</div>
+              <div className="notifications-header">
+                <h3 style={{fontSize:'1rem',fontWeight:600}}>Notifications</h3>
+                <div style={{display:'flex',gap:'8px',alignItems:'center'}}>
+                  <button 
+                    className={`btn btn-sm ${pushEnabled ? 'btn-success' : 'btn-secondary'}`}
+                    onClick={togglePushNotifications}
+                    title={pushEnabled ? 'Push notifications enabled - click to disable' : 'Push notifications disabled - click to enable'}
+                    style={{display:'flex',alignItems:'center',gap:'4px',padding:'4px 8px'}}
+                  >
+                    {pushEnabled ? Icons.bell : Icons.bellOff}
+                    <span style={{fontSize:'0.75rem'}}>{pushEnabled ? 'On' : 'Off'}</span>
+                  </button>
+                  {unreadCount > 0 && <button className="btn btn-sm btn-secondary" onClick={markAllRead}>Mark all read</button>}
+                </div>
+              </div>
               {notifications.length === 0 ? <div className="empty-state">{Icons.bell}<p>No notifications</p></div> : notifications.map(n => (<div key={n.id} className={`notification-item ${!n.read ? 'unread' : ''}`}><div className="notification-title">{n.title}</div><div className="notification-message">{n.message}</div><div className="notification-time">{new Date(n.created_at).toLocaleString('en-IN')}</div></div>))}
             </div>
           )}
