@@ -319,10 +319,15 @@ const VoucherPreview = ({ voucher }) => {
       <div className="voucher-meta-item mb-1"><span className="voucher-meta-label">Head:</span><span className="voucher-meta-value">{voucher.head_of_account}</span></div>
       {voucher.narration && <div className="voucher-meta-item mb-1"><span className="voucher-meta-label">Narration:</span><span className="voucher-meta-value">{voucher.narration}</span></div>}
       <NarrationTable />
-      <div className="voucher-total">TOTAL: {formatCurrency(voucher.amount)}</div>
-      <div style={{fontSize: '0.85rem', fontStyle: 'italic', color: '#666', marginTop: '0.5rem', marginBottom: '1rem', background: '#fffbeb', padding: '0.75rem', borderRadius: '6px', border: '1px solid #fcd34d'}}>
-        <strong style={{color: '#92400e'}}>In Words:</strong> {numberToWordsIndian(voucher.amount)}
-      </div>
+      {/* Only show TOTAL section if there are no narration items (table already shows total) */}
+      {(!narrationItems || narrationItems.filter(item => item.description || item.amount).length === 0) && (
+        <>
+          <div className="voucher-total">TOTAL: {formatCurrency(voucher.amount)}</div>
+          <div style={{fontSize: '0.85rem', fontStyle: 'italic', color: '#666', marginTop: '0.5rem', marginBottom: '1rem', background: '#fffbeb', padding: '0.75rem', borderRadius: '6px', border: '1px solid #fcd34d'}}>
+            <strong style={{color: '#92400e'}}>In Words:</strong> {numberToWordsIndian(voucher.amount)}
+          </div>
+        </>
+      )}
       <div className="voucher-signatures">
         <SignatureBlock 
           name={voucher.preparer_name} 
