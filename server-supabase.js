@@ -867,7 +867,7 @@ const getNextVoucherNumber = async (companyId) => {
 
 // Create voucher (submit for approval) or save as draft
 app.post('/api/vouchers', async (req, res) => {
-  const { companyId, headOfAccount, narration, narrationItems, amount, paymentMode, payeeId, preparedBy, saveAsDraft } = req.body;
+  const { companyId, headOfAccount, subHeadOfAccount, narration, narrationItems, amount, paymentMode, payeeId, preparedBy, saveAsDraft } = req.body;
   
   if (!companyId || !headOfAccount || !amount || !paymentMode || !payeeId || !preparedBy) {
     return res.status(400).json({ error: 'Missing required fields' });
@@ -881,6 +881,7 @@ app.post('/api/vouchers', async (req, res) => {
       company_id: companyId,
       serial_number: serialNumber,
       head_of_account: headOfAccount,
+      sub_head_of_account: subHeadOfAccount || null,
       narration: narration || '',
       narration_items: narrationItems || [],
       amount,
@@ -942,7 +943,7 @@ app.post('/api/vouchers', async (req, res) => {
 
 // Update draft voucher
 app.put('/api/vouchers/:voucherId', async (req, res) => {
-  const { headOfAccount, narration, narrationItems, amount, paymentMode, payeeId } = req.body;
+  const { headOfAccount, subHeadOfAccount, narration, narrationItems, amount, paymentMode, payeeId } = req.body;
   
   try {
     // First check if voucher exists and is a draft
@@ -959,6 +960,7 @@ app.put('/api/vouchers/:voucherId', async (req, res) => {
     
     const updateData = {};
     if (headOfAccount !== undefined) updateData.head_of_account = headOfAccount;
+    if (subHeadOfAccount !== undefined) updateData.sub_head_of_account = subHeadOfAccount;
     if (narration !== undefined) updateData.narration = narration;
     if (narrationItems !== undefined) updateData.narration_items = narrationItems;
     if (amount !== undefined) updateData.amount = amount;
@@ -1680,6 +1682,117 @@ app.post('/api/heads-of-account/import', async (req, res) => {
     res.json({ success: true, imported: data?.length || 0 });
   } catch (error) {
     console.error('Error importing heads of account:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============ SUB-HEADS OF ACCOUNT ============
+
+// Get sub-heads of account for a head or company
+app.get('/api/sub-heads-of-account', async (req, res) => {
+  try {
+    const { headId, companyId } = req.query;
+    
+    let query = supabase.from('sub_heads_of_account')
+      .select('id, head_id, name, created_at')
+      .order('name');
+    
+    if (headId) {
+      query = query.eq('head_id', headId);
+    } else if (companyId) {
+      query = query.eq('company_id', companyId);
+    } else {
+      return res.status(400).json({ error: 'headId or companyId is required' });
+    }
+    
+    const { data, error } = await query;
+    if (error) throw error;
+    
+    res.json(data || []);
+  } catch (error) {
+    console.error('Error fetching sub-heads of account:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get all sub-heads grouped by head for a company
+app.get('/api/sub-heads-of-account/grouped', async (req, res) => {
+  try {
+    const { companyId } = req.query;
+    if (!companyId) {
+      return res.status(400).json({ error: 'Company ID is required' });
+    }
+
+    // Get all heads with their sub-heads
+    const { data: heads, error: headsError } = await supabase.from('heads_of_account')
+      .select('id, name')
+      .eq('company_id', companyId)
+      .order('name');
+    
+    if (headsError) throw headsError;
+
+    const { data: subHeads, error: subHeadsError } = await supabase.from('sub_heads_of_account')
+      .select('id, head_id, name')
+      .eq('company_id', companyId)
+      .order('name');
+    
+    if (subHeadsError) throw subHeadsError;
+
+    // Group sub-heads by head_id
+    const grouped = heads.map(head => ({
+      ...head,
+      subHeads: (subHeads || []).filter(sh => sh.head_id === head.id)
+    }));
+    
+    res.json(grouped);
+  } catch (error) {
+    console.error('Error fetching grouped sub-heads:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Add a new sub-head of account
+app.post('/api/sub-heads-of-account', async (req, res) => {
+  try {
+    const { headId, companyId, name } = req.body;
+    
+    if (!headId || !companyId || !name) {
+      return res.status(400).json({ error: 'headId, companyId, and name are required' });
+    }
+
+    const { data, error } = await supabase.from('sub_heads_of_account')
+      .insert({ head_id: headId, company_id: companyId, name: name.trim() })
+      .select('id, head_id, name')
+      .single();
+    
+    if (error) {
+      if (error.code === '23505') {
+        return res.status(400).json({ error: 'Sub-head already exists under this head' });
+      }
+      throw error;
+    }
+    
+    res.json(data);
+  } catch (error) {
+    console.error('Error adding sub-head of account:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Delete a sub-head of account
+app.delete('/api/sub-heads-of-account/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const { error } = await supabase.from('sub_heads_of_account')
+      .delete()
+      .eq('id', id);
+    
+    if (error) throw error;
+    
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error deleting sub-head of account:', error);
     res.status(500).json({ error: error.message });
   }
 });

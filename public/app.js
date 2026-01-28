@@ -120,7 +120,32 @@ const api = {
   addHeadOfAccount: (companyId, name) => fetch(`${API_BASE}/heads-of-account`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ companyId, name }) }).then(r => r.json()),
   deleteHeadOfAccount: (id) => fetch(`${API_BASE}/heads-of-account/${id}`, { method: 'DELETE' }).then(r => r.json()),
   importHeadsOfAccount: (companyId, names) => fetch(`${API_BASE}/heads-of-account/import`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ companyId, names }) }).then(r => r.json()),
+  // Sub-heads of account
+  getSubHeadsOfAccount: (headId) => fetch(`${API_BASE}/sub-heads-of-account?headId=${headId}`).then(r => r.json()),
+  getSubHeadsByCompany: (companyId) => fetch(`${API_BASE}/sub-heads-of-account?companyId=${companyId}`).then(r => r.json()),
+  getGroupedSubHeads: (companyId) => fetch(`${API_BASE}/sub-heads-of-account/grouped?companyId=${companyId}`).then(r => r.json()),
+  addSubHeadOfAccount: (headId, companyId, name) => fetch(`${API_BASE}/sub-heads-of-account`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ headId, companyId, name }) }).then(r => r.json()),
+  deleteSubHeadOfAccount: (id) => fetch(`${API_BASE}/sub-heads-of-account/${id}`, { method: 'DELETE' }).then(r => r.json()),
 };
+
+// Format number in Indian style with commas (without Unicode NBSP gaps)
+const formatIndianNumber = (num, decimals = 2) => {
+  if (num === null || num === undefined || isNaN(num)) return '0.00';
+  const fixed = parseFloat(num).toFixed(decimals);
+  const [intPart, decPart] = fixed.split('.');
+  // Indian number system: last 3 digits, then groups of 2
+  let result = '';
+  const len = intPart.length;
+  for (let i = 0; i < len; i++) {
+    if (i > 0 && (len - i) === 3) result += ',';
+    else if (i > 0 && (len - i) > 3 && (len - i) % 2 === 1) result += ',';
+    result += intPart[i];
+  }
+  return decimals > 0 ? result + '.' + decPart : result;
+};
+
+// Format currency with ₹ symbol
+const formatRupees = (num, decimals = 2) => '₹' + formatIndianNumber(num, decimals);
 
 // Context
 const AppContext = createContext(null);
@@ -222,7 +247,7 @@ const OTPInput = ({ length = 6, value = '', onChange }) => {
 // Voucher Preview
 const VoucherPreview = ({ voucher }) => {
   const formatDate = (d) => new Date(d).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
-  const formatCurrency = (a) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(a);
+  const formatCurrency = (a) => formatRupees(a);
   
   // Parse narration_items if it's a string
   const narrationItems = typeof voucher.narration_items === 'string' 
@@ -275,7 +300,7 @@ const VoucherPreview = ({ voucher }) => {
                 <td style={{padding: '10px 12px', textAlign: 'center', borderRight: '1px solid #eee', fontWeight: 600, color: '#666'}}>{idx + 1}</td>
                 <td style={{padding: '10px 12px', borderRight: '1px solid #eee'}}>{item.description || '-'}</td>
                 <td style={{padding: '10px 12px', textAlign: 'right', fontWeight: 600, fontFamily: 'monospace'}}>
-                  {item.amount ? `₹${parseFloat(item.amount).toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}` : '-'}
+                  {item.amount ? formatRupees(item.amount) : '-'}
                 </td>
               </tr>
             ))}
@@ -284,7 +309,7 @@ const VoucherPreview = ({ voucher }) => {
             <tr style={{background: '#fef3c7', fontWeight: 700}}>
               <td colSpan="2" style={{padding: '12px', textAlign: 'right', fontSize: '0.95rem', borderTop: '2px solid #f59e0b'}}>TOTAL:</td>
               <td style={{padding: '12px', textAlign: 'right', fontSize: '1rem', fontFamily: 'monospace', color: '#f59e0b', borderTop: '2px solid #f59e0b'}}>
-                ₹{total.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+                {formatRupees(total)}
               </td>
             </tr>
             <tr style={{background: '#fffbeb'}}>
@@ -527,7 +552,7 @@ const Dashboard = () => {
         <div className="card-body" style={{ padding: 0 }}>
           {vouchers.length === 0 ? <div className="empty-state">{Icons.fileText}<p>No vouchers yet</p></div> : (
             <div className="table-container"><table className="table"><thead><tr><th>Serial No.</th><th>Payee</th><th>Amount</th><th>Status</th><th>Date</th></tr></thead><tbody>
-              {vouchers.slice(0, 5).map(v => (<tr key={v.id}><td className="text-mono fw-600">{v.serial_number}</td><td>{v.payee_name}</td><td className="fw-600">₹{v.amount.toLocaleString('en-IN')}</td><td><span className={`status-badge status-${v.status}`}>{v.status.replace(/_/g, ' ')}</span></td><td>{new Date(v.created_at).toLocaleDateString('en-IN')}</td></tr>))}
+              {vouchers.slice(0, 5).map(v => (<tr key={v.id}><td className="text-mono fw-600">{v.serial_number}</td><td>{v.payee_name}</td><td className="fw-600">{formatRupees(v.amount, 0)}</td><td><span className={`status-badge status-${v.status}`}>{v.status.replace(/_/g, ' ')}</span></td><td>{new Date(v.created_at).toLocaleDateString('en-IN')}</td></tr>))}
             </tbody></table></div>
           )}
         </div>
@@ -650,7 +675,7 @@ const NarrationItemsTable = ({ items, onChange, disabled }) => {
                   <td style={{padding: '10px 12px', textAlign: 'center', fontWeight: 600, color: '#92400e'}}>{index + 1}</td>
                   <td style={{padding: '10px 12px'}}>{item.description}</td>
                   <td style={{padding: '10px 12px', textAlign: 'right', fontWeight: 600, fontFamily: 'monospace'}}>
-                    ₹{parseFloat(item.amount).toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+                    {formatRupees(item.amount)}
                   </td>
                   {!disabled && (
                     <td style={{padding: '10px 12px', textAlign: 'center'}}>
@@ -672,7 +697,7 @@ const NarrationItemsTable = ({ items, onChange, disabled }) => {
               <tr style={{background: '#fef3c7', fontWeight: 700}}>
                 <td colSpan={!disabled ? "3" : "2"} style={{padding: '12px', textAlign: 'right', fontSize: '0.95rem'}}>TOTAL:</td>
                 <td style={{padding: '12px', textAlign: 'right', fontSize: '1rem', fontFamily: 'monospace', color: '#f59e0b'}}>
-                  ₹{getTotal().toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+                  {formatRupees(getTotal())}
                 </td>
                 {!disabled && <td></td>}
               </tr>
@@ -822,10 +847,13 @@ const CreateVoucher = () => {
   const [loading, setLoading] = useState(false);
   const [payees, setPayees] = useState([]);
   const [heads, setHeads] = useState([]);
+  const [headsData, setHeadsData] = useState([]); // Full data with IDs
+  const [subHeads, setSubHeads] = useState([]); // Sub-heads for selected head
+  const [allSubHeads, setAllSubHeads] = useState([]); // All sub-heads by company
   const [showPayeeModal, setShowPayeeModal] = useState(false);
   const [showCustomAccount, setShowCustomAccount] = useState(false);
   const [customAccount, setCustomAccount] = useState('');
-  const [form, setForm] = useState({ headOfAccount: '', narration: '', narrationItems: [], payeeId: '', paymentMode: 'UPI', amount: '' });
+  const [form, setForm] = useState({ headOfAccount: '', subHeadOfAccount: '', narration: '', narrationItems: [], payeeId: '', paymentMode: 'UPI', amount: '' });
   const [newPayee, setNewPayee] = useState({ name: '', alias: '', mobile: '', bankAccount: '', ifsc: '', upiId: '' });
   const [useNarrationTable, setUseNarrationTable] = useState(true);  // Default to TRUE for tabulated format
 
@@ -835,10 +863,34 @@ const CreateVoucher = () => {
     // Load heads from database based on user's company
     api.getHeadsOfAccount(user.company.id).then(data => {
       if (Array.isArray(data)) {
+        setHeadsData(data);
         setHeads(data.map(h => h.name));
       }
     });
+    // Load all sub-heads for the company
+    api.getSubHeadsByCompany(user.company.id).then(data => {
+      if (Array.isArray(data)) {
+        setAllSubHeads(data);
+      }
+    });
   }, [user.company.id]);
+
+  // Update sub-heads when head of account changes
+  useEffect(() => {
+    if (form.headOfAccount) {
+      const selectedHead = headsData.find(h => h.name === form.headOfAccount);
+      if (selectedHead) {
+        const filtered = allSubHeads.filter(sh => sh.head_id === selectedHead.id);
+        setSubHeads(filtered);
+      } else {
+        setSubHeads([]);
+      }
+    } else {
+      setSubHeads([]);
+    }
+    // Clear sub-head selection when head changes
+    setForm(f => ({ ...f, subHeadOfAccount: '' }));
+  }, [form.headOfAccount, headsData, allSubHeads]);
 
   // Calculate total from narration items
   const calculateNarrationTotal = () => {
@@ -878,7 +930,8 @@ const CreateVoucher = () => {
     try { 
       const result = await api.createVoucher({ 
         companyId: user.company.id, 
-        headOfAccount: form.headOfAccount, 
+        headOfAccount: form.headOfAccount,
+        subHeadOfAccount: form.subHeadOfAccount || null,
         narration: form.narration, 
         narrationItems: form.narrationItems,
         amount: parseFloat(form.amount), 
@@ -889,7 +942,7 @@ const CreateVoucher = () => {
       }); 
       if (result.success) { 
         addToast(saveAsDraft ? `Draft ${result.serialNumber} saved` : `Voucher ${result.serialNumber} submitted`, 'success'); 
-        setForm({ headOfAccount: '', narration: '', narrationItems: [], payeeId: '', paymentMode: 'UPI', amount: '' }); 
+        setForm({ headOfAccount: '', subHeadOfAccount: '', narration: '', narrationItems: [], payeeId: '', paymentMode: 'UPI', amount: '' }); 
         setUseNarrationTable(false);
         refreshVouchers(); 
       } else {
@@ -929,6 +982,20 @@ const CreateVoucher = () => {
                 </div>
               )}
             </div>
+            <div className="form-group">
+              <label className="form-label">Sub-Category</label>
+              <select 
+                className="form-select" 
+                value={form.subHeadOfAccount} 
+                onChange={(e) => setForm({ ...form, subHeadOfAccount: e.target.value })}
+                disabled={!form.headOfAccount || subHeads.length === 0}
+              >
+                <option value="">{!form.headOfAccount ? 'Select Head first' : subHeads.length === 0 ? 'No sub-categories' : 'Select Sub-Category'}</option>
+                {subHeads.map(sh => <option key={sh.id} value={sh.name}>{sh.name}</option>)}
+              </select>
+            </div>
+          </div>
+          <div className="form-row">
             <div className="form-group"><label className="form-label">Payment Mode *</label><select className="form-select" value={form.paymentMode} onChange={(e) => setForm({ ...form, paymentMode: e.target.value })}><option value="UPI">UPI</option><option value="Account Transfer">Account Transfer</option><option value="Cash">Cash</option></select></div>
           </div>
           <div className="form-group"><label className="form-label form-label-row">Payee *<button className="btn btn-sm btn-secondary" onClick={() => setShowPayeeModal(true)}>{Icons.plus} Add Payee</button></label><select className="form-select" value={form.payeeId} onChange={(e) => setForm({ ...form, payeeId: e.target.value })}><option value="">Select Payee</option>{payees.map(p => <option key={p.id} value={p.id}>{p.name} {p.alias && `(${p.alias})`}</option>)}</select></div>
@@ -1126,12 +1193,12 @@ const VoucherList = ({ filter }) => {
   
   const generateVoucherHTML = (vouchers, title) => {
     const formatDate = (d) => new Date(d).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
-    const formatCurrency = (a) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(a);
+    const formatCurrency = (a) => formatRupees(a);
     const totalAmount = vouchers.reduce((sum, v) => sum + v.amount, 0);
     
     // Helper to convert number to words for print
     const numToWords = (num) => {
-      if (num === 0) return 'Zero Rupees Only';
+      if (num === 0) return 'Rupees Zero Only';
       const ones = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine'];
       const tens = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
       const teens = ['Ten', 'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen', 'Seventeen', 'Eighteen', 'Nineteen'];
@@ -1142,7 +1209,7 @@ const VoucherList = ({ filter }) => {
       if (remainingRupees >= 100000) { const lakhs = Math.floor(remainingRupees / 100000); words += convertLessThan1000(lakhs) + ' Lakh '; remainingRupees %= 100000; }
       if (remainingRupees >= 1000) { const thousands = Math.floor(remainingRupees / 1000); words += convertLessThan1000(thousands) + ' Thousand '; remainingRupees %= 1000; }
       if (remainingRupees > 0) { words += convertLessThan1000(remainingRupees); }
-      words = words.trim() + ' Rupees'; if (paise > 0) { words += ' and ' + convertLessThan100(paise) + ' Paise'; }
+      words = 'Rupees ' + words.trim(); if (paise > 0) { words += ' and ' + convertLessThan100(paise) + ' Paise'; }
       return words.trim() + ' Only';
     };
     
@@ -1173,14 +1240,14 @@ const VoucherList = ({ filter }) => {
                 <tr style="background: ${idx % 2 === 0 ? '#fff' : '#fafafa'}">
                   <td style="text-align:center;font-weight:600;color:#666">${idx + 1}</td>
                   <td style="text-align:left">${item.description || '-'}</td>
-                  <td style="text-align:right;font-weight:600;font-family:monospace">${item.amount ? '₹' + parseFloat(item.amount).toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '-'}</td>
+                  <td style="text-align:right;font-weight:600;font-family:monospace">${item.amount ? formatCurrency(item.amount) : '-'}</td>
                 </tr>
               `).join('')}
             </tbody>
             <tfoot>
               <tr style="background:#fef3c7;font-weight:700">
                 <td colspan="2" style="text-align:right;padding:10px;border-top:2px solid #f59e0b">TOTAL:</td>
-                <td style="text-align:right;padding:10px;font-family:monospace;color:#f59e0b;border-top:2px solid #f59e0b">₹${itemsTotal.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
+                <td style="text-align:right;padding:10px;font-family:monospace;color:#f59e0b;border-top:2px solid #f59e0b">${formatCurrency(itemsTotal)}</td>
               </tr>
               <tr style="background:#fffbeb">
                 <td colspan="3" style="padding:8px;font-size:10px;font-style:italic;color:#92400e">
@@ -1373,7 +1440,7 @@ const VoucherList = ({ filter }) => {
       <div className="card"><div className="card-body" style={{ padding: 0 }}>
         {filtered.length === 0 ? <div className="empty-state">{Icons.fileText}<p>No vouchers found</p></div> : (
           <div className="table-container"><table className="table"><thead><tr><th>Serial No.</th><th>Head of Account</th><th>Payee</th><th>Amount</th><th>Mode</th><th>Status</th><th>Date</th><th>Actions</th></tr></thead><tbody>
-            {filtered.map(v => (<tr key={v.id}><td className="text-mono fw-600">{v.serial_number}</td><td>{v.head_of_account}</td><td>{v.payee_name}</td><td className="fw-600">₹{v.amount.toLocaleString('en-IN')}</td><td>{v.payment_mode}</td><td><span className={`status-badge status-${v.status}`}>{v.status.replace(/_/g, ' ')}</span></td><td>{new Date(v.created_at).toLocaleDateString('en-IN')}</td><td><button className="btn btn-sm btn-secondary" onClick={() => openVoucher(v)}>{Icons.eye} View</button></td></tr>))}
+            {filtered.map(v => (<tr key={v.id}><td className="text-mono fw-600">{v.serial_number}</td><td>{v.head_of_account}</td><td>{v.payee_name}</td><td className="fw-600">{formatRupees(v.amount, 0)}</td><td>{v.payment_mode}</td><td><span className={`status-badge status-${v.status}`}>{v.status.replace(/_/g, ' ')}</span></td><td>{new Date(v.created_at).toLocaleDateString('en-IN')}</td><td><button className="btn btn-sm btn-secondary" onClick={() => openVoucher(v)}>{Icons.eye} View</button></td></tr>))}
           </tbody></table></div>
         )}
       </div></div>
@@ -2754,22 +2821,37 @@ const PayeesManagement = () => {
 const AccountsManagement = () => {
   const { user, addToast } = useApp();
   const [accounts, setAccounts] = useState([]);
+  const [subHeadsMap, setSubHeadsMap] = useState({}); // Map of headId -> subHeads array
+  const [expandedHeads, setExpandedHeads] = useState({}); // Track which heads are expanded
   const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
+  const [showAddSubModal, setShowAddSubModal] = useState(false);
+  const [selectedHeadForSub, setSelectedHeadForSub] = useState(null);
   const [showImportModal, setShowImportModal] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [newAccount, setNewAccount] = useState('');
+  const [newSubAccount, setNewSubAccount] = useState('');
   const [importData, setImportData] = useState('');
   const [importFile, setImportFile] = useState(null);
   const [importMethod, setImportMethod] = useState('paste'); // 'paste' or 'excel'
 
-  // Load accounts from database
+  // Load accounts and sub-heads from database
   const loadAccounts = async () => {
     try {
       setLoading(true);
       const data = await api.getHeadsOfAccount(user.company.id);
       if (Array.isArray(data)) {
         setAccounts(data.sort((a, b) => a.name.localeCompare(b.name)));
+        // Load sub-heads for all accounts
+        const subData = await api.getSubHeadsByCompany(user.company.id);
+        if (Array.isArray(subData)) {
+          const grouped = {};
+          subData.forEach(sh => {
+            if (!grouped[sh.head_id]) grouped[sh.head_id] = [];
+            grouped[sh.head_id].push(sh);
+          });
+          setSubHeadsMap(grouped);
+        }
       } else if (data.error) {
         addToast('Failed to load accounts: ' + data.error, 'error');
       }
@@ -2783,6 +2865,10 @@ const AccountsManagement = () => {
   useEffect(() => {
     loadAccounts();
   }, [user.company.id]);
+
+  const toggleExpand = (headId) => {
+    setExpandedHeads(prev => ({ ...prev, [headId]: !prev[headId] }));
+  };
 
   const handleAddAccount = async () => {
     if (!newAccount.trim()) {
@@ -2810,6 +2896,53 @@ const AccountsManagement = () => {
       addToast('Failed to add account', 'error');
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const handleAddSubAccount = async () => {
+    if (!newSubAccount.trim()) {
+      addToast('Sub-category name cannot be empty', 'error');
+      return;
+    }
+    
+    const existingSubs = subHeadsMap[selectedHeadForSub.id] || [];
+    if (existingSubs.some(s => s.name === newSubAccount.trim())) {
+      addToast('Sub-category already exists', 'error');
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const result = await api.addSubHeadOfAccount(selectedHeadForSub.id, user.company.id, newSubAccount.trim());
+      if (result.error) {
+        addToast(result.error, 'error');
+      } else {
+        addToast('Sub-category added successfully', 'success');
+        setNewSubAccount('');
+        setShowAddSubModal(false);
+        setExpandedHeads(prev => ({ ...prev, [selectedHeadForSub.id]: true }));
+        loadAccounts();
+      }
+    } catch (error) {
+      addToast('Failed to add sub-category', 'error');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleDeleteSubAccount = async (subHead) => {
+    if (!confirm(`Delete sub-category "${subHead.name}"?`)) return;
+    
+    try {
+      const result = await api.deleteSubHeadOfAccount(subHead.id);
+      if (result.error) {
+        addToast(result.error, 'error');
+      } else {
+        addToast('Sub-category deleted successfully', 'success');
+        loadAccounts();
+      }
+    } catch (error) {
+      addToast('Failed to delete sub-category', 'error');
     }
   };
 
@@ -2898,7 +3031,7 @@ const AccountsManagement = () => {
       <div className="page-header">
         <div>
           <h1 className="page-title">Heads of Account</h1>
-          <p className="page-subtitle">Manage expense and payment categories</p>
+          <p className="page-subtitle">Manage expense and payment categories with sub-categories</p>
         </div>
         <div style={{display: 'flex', gap: '0.75rem'}}>
           <button className="btn btn-secondary" onClick={() => setShowImportModal(true)}>📥 Import</button>
@@ -2913,13 +3046,36 @@ const AccountsManagement = () => {
           ) : accounts.length === 0 ? (
             <div style={{textAlign: 'center', padding: '2rem', color: 'var(--text-secondary)'}}>No accounts found. Add your first head of account.</div>
           ) : (
-            <div style={{display: 'grid', gap: '0.75rem'}}>
-              {accounts.map(account => (
-                <div key={account.id} style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.75rem', border: '1px solid var(--border-color)', borderRadius: '8px'}}>
-                  <span>{account.name}</span>
-                  <button className="btn btn-sm btn-danger" onClick={() => handleDeleteAccount(account)}>🗑️</button>
-                </div>
-              ))}
+            <div style={{display: 'grid', gap: '0.5rem'}}>
+              {accounts.map(account => {
+                const subs = subHeadsMap[account.id] || [];
+                const isExpanded = expandedHeads[account.id];
+                return (
+                  <div key={account.id} style={{border: '1px solid var(--border-color)', borderRadius: '8px', overflow: 'hidden'}}>
+                    <div style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.75rem', background: subs.length > 0 ? '#fef3c7' : 'white'}}>
+                      <div style={{display: 'flex', alignItems: 'center', gap: '0.5rem', flex: 1, cursor: subs.length > 0 ? 'pointer' : 'default'}} onClick={() => subs.length > 0 && toggleExpand(account.id)}>
+                        {subs.length > 0 && <span style={{fontSize: '0.8rem'}}>{isExpanded ? '▼' : '▶'}</span>}
+                        <span style={{fontWeight: 500}}>{account.name}</span>
+                        {subs.length > 0 && <span style={{fontSize: '0.75rem', color: '#666', background: '#e5e7eb', padding: '0.1rem 0.4rem', borderRadius: '10px'}}>{subs.length} sub</span>}
+                      </div>
+                      <div style={{display: 'flex', gap: '0.5rem'}}>
+                        <button className="btn btn-sm btn-secondary" onClick={() => { setSelectedHeadForSub(account); setShowAddSubModal(true); }} title="Add Sub-Category">➕ Sub</button>
+                        <button className="btn btn-sm btn-danger" onClick={() => handleDeleteAccount(account)} title="Delete">🗑️</button>
+                      </div>
+                    </div>
+                    {isExpanded && subs.length > 0 && (
+                      <div style={{background: '#f9fafb', borderTop: '1px solid var(--border-color)'}}>
+                        {subs.map(sub => (
+                          <div key={sub.id} style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.5rem 0.75rem 0.5rem 2rem', borderBottom: '1px solid #eee'}}>
+                            <span style={{fontSize: '0.9rem', color: '#555'}}>↳ {sub.name}</span>
+                            <button className="btn btn-sm" onClick={() => handleDeleteSubAccount(sub)} style={{padding: '0.2rem 0.5rem', fontSize: '0.75rem', color: '#dc2626'}}>🗑️</button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
@@ -3024,6 +3180,40 @@ const AccountsManagement = () => {
             <div className="modal-footer">
               <button className="btn btn-secondary" onClick={() => setShowImportModal(false)}>Cancel</button>
               {importMethod === 'paste' && <button className="btn btn-primary" onClick={handleImport} disabled={submitting}>{submitting ? 'Importing...' : 'Import'}</button>}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showAddSubModal && selectedHeadForSub && (
+        <div className="modal-overlay" onClick={() => { setShowAddSubModal(false); setSelectedHeadForSub(null); }}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3 className="modal-title">➕ Add Sub-Category</h3>
+              <button className="modal-close" onClick={() => { setShowAddSubModal(false); setSelectedHeadForSub(null); }}>×</button>
+            </div>
+            <div className="modal-body">
+              <div style={{background: '#fef3c7', padding: '0.75rem', borderRadius: '8px', marginBottom: '1rem'}}>
+                <strong>Parent:</strong> {selectedHeadForSub.name}
+              </div>
+              <div className="form-group">
+                <label className="form-label">Sub-Category Name</label>
+                <input 
+                  type="text" 
+                  className="form-input" 
+                  value={newSubAccount} 
+                  onChange={e => setNewSubAccount(e.target.value)}
+                  placeholder="e.g., Labour Charges - Civil Work"
+                  onKeyPress={e => e.key === 'Enter' && handleAddSubAccount()}
+                />
+              </div>
+              <p style={{fontSize: '0.85rem', color: '#666', marginTop: '0.5rem'}}>
+                Example: For "Salaries & Wages", you might add "Labour Charges - Civil Work", "Labour Charges - Electrical", etc.
+              </p>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => { setShowAddSubModal(false); setSelectedHeadForSub(null); }}>Cancel</button>
+              <button className="btn btn-primary" onClick={handleAddSubAccount} disabled={submitting}>{submitting ? 'Adding...' : 'Add Sub-Category'}</button>
             </div>
           </div>
         </div>
