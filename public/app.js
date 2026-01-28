@@ -31,7 +31,7 @@ const Icons = {
 
 // Number to Words Converter for Indian Rupees
 const numberToWordsIndian = (num) => {
-  if (num === 0) return 'Zero Rupees Only';
+  if (num === 0) return 'Rupees Zero Only';
   
   const ones = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine'];
   const tens = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
@@ -75,7 +75,7 @@ const numberToWordsIndian = (num) => {
     words += convertLessThan1000(remainingRupees);
   }
   
-  words = words.trim() + ' Rupees';
+  words = 'Rupees ' + words.trim();
   
   if (paise > 0) {
     words += ' and ' + convertLessThan100(paise) + ' Paise';
