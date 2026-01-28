@@ -852,10 +852,19 @@ const CreateVoucher = () => {
   const [allSubHeads, setAllSubHeads] = useState([]); // All sub-heads by company
   const [showPayeeModal, setShowPayeeModal] = useState(false);
   const [showCustomAccount, setShowCustomAccount] = useState(false);
+  const [showAddSubCategory, setShowAddSubCategory] = useState(false);
+  const [newSubCategory, setNewSubCategory] = useState('');
   const [customAccount, setCustomAccount] = useState('');
   const [form, setForm] = useState({ headOfAccount: '', subHeadOfAccount: '', narration: '', narrationItems: [], payeeId: '', paymentMode: 'UPI', amount: '' });
   const [newPayee, setNewPayee] = useState({ name: '', alias: '', mobile: '', bankAccount: '', ifsc: '', upiId: '' });
   const [useNarrationTable, setUseNarrationTable] = useState(true);  // Default to TRUE for tabulated format
+
+  const refreshSubHeads = async () => {
+    const data = await api.getSubHeadsByCompany(user.company.id);
+    if (Array.isArray(data)) {
+      setAllSubHeads(data);
+    }
+  };
 
   useEffect(() => { 
     // Load payees for user's company
@@ -868,11 +877,7 @@ const CreateVoucher = () => {
       }
     });
     // Load all sub-heads for the company
-    api.getSubHeadsByCompany(user.company.id).then(data => {
-      if (Array.isArray(data)) {
-        setAllSubHeads(data);
-      }
-    });
+    refreshSubHeads();
   }, [user.company.id]);
 
   // Update sub-heads when head of account changes
@@ -888,9 +893,12 @@ const CreateVoucher = () => {
     } else {
       setSubHeads([]);
     }
-    // Clear sub-head selection when head changes
-    setForm(f => ({ ...f, subHeadOfAccount: '' }));
   }, [form.headOfAccount, headsData, allSubHeads]);
+
+  // Clear sub-head selection when head changes (separate effect)
+  useEffect(() => {
+    setForm(f => ({ ...f, subHeadOfAccount: '' }));
+  }, [form.headOfAccount]);
 
   // Calculate total from narration items
   const calculateNarrationTotal = () => {
@@ -919,6 +927,39 @@ const CreateVoucher = () => {
       setShowCustomAccount(false);
       setCustomAccount('');
     }
+  };
+
+  const handleAddSubCategory = async () => {
+    if (!newSubCategory.trim()) {
+      addToast('Sub-category name cannot be empty', 'error');
+      return;
+    }
+    if (!form.headOfAccount) {
+      addToast('Please select a Head of Account first', 'error');
+      return;
+    }
+    const selectedHead = headsData.find(h => h.name === form.headOfAccount);
+    if (!selectedHead) {
+      addToast('Invalid Head of Account', 'error');
+      return;
+    }
+    setLoading(true);
+    try {
+      const result = await api.addSubHeadOfAccount(selectedHead.id, user.company.id, newSubCategory.trim());
+      if (result.error) {
+        addToast(result.error, 'error');
+      } else {
+        addToast('Sub-category added successfully', 'success');
+        setNewSubCategory('');
+        setShowAddSubCategory(false);
+        // Refresh sub-heads and auto-select the new one
+        await refreshSubHeads();
+        setForm(f => ({ ...f, subHeadOfAccount: newSubCategory.trim() }));
+      }
+    } catch (error) {
+      addToast('Failed to add sub-category', 'error');
+    }
+    setLoading(false);
   };
 
   const handleSaveOrSubmit = async (saveAsDraft = false) => {
@@ -983,14 +1024,25 @@ const CreateVoucher = () => {
               )}
             </div>
             <div className="form-group">
-              <label className="form-label">Sub-Category</label>
+              <label className="form-label form-label-row">
+                Sub-Category
+                <button 
+                  className="btn btn-sm btn-secondary" 
+                  onClick={() => setShowAddSubCategory(true)} 
+                  style={{fontSize: '0.75rem'}}
+                  disabled={!form.headOfAccount}
+                  title={!form.headOfAccount ? 'Select Head of Account first' : 'Add new sub-category'}
+                >
+                  ➕ Add New
+                </button>
+              </label>
               <select 
                 className="form-select" 
                 value={form.subHeadOfAccount} 
                 onChange={(e) => setForm({ ...form, subHeadOfAccount: e.target.value })}
-                disabled={!form.headOfAccount || subHeads.length === 0}
+                disabled={!form.headOfAccount}
               >
-                <option value="">{!form.headOfAccount ? 'Select Head first' : subHeads.length === 0 ? 'No sub-categories' : 'Select Sub-Category'}</option>
+                <option value="">{!form.headOfAccount ? 'Select Head first' : subHeads.length === 0 ? 'No sub-categories (optional)' : 'Select Sub-Category (optional)'}</option>
                 {subHeads.map(sh => <option key={sh.id} value={sh.name}>{sh.name}</option>)}
               </select>
             </div>
@@ -1099,6 +1151,36 @@ const CreateVoucher = () => {
             <div className="modal-footer">
               <button className="btn btn-secondary" onClick={() => setShowCustomAccount(false)}>Cancel</button>
               <button className="btn btn-primary" onClick={handleUseCustomAccount} disabled={!customAccount.trim()}>Use This Account</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {showAddSubCategory && (
+        <div className="modal-overlay" onClick={() => setShowAddSubCategory(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header"><h3 className="modal-title">➕ Add Sub-Category</h3><button className="modal-close" onClick={() => setShowAddSubCategory(false)}>×</button></div>
+            <div className="modal-body">
+              <div style={{background: '#fef3c7', padding: '0.75rem', borderRadius: '8px', marginBottom: '1rem'}}>
+                <strong>Parent Head:</strong> {form.headOfAccount}
+              </div>
+              <div className="form-group">
+                <label className="form-label">Sub-Category Name</label>
+                <input 
+                  type="text" 
+                  className="form-input" 
+                  value={newSubCategory} 
+                  onChange={(e) => setNewSubCategory(e.target.value)}
+                  placeholder="e.g., Labour Charges - Civil Work"
+                  onKeyPress={e => e.key === 'Enter' && handleAddSubCategory()}
+                />
+              </div>
+              <p style={{fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '1rem'}}>
+                This sub-category will be saved permanently under "{form.headOfAccount}" and can be reused in future vouchers.
+              </p>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setShowAddSubCategory(false)}>Cancel</button>
+              <button className="btn btn-primary" onClick={handleAddSubCategory} disabled={loading || !newSubCategory.trim()}>{loading && Icons.loader}Add Sub-Category</button>
             </div>
           </div>
         </div>
