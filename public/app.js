@@ -341,7 +341,7 @@ const VoucherPreview = ({ voucher }) => {
         <div className="voucher-meta-item"><span className="voucher-meta-label">Payee:</span><span className="voucher-meta-value">{voucher.payee_name} {voucher.payee_alias && `(${voucher.payee_alias})`}</span></div>
         <div className="voucher-meta-item"><span className="voucher-meta-label">Mode:</span><span className="voucher-meta-value">{voucher.payment_mode}</span></div>
       </div>
-      <div className="voucher-meta-item mb-1"><span className="voucher-meta-label">Head:</span><span className="voucher-meta-value">{voucher.head_of_account}</span></div>
+      <div className="voucher-meta-item mb-1"><span className="voucher-meta-label">Head:</span><span className="voucher-meta-value">{voucher.head_of_account}{voucher.sub_head_of_account && ` → ${voucher.sub_head_of_account}`}</span></div>
       {voucher.narration && <div className="voucher-meta-item mb-1"><span className="voucher-meta-label">Narration:</span><span className="voucher-meta-value">{voucher.narration}</span></div>}
       <NarrationTable />
       {/* Only show TOTAL section if there are no narration items (table already shows total) */}
@@ -853,6 +853,7 @@ const CreateVoucher = () => {
   const [showPayeeModal, setShowPayeeModal] = useState(false);
   const [showCustomAccount, setShowCustomAccount] = useState(false);
   const [showAddSubCategory, setShowAddSubCategory] = useState(false);
+  const [showPreview, setShowPreview] = useState(false);
   const [newSubCategory, setNewSubCategory] = useState('');
   const [customAccount, setCustomAccount] = useState('');
   const [form, setForm] = useState({ headOfAccount: '', subHeadOfAccount: '', narration: '', narrationItems: [], payeeId: '', paymentMode: 'UPI', amount: '' });
@@ -1103,6 +1104,9 @@ const CreateVoucher = () => {
           </div>
           
           <div className="btn-group" style={{display: 'flex', gap: '1rem', flexWrap: 'wrap', marginTop: '1.5rem'}}>
+            <button className="btn btn-outline" onClick={() => setShowPreview(true)} disabled={!form.headOfAccount || !form.payeeId || !form.amount} style={{border: '2px solid #f59e0b', color: '#f59e0b'}}>
+              👁️ Preview
+            </button>
             <button className="btn btn-secondary" onClick={() => handleSaveOrSubmit(true)} disabled={loading}>
               {loading && Icons.loader}💾 Save as Draft
             </button>
@@ -1111,7 +1115,7 @@ const CreateVoucher = () => {
             </button>
           </div>
           <p style={{fontSize: '0.8rem', color: '#888', marginTop: '0.75rem'}}>
-            💡 Tip: Save as Draft if the payee isn't ready to receive the OTP yet. You can submit later from the Drafts list.
+            💡 Tip: Preview your voucher before submitting. Save as Draft if the payee isn't ready to receive the OTP yet.
           </p>
         </div>
       </div>
@@ -1185,6 +1189,123 @@ const CreateVoucher = () => {
           </div>
         </div>
       )}
+      {showPreview && (
+        <div className="modal-overlay" onClick={() => setShowPreview(false)}>
+          <div className="modal modal-lg" onClick={e => e.stopPropagation()}>
+            <div className="modal-header" style={{background: '#f59e0b', color: 'white'}}>
+              <h3 className="modal-title" style={{color: 'white'}}>👁️ Voucher Preview</h3>
+              <button className="modal-close" onClick={() => setShowPreview(false)} style={{color: 'white'}}>×</button>
+            </div>
+            <div className="modal-body" style={{padding: 0}}>
+              <PreviewVoucher 
+                formData={form}
+                payees={payees}
+                user={user}
+              />
+            </div>
+            <div className="modal-footer" style={{display: 'flex', gap: '1rem', justifyContent: 'space-between'}}>
+              <button className="btn btn-secondary" onClick={() => setShowPreview(false)}>← Back to Edit</button>
+              <div style={{display: 'flex', gap: '0.75rem'}}>
+                <button className="btn btn-secondary" onClick={() => { setShowPreview(false); handleSaveOrSubmit(true); }} disabled={loading}>
+                  💾 Save as Draft
+                </button>
+                <button className="btn btn-primary" onClick={() => { setShowPreview(false); handleSaveOrSubmit(false); }} disabled={loading}>
+                  {Icons.send} Submit for Approval
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// Preview Voucher Component (for Create Voucher preview)
+const PreviewVoucher = ({ formData, payees, user }) => {
+  const selectedPayee = payees.find(p => p.id === formData.payeeId);
+  const narrationItems = formData.narrationItems || [];
+  const validItems = narrationItems.filter(item => item.description || item.amount);
+  const total = validItems.reduce((sum, item) => sum + (parseFloat(item.amount) || 0), 0) || parseFloat(formData.amount) || 0;
+  
+  return (
+    <div className="voucher-preview" style={{margin: 0, boxShadow: 'none'}}>
+      <div className="voucher-header">
+        <div className="voucher-company">{user.company.name}</div>
+        <div className="voucher-address">{user.company.address}</div>
+        <div className="voucher-title">PAYMENT VOUCHER</div>
+        <div style={{background: '#e0f2fe', color: '#0369a1', padding: '4px 12px', borderRadius: '4px', fontSize: '0.8rem', fontWeight: 600, marginTop: '8px'}}>
+          👁️ PREVIEW - Not Yet Saved
+        </div>
+      </div>
+      <div className="voucher-meta">
+        <div className="voucher-meta-item"><span className="voucher-meta-label">Voucher No:</span><span className="voucher-meta-value" style={{color: '#888', fontStyle: 'italic'}}>Will be assigned</span></div>
+        <div className="voucher-meta-item"><span className="voucher-meta-label">Date:</span><span className="voucher-meta-value">{new Date().toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</span></div>
+        <div className="voucher-meta-item"><span className="voucher-meta-label">Payee:</span><span className="voucher-meta-value">{selectedPayee?.name || 'Not selected'} {selectedPayee?.alias && `(${selectedPayee.alias})`}</span></div>
+        <div className="voucher-meta-item"><span className="voucher-meta-label">Mode:</span><span className="voucher-meta-value">{formData.paymentMode}</span></div>
+      </div>
+      <div className="voucher-meta-item mb-1"><span className="voucher-meta-label">Head:</span><span className="voucher-meta-value">{formData.headOfAccount || 'Not selected'}{formData.subHeadOfAccount && ` → ${formData.subHeadOfAccount}`}</span></div>
+      {formData.narration && <div className="voucher-meta-item mb-1"><span className="voucher-meta-label">Narration:</span><span className="voucher-meta-value">{formData.narration}</span></div>}
+      
+      {validItems.length > 0 ? (
+        <div style={{marginTop: '1rem', marginBottom: '1rem'}}>
+          <div style={{fontWeight: 600, marginBottom: '0.5rem', color: '#92400e'}}>Particulars</div>
+          <table style={{width: '100%', borderCollapse: 'collapse', border: '2px solid #f59e0b', borderRadius: '8px', overflow: 'hidden'}}>
+            <thead>
+              <tr style={{background: '#f59e0b', color: 'white'}}>
+                <th style={{padding: '10px', textAlign: 'center', width: '60px'}}>S.No.</th>
+                <th style={{padding: '10px', textAlign: 'left'}}>Description</th>
+                <th style={{padding: '10px', textAlign: 'right', width: '120px'}}>Amount (₹)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {validItems.map((item, idx) => (
+                <tr key={idx} style={{borderBottom: '1px solid #fcd34d', background: idx % 2 === 0 ? 'white' : '#fffbeb'}}>
+                  <td style={{padding: '8px', textAlign: 'center', fontWeight: 600}}>{idx + 1}</td>
+                  <td style={{padding: '8px'}}>{item.description}</td>
+                  <td style={{padding: '8px', textAlign: 'right', fontFamily: 'monospace'}}>{formatRupees(item.amount)}</td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr style={{background: '#fef3c7', fontWeight: 700}}>
+                <td colSpan="2" style={{padding: '10px', textAlign: 'right'}}>TOTAL:</td>
+                <td style={{padding: '10px', textAlign: 'right', fontFamily: 'monospace', color: '#f59e0b'}}>{formatRupees(total)}</td>
+              </tr>
+              <tr style={{background: '#fffbeb'}}>
+                <td colSpan="3" style={{padding: '8px', fontSize: '0.85rem', fontStyle: 'italic', color: '#92400e'}}>
+                  <strong>Amount in Words:</strong> {numberToWordsIndian(total)}
+                </td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      ) : (
+        <>
+          <div className="voucher-total">TOTAL: {formatRupees(total)}</div>
+          <div style={{fontSize: '0.85rem', fontStyle: 'italic', color: '#666', marginTop: '0.5rem', marginBottom: '1rem', background: '#fffbeb', padding: '0.75rem', borderRadius: '6px', border: '1px solid #fcd34d'}}>
+            <strong style={{color: '#92400e'}}>In Words:</strong> {numberToWordsIndian(total)}
+          </div>
+        </>
+      )}
+      
+      <div className="voucher-signatures" style={{marginTop: '1.5rem'}}>
+        <div className="voucher-signature">
+          <div className="voucher-signature-line" style={{borderBottom: '1px dashed #ccc', height: '40px'}}></div>
+          <div className="voucher-signature-role">Prepared By</div>
+          <div className="voucher-signature-name">{user.name}</div>
+        </div>
+        <div className="voucher-signature">
+          <div className="voucher-signature-line" style={{borderBottom: '1px dashed #ccc', height: '40px'}}></div>
+          <div className="voucher-signature-role">Approved By</div>
+          <div className="voucher-signature-name" style={{color: '#888', fontStyle: 'italic'}}>Pending</div>
+        </div>
+        <div className="voucher-signature">
+          <div className="voucher-signature-line" style={{borderBottom: '1px dashed #ccc', height: '40px'}}></div>
+          <div className="voucher-signature-role">Received By</div>
+          <div className="voucher-signature-name" style={{color: '#888', fontStyle: 'italic'}}>Pending</div>
+        </div>
+      </div>
     </div>
   );
 };
