@@ -118,6 +118,7 @@ const api = {
   markAllNotificationsRead: (userId) => fetch(`${API_BASE}/users/${userId}/notifications/read-all`, { method: 'POST' }).then(r => r.json()),
   getHeadsOfAccount: (companyId) => fetch(`${API_BASE}/heads-of-account?companyId=${companyId}`).then(r => r.json()),
   addHeadOfAccount: (companyId, name) => fetch(`${API_BASE}/heads-of-account`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ companyId, name }) }).then(r => r.json()),
+  updateHeadOfAccount: (id, name) => fetch(`${API_BASE}/heads-of-account/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) }).then(r => r.json()),
   deleteHeadOfAccount: (id) => fetch(`${API_BASE}/heads-of-account/${id}`, { method: 'DELETE' }).then(r => r.json()),
   importHeadsOfAccount: (companyId, names) => fetch(`${API_BASE}/heads-of-account/import`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ companyId, names }) }).then(r => r.json()),
   // Sub-heads of account
@@ -125,6 +126,7 @@ const api = {
   getSubHeadsByCompany: (companyId) => fetch(`${API_BASE}/sub-heads-of-account?companyId=${companyId}`).then(r => r.json()),
   getGroupedSubHeads: (companyId) => fetch(`${API_BASE}/sub-heads-of-account/grouped?companyId=${companyId}`).then(r => r.json()),
   addSubHeadOfAccount: (headId, companyId, name) => fetch(`${API_BASE}/sub-heads-of-account`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ headId, companyId, name }) }).then(r => r.json()),
+  updateSubHeadOfAccount: (id, name) => fetch(`${API_BASE}/sub-heads-of-account/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) }).then(r => r.json()),
   deleteSubHeadOfAccount: (id) => fetch(`${API_BASE}/sub-heads-of-account/${id}`, { method: 'DELETE' }).then(r => r.json()),
 };
 
@@ -1323,6 +1325,55 @@ const VoucherList = ({ filter }) => {
   const [printDateFrom, setPrintDateFrom] = useState('');
   const [printDateTo, setPrintDateTo] = useState('');
   const [loading, setLoading] = useState(false);
+  
+  // Edit Draft state
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editForm, setEditForm] = useState({ headOfAccount: '', subHeadOfAccount: '', narration: '', narrationItems: [], payeeId: '', paymentMode: 'UPI', amount: '' });
+  const [payees, setPayees] = useState([]);
+  const [heads, setHeads] = useState([]);
+  const [headsData, setHeadsData] = useState([]);
+  const [subHeads, setSubHeads] = useState([]);
+  const [allSubHeads, setAllSubHeads] = useState([]);
+  const [useNarrationTable, setUseNarrationTable] = useState(false);
+
+  // Load payees and heads for edit modal
+  useEffect(() => {
+    api.getPayees(user.company.id).then(setPayees);
+    api.getHeadsOfAccount(user.company.id).then(data => {
+      if (Array.isArray(data)) {
+        setHeadsData(data);
+        setHeads(data.map(h => h.name));
+      }
+    });
+    api.getSubHeadsByCompany(user.company.id).then(data => {
+      if (Array.isArray(data)) setAllSubHeads(data);
+    });
+  }, [user.company.id]);
+
+  // Update sub-heads when head of account changes in edit form
+  useEffect(() => {
+    if (editForm.headOfAccount) {
+      const selectedHead = headsData.find(h => h.name === editForm.headOfAccount);
+      if (selectedHead) {
+        const filtered = allSubHeads.filter(sh => sh.head_id === selectedHead.id);
+        setSubHeads(filtered);
+      } else {
+        setSubHeads([]);
+      }
+    } else {
+      setSubHeads([]);
+    }
+  }, [editForm.headOfAccount, headsData, allSubHeads]);
+
+  // Auto-update amount when narration items change in edit form
+  useEffect(() => {
+    if (useNarrationTable && editForm.narrationItems.length > 0) {
+      const total = editForm.narrationItems.reduce((sum, item) => sum + (parseFloat(item.amount) || 0), 0);
+      if (total > 0) {
+        setEditForm(f => ({ ...f, amount: total.toFixed(2) }));
+      }
+    }
+  }, [editForm.narrationItems, useNarrationTable]);
 
   const filtered = vouchers.filter(v => { 
     if (filter === 'draft') return v.status === 'draft';
@@ -1333,6 +1384,56 @@ const VoucherList = ({ filter }) => {
   });
   
   const openVoucher = async (v) => { const full = await api.getVoucher(v.id); setSelectedVoucher(full); setShowModal(true); };
+
+  const handleEditDraft = (voucher) => {
+    const narrationItems = typeof voucher.narration_items === 'string' 
+      ? JSON.parse(voucher.narration_items || '[]') 
+      : (voucher.narration_items || []);
+    const hasItems = narrationItems.length > 0 && narrationItems.some(item => item.description || item.amount);
+    
+    setEditForm({
+      headOfAccount: voucher.head_of_account || '',
+      subHeadOfAccount: voucher.sub_head_of_account || '',
+      narration: voucher.narration || '',
+      narrationItems: narrationItems,
+      payeeId: voucher.payee_id || '',
+      paymentMode: voucher.payment_mode || 'UPI',
+      amount: voucher.amount?.toString() || ''
+    });
+    setUseNarrationTable(hasItems);
+    setShowModal(false);
+    setShowEditModal(true);
+  };
+
+  const handleUpdateDraft = async (saveAsDraft = true) => {
+    if (!editForm.headOfAccount || !editForm.payeeId || !editForm.amount) {
+      addToast('Fill all required fields (Head of Account, Payee, Amount)', 'error');
+      return;
+    }
+    setLoading(true);
+    try {
+      const result = await api.updateVoucher(selectedVoucher.id, {
+        headOfAccount: editForm.headOfAccount,
+        subHeadOfAccount: editForm.subHeadOfAccount || null,
+        narration: editForm.narration,
+        narrationItems: editForm.narrationItems,
+        amount: parseFloat(editForm.amount),
+        paymentMode: editForm.paymentMode,
+        payeeId: editForm.payeeId,
+        saveAsDraft: saveAsDraft
+      });
+      if (result.success) {
+        addToast(saveAsDraft ? 'Draft updated successfully' : 'Voucher submitted for approval', 'success');
+        refreshVouchers();
+        setShowEditModal(false);
+      } else {
+        addToast(result.error || 'Failed to update', 'error');
+      }
+    } catch {
+      addToast('Failed to update voucher', 'error');
+    }
+    setLoading(false);
+  };
   
   const handleSubmitDraft = async (voucher) => {
     setLoading(true);
@@ -1679,11 +1780,16 @@ const VoucherList = ({ filter }) => {
           {selectedVoucher.status === 'draft' && selectedVoucher.prepared_by === user.id && (
             <div className="modal-footer" style={{background: '#fef3c7'}}>
               <div style={{flex: 1, fontSize: '0.85rem', color: '#92400e'}}>
-                💡 This voucher is saved as a draft. Submit when the payee is ready to receive the OTP.
+                💡 This voucher is saved as a draft. Edit or submit when ready.
               </div>
-              <button className="btn btn-primary" onClick={() => handleSubmitDraft(selectedVoucher)} disabled={loading}>
-                {loading && Icons.loader}{Icons.send} Submit for Approval
-              </button>
+              <div style={{display: 'flex', gap: '0.5rem'}}>
+                <button className="btn btn-secondary" onClick={() => handleEditDraft(selectedVoucher)} disabled={loading}>
+                  ✏️ Edit Draft
+                </button>
+                <button className="btn btn-primary" onClick={() => handleSubmitDraft(selectedVoucher)} disabled={loading}>
+                  {loading && Icons.loader}{Icons.send} Submit for Approval
+                </button>
+              </div>
             </div>
           )}
         </div></div>
@@ -1737,6 +1843,110 @@ const VoucherList = ({ filter }) => {
             </div>
           </div>
           <div className="modal-footer"><button className="btn btn-secondary" onClick={() => setShowPrintModal(false)}>Cancel</button><button className="btn btn-primary" onClick={handlePrintPeriod} disabled={!printDateFrom || !printDateTo}>{Icons.printer} Generate & Print</button></div>
+        </div></div>
+      )}
+      {showEditModal && selectedVoucher && (
+        <div className="modal-overlay" onClick={() => setShowEditModal(false)}><div className="modal modal-lg" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-header" style={{background: '#f59e0b', color: 'white'}}>
+            <h3 className="modal-title" style={{color: 'white'}}>✏️ Edit Draft - {selectedVoucher.voucher_number}</h3>
+            <button className="modal-close" style={{color: 'white'}} onClick={() => setShowEditModal(false)}>×</button>
+          </div>
+          <div className="modal-body">
+            <div style={{marginBottom: '1.5rem', padding: '1rem', background: '#fffbeb', borderRadius: '8px', border: '2px solid #f59e0b'}}>
+              <div style={{display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem'}}>
+                {Icons.building}
+                <span style={{fontSize: '1.1rem', fontWeight: 600}}>{user.company.name}</span>
+              </div>
+              <div style={{fontSize: '0.85rem', color: '#666'}}>{user.company.address}</div>
+            </div>
+            <div className="form-row">
+              <div className="form-group">
+                <label className="form-label">Head of Account *</label>
+                <select className="form-select" value={editForm.headOfAccount} onChange={(e) => setEditForm({ ...editForm, headOfAccount: e.target.value, subHeadOfAccount: '' })}>
+                  <option value="">Select</option>
+                  {heads.map(h => <option key={h} value={h}>{h}</option>)}
+                  {editForm.headOfAccount && !heads.includes(editForm.headOfAccount) && (
+                    <option value={editForm.headOfAccount}>{editForm.headOfAccount} (custom)</option>
+                  )}
+                </select>
+              </div>
+              <div className="form-group">
+                <label className="form-label">Sub-Category</label>
+                <select className="form-select" value={editForm.subHeadOfAccount} onChange={(e) => setEditForm({ ...editForm, subHeadOfAccount: e.target.value })} disabled={!editForm.headOfAccount}>
+                  <option value="">{!editForm.headOfAccount ? 'Select Head first' : subHeads.length === 0 ? 'No sub-categories (optional)' : 'Select (optional)'}</option>
+                  {subHeads.map(sh => <option key={sh.id} value={sh.name}>{sh.name}</option>)}
+                  {editForm.subHeadOfAccount && !subHeads.find(sh => sh.name === editForm.subHeadOfAccount) && (
+                    <option value={editForm.subHeadOfAccount}>{editForm.subHeadOfAccount}</option>
+                  )}
+                </select>
+              </div>
+            </div>
+            <div className="form-row">
+              <div className="form-group">
+                <label className="form-label">Payment Mode *</label>
+                <select className="form-select" value={editForm.paymentMode} onChange={(e) => setEditForm({ ...editForm, paymentMode: e.target.value })}>
+                  <option value="UPI">UPI</option>
+                  <option value="Account Transfer">Account Transfer</option>
+                  <option value="Cash">Cash</option>
+                </select>
+              </div>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Payee *</label>
+              <select className="form-select" value={editForm.payeeId} onChange={(e) => setEditForm({ ...editForm, payeeId: e.target.value })}>
+                <option value="">Select Payee</option>
+                {payees.map(p => <option key={p.id} value={p.id}>{p.name} {p.alias && `(${p.alias})`}</option>)}
+              </select>
+            </div>
+            <div className="form-group">
+              <label className="form-label form-label-row">
+                Narration / Line Items
+                <label style={{display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem', cursor: 'pointer', background: useNarrationTable ? '#f59e0b' : '#888', color: 'white', padding: '0.35rem 0.75rem', borderRadius: '6px'}}>
+                  <input type="checkbox" checked={useNarrationTable} onChange={(e) => {
+                    setUseNarrationTable(e.target.checked);
+                    if (!e.target.checked) setEditForm({ ...editForm, narrationItems: [] });
+                  }} />
+                  {useNarrationTable ? '📋 Multiple Items' : '📝 Simple Text'}
+                </label>
+              </label>
+              {useNarrationTable ? (
+                <NarrationItemsTable items={editForm.narrationItems} onChange={(items) => setEditForm({ ...editForm, narrationItems: items })} />
+              ) : (
+                <textarea className="form-input" rows={2} placeholder="Enter payment description" value={editForm.narration} onChange={(e) => setEditForm({ ...editForm, narration: e.target.value })} />
+              )}
+            </div>
+            <div className="form-group">
+              <label className="form-label">
+                Amount (₹) *
+                {useNarrationTable && editForm.narrationItems.length > 0 && <span style={{color: '#f59e0b', fontWeight: 'normal', marginLeft: '0.5rem'}}>(auto-calculated)</span>}
+              </label>
+              <input 
+                type="number" 
+                className="form-input" 
+                placeholder="Enter amount" 
+                value={editForm.amount} 
+                onChange={(e) => setEditForm({ ...editForm, amount: e.target.value })}
+                readOnly={useNarrationTable && editForm.narrationItems.some(i => parseFloat(i.amount) > 0)}
+                style={useNarrationTable && editForm.narrationItems.some(i => parseFloat(i.amount) > 0) ? {background: '#f5f5f5', fontWeight: 600, fontSize: '1.1rem'} : {}}
+              />
+              {editForm.amount > 0 && (
+                <div style={{marginTop: '0.5rem', fontSize: '0.85rem', color: '#666', fontStyle: 'italic', background: '#fffbeb', padding: '0.75rem', borderRadius: '6px', border: '1px solid #fcd34d'}}>
+                  <strong style={{color: '#92400e'}}>In Words:</strong> {numberToWordsIndian(parseFloat(editForm.amount))}
+                </div>
+              )}
+            </div>
+          </div>
+          <div className="modal-footer" style={{display: 'flex', gap: '0.5rem', justifyContent: 'space-between'}}>
+            <button className="btn btn-secondary" onClick={() => setShowEditModal(false)}>Cancel</button>
+            <div style={{display: 'flex', gap: '0.5rem'}}>
+              <button className="btn btn-secondary" onClick={() => handleUpdateDraft(true)} disabled={loading}>
+                {loading && Icons.loader}💾 Save Draft
+              </button>
+              <button className="btn btn-primary" onClick={() => handleUpdateDraft(false)} disabled={loading}>
+                {loading && Icons.loader}{Icons.send} Submit for Approval
+              </button>
+            </div>
+          </div>
         </div></div>
       )}
     </div>
@@ -3029,7 +3239,11 @@ const AccountsManagement = () => {
   const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
   const [showAddSubModal, setShowAddSubModal] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [showEditSubModal, setShowEditSubModal] = useState(false);
   const [selectedHeadForSub, setSelectedHeadForSub] = useState(null);
+  const [editAccount, setEditAccount] = useState({ id: '', name: '' });
+  const [editSubAccount, setEditSubAccount] = useState({ id: '', name: '' });
   const [showImportModal, setShowImportModal] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [newAccount, setNewAccount] = useState('');
@@ -3149,6 +3363,52 @@ const AccountsManagement = () => {
     }
   };
 
+  const handleEditAccount = async () => {
+    if (!editAccount.name?.trim()) {
+      addToast('Account name cannot be empty', 'error');
+      return;
+    }
+    
+    setSubmitting(true);
+    try {
+      const result = await api.updateHeadOfAccount(editAccount.id, editAccount.name.trim());
+      if (result.error) {
+        addToast(result.error, 'error');
+      } else {
+        addToast('Account updated successfully', 'success');
+        setShowEditModal(false);
+        loadAccounts();
+      }
+    } catch (error) {
+      addToast('Failed to update account', 'error');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleEditSubAccount = async () => {
+    if (!editSubAccount.name?.trim()) {
+      addToast('Sub-category name cannot be empty', 'error');
+      return;
+    }
+    
+    setSubmitting(true);
+    try {
+      const result = await api.updateSubHeadOfAccount(editSubAccount.id, editSubAccount.name.trim());
+      if (result.error) {
+        addToast(result.error, 'error');
+      } else {
+        addToast('Sub-category updated successfully', 'success');
+        setShowEditSubModal(false);
+        loadAccounts();
+      }
+    } catch (error) {
+      addToast('Failed to update sub-category', 'error');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const handleDeleteAccount = async (account) => {
     if (!confirm(`Delete "${account.name}"?`)) return;
     
@@ -3263,6 +3523,7 @@ const AccountsManagement = () => {
                       </div>
                       <div style={{display: 'flex', gap: '0.5rem'}}>
                         <button className="btn btn-sm btn-secondary" onClick={() => { setSelectedHeadForSub(account); setShowAddSubModal(true); }} title="Add Sub-Category">➕ Sub</button>
+                        <button className="btn btn-sm btn-secondary" onClick={() => { setEditAccount({ id: account.id, name: account.name }); setShowEditModal(true); }} title="Edit">✏️</button>
                         <button className="btn btn-sm btn-danger" onClick={() => handleDeleteAccount(account)} title="Delete">🗑️</button>
                       </div>
                     </div>
@@ -3271,7 +3532,10 @@ const AccountsManagement = () => {
                         {subs.map(sub => (
                           <div key={sub.id} style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.5rem 0.75rem 0.5rem 2rem', borderBottom: '1px solid #eee'}}>
                             <span style={{fontSize: '0.9rem', color: '#555'}}>↳ {sub.name}</span>
-                            <button className="btn btn-sm" onClick={() => handleDeleteSubAccount(sub)} style={{padding: '0.2rem 0.5rem', fontSize: '0.75rem', color: '#dc2626'}}>🗑️</button>
+                            <div style={{display: 'flex', gap: '0.25rem'}}>
+                              <button className="btn btn-sm" onClick={() => { setEditSubAccount({ id: sub.id, name: sub.name }); setShowEditSubModal(true); }} style={{padding: '0.2rem 0.5rem', fontSize: '0.75rem', color: '#f59e0b'}}>✏️</button>
+                              <button className="btn btn-sm" onClick={() => handleDeleteSubAccount(sub)} style={{padding: '0.2rem 0.5rem', fontSize: '0.75rem', color: '#dc2626'}}>🗑️</button>
+                            </div>
                           </div>
                         ))}
                       </div>
@@ -3417,6 +3681,62 @@ const AccountsManagement = () => {
             <div className="modal-footer">
               <button className="btn btn-secondary" onClick={() => { setShowAddSubModal(false); setSelectedHeadForSub(null); }}>Cancel</button>
               <button className="btn btn-primary" onClick={handleAddSubAccount} disabled={submitting}>{submitting ? 'Adding...' : 'Add Sub-Category'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showEditModal && (
+        <div className="modal-overlay" onClick={() => setShowEditModal(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3 className="modal-title">✏️ Edit Head of Account</h3>
+              <button className="modal-close" onClick={() => setShowEditModal(false)}>×</button>
+            </div>
+            <div className="modal-body">
+              <div className="form-group">
+                <label className="form-label">Account Name</label>
+                <input 
+                  type="text" 
+                  className="form-input" 
+                  value={editAccount.name} 
+                  onChange={e => setEditAccount({...editAccount, name: e.target.value})}
+                  placeholder="Account name"
+                  onKeyPress={e => e.key === 'Enter' && handleEditAccount()}
+                />
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setShowEditModal(false)}>Cancel</button>
+              <button className="btn btn-primary" onClick={handleEditAccount} disabled={submitting}>{submitting ? 'Updating...' : 'Update'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showEditSubModal && (
+        <div className="modal-overlay" onClick={() => setShowEditSubModal(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3 className="modal-title">✏️ Edit Sub-Category</h3>
+              <button className="modal-close" onClick={() => setShowEditSubModal(false)}>×</button>
+            </div>
+            <div className="modal-body">
+              <div className="form-group">
+                <label className="form-label">Sub-Category Name</label>
+                <input 
+                  type="text" 
+                  className="form-input" 
+                  value={editSubAccount.name} 
+                  onChange={e => setEditSubAccount({...editSubAccount, name: e.target.value})}
+                  placeholder="Sub-category name"
+                  onKeyPress={e => e.key === 'Enter' && handleEditSubAccount()}
+                />
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setShowEditSubModal(false)}>Cancel</button>
+              <button className="btn btn-primary" onClick={handleEditSubAccount} disabled={submitting}>{submitting ? 'Updating...' : 'Update'}</button>
             </div>
           </div>
         </div>

@@ -1659,6 +1659,31 @@ app.delete('/api/heads-of-account/:id', async (req, res) => {
   }
 });
 
+// Update a head of account
+app.put('/api/heads-of-account/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name } = req.body;
+    
+    if (!name?.trim()) {
+      return res.status(400).json({ error: 'Name is required' });
+    }
+    
+    const { data, error } = await supabase.from('heads_of_account')
+      .update({ name: name.trim() })
+      .eq('id', id)
+      .select()
+      .single();
+    
+    if (error) throw error;
+    
+    res.json({ success: true, data });
+  } catch (error) {
+    console.error('Error updating head of account:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Bulk import heads of account
 app.post('/api/heads-of-account/import', async (req, res) => {
   try {
@@ -1793,6 +1818,31 @@ app.delete('/api/sub-heads-of-account/:id', async (req, res) => {
     res.json({ success: true });
   } catch (error) {
     console.error('Error deleting sub-head of account:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Update a sub-head of account
+app.put('/api/sub-heads-of-account/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name } = req.body;
+    
+    if (!name?.trim()) {
+      return res.status(400).json({ error: 'Name is required' });
+    }
+    
+    const { data, error } = await supabase.from('sub_heads_of_account')
+      .update({ name: name.trim() })
+      .eq('id', id)
+      .select()
+      .single();
+    
+    if (error) throw error;
+    
+    res.json({ success: true, data });
+  } catch (error) {
+    console.error('Error updating sub-head of account:', error);
     res.status(500).json({ error: error.message });
   }
 });
