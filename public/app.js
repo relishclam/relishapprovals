@@ -3048,6 +3048,69 @@ const PayeesManagement = () => {
     }
   };
 
+  const handleExportPayees = () => {
+    if (payees.length === 0) {
+      addToast('No payees to export', 'error');
+      return;
+    }
+    
+    try {
+      // Create worksheet data with headers
+      const wsData = [
+        ['Payee Records - ' + user.company.name],
+        ['Exported on: ' + new Date().toLocaleString('en-IN')],
+        [],
+        ['S.No.', 'Name', 'Alias', 'Mobile', 'Bank Account', 'IFSC Code', 'UPI ID']
+      ];
+      
+      // Add payee rows
+      payees.forEach((p, idx) => {
+        wsData.push([
+          idx + 1,
+          p.name || '',
+          p.alias || '',
+          p.mobile || '',
+          p.bank_account || '',
+          p.ifsc || '',
+          p.upi_id || ''
+        ]);
+      });
+      
+      // Create workbook and worksheet
+      const wb = XLSX.utils.book_new();
+      const ws = XLSX.utils.aoa_to_sheet(wsData);
+      
+      // Set column widths
+      ws['!cols'] = [
+        { wch: 6 },   // S.No.
+        { wch: 30 },  // Name
+        { wch: 15 },  // Alias
+        { wch: 15 },  // Mobile
+        { wch: 20 },  // Bank Account
+        { wch: 15 },  // IFSC
+        { wch: 25 }   // UPI ID
+      ];
+      
+      // Merge title cell
+      ws['!merges'] = [
+        { s: { r: 0, c: 0 }, e: { r: 0, c: 6 } },
+        { s: { r: 1, c: 0 }, e: { r: 1, c: 6 } }
+      ];
+      
+      XLSX.utils.book_append_sheet(wb, ws, 'Payees');
+      
+      // Generate filename with date
+      const dateStr = new Date().toISOString().split('T')[0];
+      const filename = `Payees_${user.company.name.replace(/[^a-zA-Z0-9]/g, '_')}_${dateStr}.xlsx`;
+      
+      // Download file
+      XLSX.writeFile(wb, filename);
+      addToast('Payees exported successfully', 'success');
+    } catch (error) {
+      addToast('Failed to export: ' + error.message, 'error');
+    }
+  };
+
   if (loading) return <div className="loading-state"><div className="spinner"></div><p>Loading payees...</p></div>;
 
   return (
@@ -3058,7 +3121,8 @@ const PayeesManagement = () => {
           <p className="page-subtitle">Manage vendor and payee details</p>
         </div>
         <div style={{display: 'flex', gap: '0.75rem'}}>
-          <button className="btn btn-secondary" onClick={() => setShowImportModal(true)}>📥 Import CSV</button>
+          <button className="btn btn-secondary" onClick={handleExportPayees} disabled={payees.length === 0}>📤 Export Excel</button>
+          <button className="btn btn-secondary" onClick={() => setShowImportModal(true)}>📥 Import</button>
           <button className="btn btn-primary" onClick={() => setShowAddModal(true)}>➕ Add Payee</button>
         </div>
       </div>
@@ -3489,6 +3553,104 @@ const AccountsManagement = () => {
     }
   };
 
+  const handleExportAccounts = () => {
+    if (accounts.length === 0) {
+      addToast('No accounts to export', 'error');
+      return;
+    }
+    
+    try {
+      // Create worksheet data with headers
+      const wsData = [
+        ['Heads of Account - ' + user.company.name],
+        ['Exported on: ' + new Date().toLocaleString('en-IN')],
+        [],
+        ['S.No.', 'Head of Account', 'Sub-Categories']
+      ];
+      
+      // Add account rows with sub-categories
+      accounts.forEach((acc, idx) => {
+        const subs = subHeadsMap[acc.id] || [];
+        const subNames = subs.map(s => s.name).join(', ');
+        wsData.push([
+          idx + 1,
+          acc.name,
+          subNames || '-'
+        ]);
+      });
+      
+      // Add summary
+      wsData.push([]);
+      wsData.push(['Total Heads of Account:', accounts.length]);
+      const totalSubs = Object.values(subHeadsMap).reduce((sum, arr) => sum + arr.length, 0);
+      wsData.push(['Total Sub-Categories:', totalSubs]);
+      
+      // Create workbook and worksheet
+      const wb = XLSX.utils.book_new();
+      const ws = XLSX.utils.aoa_to_sheet(wsData);
+      
+      // Set column widths
+      ws['!cols'] = [
+        { wch: 6 },   // S.No.
+        { wch: 35 },  // Head of Account
+        { wch: 60 }   // Sub-Categories
+      ];
+      
+      // Merge title cells
+      ws['!merges'] = [
+        { s: { r: 0, c: 0 }, e: { r: 0, c: 2 } },
+        { s: { r: 1, c: 0 }, e: { r: 1, c: 2 } }
+      ];
+      
+      XLSX.utils.book_append_sheet(wb, ws, 'Heads of Account');
+      
+      // Also create a detailed sheet with sub-categories
+      const detailData = [
+        ['Detailed Heads & Sub-Categories - ' + user.company.name],
+        [],
+        ['S.No.', 'Head of Account', 'Sub-Category']
+      ];
+      
+      let rowNum = 1;
+      accounts.forEach(acc => {
+        const subs = subHeadsMap[acc.id] || [];
+        if (subs.length === 0) {
+          detailData.push([rowNum++, acc.name, '-']);
+        } else {
+          subs.forEach((sub, subIdx) => {
+            detailData.push([
+              rowNum++,
+              subIdx === 0 ? acc.name : '',
+              sub.name
+            ]);
+          });
+        }
+      });
+      
+      const ws2 = XLSX.utils.aoa_to_sheet(detailData);
+      ws2['!cols'] = [
+        { wch: 6 },
+        { wch: 35 },
+        { wch: 40 }
+      ];
+      ws2['!merges'] = [
+        { s: { r: 0, c: 0 }, e: { r: 0, c: 2 } }
+      ];
+      
+      XLSX.utils.book_append_sheet(wb, ws2, 'Detailed View');
+      
+      // Generate filename with date
+      const dateStr = new Date().toISOString().split('T')[0];
+      const filename = `HeadsOfAccount_${user.company.name.replace(/[^a-zA-Z0-9]/g, '_')}_${dateStr}.xlsx`;
+      
+      // Download file
+      XLSX.writeFile(wb, filename);
+      addToast('Accounts exported successfully', 'success');
+    } catch (error) {
+      addToast('Failed to export: ' + error.message, 'error');
+    }
+  };
+
   return (
     <div className="page-container">
       <div className="page-header">
@@ -3497,6 +3659,7 @@ const AccountsManagement = () => {
           <p className="page-subtitle">Manage expense and payment categories with sub-categories</p>
         </div>
         <div style={{display: 'flex', gap: '0.75rem'}}>
+          <button className="btn btn-secondary" onClick={handleExportAccounts} disabled={accounts.length === 0}>📤 Export Excel</button>
           <button className="btn btn-secondary" onClick={() => setShowImportModal(true)}>📥 Import</button>
           <button className="btn btn-primary" onClick={() => setShowAddModal(true)}>➕ Add Account</button>
         </div>
