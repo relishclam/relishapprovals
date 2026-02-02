@@ -1354,7 +1354,7 @@ const VoucherList = ({ filter }) => {
   const handlePrintSingle = async (voucher) => {
     const full = voucher.company_name ? voucher : await api.getVoucher(voucher.id);
     const printWindow = window.open('', '_blank');
-    printWindow.document.write(generateVoucherHTML([full], null));
+    printWindow.document.write(generateVoucherHTML([full], `Voucher ${full.voucher_number || voucher.voucher_number || ''}`));
     printWindow.document.close();
     setTimeout(() => printWindow.print(), 250);
   };
