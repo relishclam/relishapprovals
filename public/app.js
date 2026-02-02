@@ -3111,6 +3111,48 @@ const PayeesManagement = () => {
     }
   };
 
+  const handleDownloadPayeeTemplate = () => {
+    try {
+      // Create template with headers and sample data
+      const wsData = [
+        ['PAYEE IMPORT TEMPLATE'],
+        ['Instructions: Fill in the data starting from row 4. Name and Mobile are required fields.'],
+        [],
+        ['Name', 'Alias', 'Mobile', 'Bank Account', 'IFSC Code', 'UPI ID'],
+        ['ABC Suppliers Pvt Ltd', 'ABC Suppliers', '9876543210', '1234567890123', 'SBIN0001234', 'abc@upi'],
+        ['Kumar Electricals', 'Kumar Elec', '9876543211', '9876543210987', 'HDFC0001234', 'kumar@ybl'],
+        ['', '', '', '', '', ''],
+        ['', '', '', '', '', ''],
+        ['', '', '', '', '', '']
+      ];
+      
+      const wb = XLSX.utils.book_new();
+      const ws = XLSX.utils.aoa_to_sheet(wsData);
+      
+      // Set column widths
+      ws['!cols'] = [
+        { wch: 30 },  // Name
+        { wch: 20 },  // Alias
+        { wch: 15 },  // Mobile
+        { wch: 20 },  // Bank Account
+        { wch: 15 },  // IFSC
+        { wch: 25 }   // UPI ID
+      ];
+      
+      // Merge header rows
+      ws['!merges'] = [
+        { s: { r: 0, c: 0 }, e: { r: 0, c: 5 } },
+        { s: { r: 1, c: 0 }, e: { r: 1, c: 5 } }
+      ];
+      
+      XLSX.utils.book_append_sheet(wb, ws, 'Payee Template');
+      XLSX.writeFile(wb, 'Payee_Import_Template.xlsx');
+      addToast('Template downloaded', 'success');
+    } catch (error) {
+      addToast('Failed to download template', 'error');
+    }
+  };
+
   if (loading) return <div className="loading-state"><div className="spinner"></div><p>Loading payees...</p></div>;
 
   return (
@@ -3259,6 +3301,15 @@ const PayeesManagement = () => {
               <button className="modal-close" onClick={() => setShowImportModal(false)}>×</button>
             </div>
             <div className="modal-body">
+              <div style={{background: '#e0f2fe', padding: '1rem', borderRadius: '8px', marginBottom: '1rem', border: '1px solid #0ea5e9'}}>
+                <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
+                  <div>
+                    <strong style={{color: '#0369a1'}}>📋 Download Template First!</strong>
+                    <p style={{fontSize: '0.85rem', color: '#0369a1', margin: '0.25rem 0 0'}}>Use our standard format for error-free import</p>
+                  </div>
+                  <button className="btn btn-sm btn-primary" onClick={handleDownloadPayeeTemplate}>📥 Download Template</button>
+                </div>
+              </div>
               <div style={{display: 'flex', gap: '1rem', marginBottom: '1rem'}}>
                 <button className={`btn ${importMethod === 'excel' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setImportMethod('excel')} style={{flex: 1}}>📊 Import from Excel</button>
                 <button className={`btn ${importMethod === 'paste' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setImportMethod('paste')} style={{flex: 1}}>📋 Paste CSV</button>
@@ -3269,16 +3320,34 @@ const PayeesManagement = () => {
                   <div className="form-group">
                     <input type="file" accept=".xlsx,.xls,.csv" className="form-input" onChange={handleExcelImport} style={{padding: '0.75rem'}} />
                   </div>
-                  <div style={{background: '#f8f9fa', padding: '1rem', borderRadius: '8px', marginTop: '1rem', fontSize: '0.85rem'}}>
-                    <strong>📋 Required Columns:</strong> Name, Mobile<br/>
-                    <strong>Optional:</strong> Alias, Bank Account, IFSC, UPI ID
+                  <div style={{background: '#fef3c7', padding: '1rem', borderRadius: '8px', marginTop: '1rem', fontSize: '0.85rem', border: '1px solid #f59e0b'}}>
+                    <strong style={{color: '#92400e'}}>📋 Standard Format (Row 4 onwards):</strong>
+                    <table style={{width: '100%', marginTop: '0.5rem', fontSize: '0.8rem', borderCollapse: 'collapse'}}>
+                      <thead><tr style={{background: '#f59e0b', color: 'white'}}>
+                        <th style={{padding: '4px', border: '1px solid #d97706'}}>Name *</th>
+                        <th style={{padding: '4px', border: '1px solid #d97706'}}>Alias</th>
+                        <th style={{padding: '4px', border: '1px solid #d97706'}}>Mobile *</th>
+                        <th style={{padding: '4px', border: '1px solid #d97706'}}>Bank Account</th>
+                        <th style={{padding: '4px', border: '1px solid #d97706'}}>IFSC Code</th>
+                        <th style={{padding: '4px', border: '1px solid #d97706'}}>UPI ID</th>
+                      </tr></thead>
+                      <tbody><tr>
+                        <td style={{padding: '4px', border: '1px solid #fcd34d'}}>ABC Suppliers</td>
+                        <td style={{padding: '4px', border: '1px solid #fcd34d'}}>ABC</td>
+                        <td style={{padding: '4px', border: '1px solid #fcd34d'}}>9876543210</td>
+                        <td style={{padding: '4px', border: '1px solid #fcd34d'}}>123456789</td>
+                        <td style={{padding: '4px', border: '1px solid #fcd34d'}}>SBIN0001234</td>
+                        <td style={{padding: '4px', border: '1px solid #fcd34d'}}>abc@upi</td>
+                      </tr></tbody>
+                    </table>
+                    <p style={{marginTop: '0.5rem', color: '#92400e'}}>* Required fields</p>
                   </div>
                 </div>
               ) : (
                 <div>
-                  <p style={{marginBottom: '1rem', color: 'var(--text-secondary)'}}>Paste CSV data below. Format: <code>name,mobile,alias,bank_account,ifsc,upi_id</code></p>
+                  <p style={{marginBottom: '1rem', color: 'var(--text-secondary)'}}>Paste CSV data below. First row should be headers.</p>
                   <div className="form-group">
-                    <textarea className="form-input" rows="10" value={importData} onChange={e => setImportData(e.target.value)} placeholder="name,mobile,alias,bank_account,ifsc,upi_id&#10;ABC Suppliers,9876543210,ABC,123456789,SBIN0001234,abc@upi" style={{fontFamily: 'monospace', fontSize: '0.875rem'}} />
+                    <textarea className="form-input" rows="10" value={importData} onChange={e => setImportData(e.target.value)} placeholder="Name,Alias,Mobile,Bank Account,IFSC Code,UPI ID&#10;ABC Suppliers,ABC,9876543210,123456789,SBIN0001234,abc@upi" style={{fontFamily: 'monospace', fontSize: '0.875rem'}} />
                   </div>
                 </div>
               )}
@@ -3499,7 +3568,7 @@ const AccountsManagement = () => {
     
     setSubmitting(true);
     try {
-      const result = await API.importHeadsOfAccount(user.company.id, lines);
+      const result = await api.importHeadsOfAccount(user.company.id, lines);
       if (result.error) {
         addToast(result.error, 'error');
       } else {
@@ -3537,7 +3606,7 @@ const AccountsManagement = () => {
         return;
       }
       
-      const result = await API.importHeadsOfAccount(user.company.id, importedAccounts);
+      const result = await api.importHeadsOfAccount(user.company.id, importedAccounts);
       if (result.error) {
         addToast(result.error, 'error');
       } else {
@@ -3651,6 +3720,45 @@ const AccountsManagement = () => {
     }
   };
 
+  const handleDownloadAccountTemplate = () => {
+    try {
+      // Create template with headers and sample data
+      const wsData = [
+        ['HEADS OF ACCOUNT IMPORT TEMPLATE'],
+        ['Instructions: Enter one account name per row in Column A, starting from row 4.'],
+        [],
+        ['Head of Account'],
+        ['Salaries & Wages'],
+        ['Office Supplies'],
+        ['Transportation'],
+        ['Maintenance & Repairs'],
+        ['Professional Fees'],
+        ['Utilities'],
+        [''],
+        [''],
+        ['']
+      ];
+      
+      const wb = XLSX.utils.book_new();
+      const ws = XLSX.utils.aoa_to_sheet(wsData);
+      
+      // Set column width
+      ws['!cols'] = [{ wch: 40 }];
+      
+      // Merge header rows
+      ws['!merges'] = [
+        { s: { r: 0, c: 0 }, e: { r: 0, c: 0 } },
+        { s: { r: 1, c: 0 }, e: { r: 1, c: 0 } }
+      ];
+      
+      XLSX.utils.book_append_sheet(wb, ws, 'Account Template');
+      XLSX.writeFile(wb, 'HeadsOfAccount_Import_Template.xlsx');
+      addToast('Template downloaded', 'success');
+    } catch (error) {
+      addToast('Failed to download template', 'error');
+    }
+  };
+
   return (
     <div className="page-container">
       <div className="page-header">
@@ -3747,6 +3855,15 @@ const AccountsManagement = () => {
               <button className="modal-close" onClick={() => setShowImportModal(false)}>×</button>
             </div>
             <div className="modal-body">
+              <div style={{background: '#e0f2fe', padding: '1rem', borderRadius: '8px', marginBottom: '1rem', border: '1px solid #0ea5e9'}}>
+                <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
+                  <div>
+                    <strong style={{color: '#0369a1'}}>📋 Download Template First!</strong>
+                    <p style={{fontSize: '0.85rem', color: '#0369a1', margin: '0.25rem 0 0'}}>Use our standard format for error-free import</p>
+                  </div>
+                  <button className="btn btn-sm btn-primary" onClick={handleDownloadAccountTemplate}>📥 Download Template</button>
+                </div>
+              </div>
               <div style={{display: 'flex', gap: '1rem', marginBottom: '1rem'}}>
                 <button 
                   className={`btn ${importMethod === 'excel' ? 'btn-primary' : 'btn-secondary'}`} 
@@ -3767,7 +3884,7 @@ const AccountsManagement = () => {
               {importMethod === 'excel' ? (
                 <div>
                   <p style={{marginBottom: '1rem', color: 'var(--text-secondary)'}}>
-                    Upload an Excel file (.xlsx, .xls) with account names in the first column
+                    Upload an Excel file (.xlsx, .xls) with account names in Column A
                   </p>
                   <div className="form-group">
                     <input 
@@ -3778,14 +3895,17 @@ const AccountsManagement = () => {
                       style={{padding: '0.75rem'}}
                     />
                   </div>
-                  <div style={{background: '#f8f9fa', padding: '1rem', borderRadius: '8px', marginTop: '1rem'}}>
-                    <strong>📋 Expected Format:</strong>
-                    <table style={{width: '100%', marginTop: '0.5rem', fontSize: '0.85rem'}}>
-                      <thead><tr><th style={{textAlign: 'left', padding: '0.25rem'}}>Head of Account</th></tr></thead>
+                  <div style={{background: '#fef3c7', padding: '1rem', borderRadius: '8px', marginTop: '1rem', border: '1px solid #f59e0b'}}>
+                    <strong style={{color: '#92400e'}}>📋 Standard Format (Column A, Row 4 onwards):</strong>
+                    <table style={{width: '100%', marginTop: '0.5rem', fontSize: '0.85rem', borderCollapse: 'collapse'}}>
+                      <thead><tr style={{background: '#f59e0b', color: 'white'}}>
+                        <th style={{padding: '6px', border: '1px solid #d97706', textAlign: 'left'}}>Head of Account</th>
+                      </tr></thead>
                       <tbody>
-                        <tr><td style={{padding: '0.25rem'}}>Salaries & Wages</td></tr>
-                        <tr><td style={{padding: '0.25rem'}}>Office Supplies</td></tr>
-                        <tr><td style={{padding: '0.25rem'}}>Transportation</td></tr>
+                        <tr><td style={{padding: '6px', border: '1px solid #fcd34d'}}>Salaries & Wages</td></tr>
+                        <tr><td style={{padding: '6px', border: '1px solid #fcd34d'}}>Office Supplies</td></tr>
+                        <tr><td style={{padding: '6px', border: '1px solid #fcd34d'}}>Transportation</td></tr>
+                        <tr><td style={{padding: '6px', border: '1px solid #fcd34d'}}>Maintenance & Repairs</td></tr>
                       </tbody>
                     </table>
                   </div>
@@ -3801,7 +3921,7 @@ const AccountsManagement = () => {
                       rows="10" 
                       value={importData} 
                       onChange={e => setImportData(e.target.value)}
-                      placeholder="Employee Benefits&#10;Legal Fees&#10;Training & Development&#10;Software Licenses"
+                      placeholder="Salaries & Wages&#10;Office Supplies&#10;Transportation&#10;Maintenance & Repairs&#10;Professional Fees"
                     />
                   </div>
                 </div>
