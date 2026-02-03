@@ -780,12 +780,16 @@ app.get('/api/companies/:companyId/users', async (req, res) => {
 
 // Add payee
 app.post('/api/payees', async (req, res) => {
-  const { companyId, name, alias, mobile, bankAccount, ifsc, upiId, isGlobal } = req.body;
+  const { companyId, name, alias, mobile, bankAccount, ifsc, upiId, isGlobal, payeeType, requiresOtp } = req.body;
   if (!companyId || !name || !mobile) {
     return res.status(400).json({ error: 'Company, name, and mobile are required' });
   }
   
   const formattedMobile = formatMobile(mobile);
+  
+  // Determine if OTP is required based on payee type
+  const isAdhoc = payeeType === 'adhoc';
+  const otpRequired = requiresOtp !== undefined ? requiresOtp : !isAdhoc;
   
   try {
     const { data, error } = await supabase.from('payees').insert({
@@ -796,11 +800,13 @@ app.post('/api/payees', async (req, res) => {
       bank_account: bankAccount || null,
       ifsc: ifsc || null,
       upi_id: upiId || null,
-      is_global: isGlobal || false
+      is_global: isGlobal || false,
+      payee_type: payeeType || 'registered',
+      requires_otp: otpRequired
     }).select().single();
     
     if (error) throw error;
-    res.json({ success: true, payeeId: data.id });
+    res.json({ success: true, payeeId: data.id, payee: data });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -823,7 +829,7 @@ app.get('/api/companies/:companyId/payees', async (req, res) => {
 
 // Update payee
 app.put('/api/payees/:payeeId', async (req, res) => {
-  const { name, alias, mobile, bank_account, ifsc, upi_id, is_global } = req.body;
+  const { name, alias, mobile, bank_account, ifsc, upi_id, is_global, payee_type, requires_otp } = req.body;
   
   try {
     const updateData = {
@@ -835,6 +841,8 @@ app.put('/api/payees/:payeeId', async (req, res) => {
     };
     if (mobile) updateData.mobile = formatMobile(mobile);
     if (is_global !== undefined) updateData.is_global = is_global;
+    if (payee_type !== undefined) updateData.payee_type = payee_type;
+    if (requires_otp !== undefined) updateData.requires_otp = requires_otp;
     
     const { data, error } = await supabase.from('payees')
       .update(updateData)
@@ -1126,7 +1134,7 @@ app.post('/api/vouchers/:voucherId/approve', async (req, res) => {
   
   try {
     const { data: voucher, error: voucherError } = await supabase.from('vouchers')
-      .select('*, payee:payees(mobile)')
+      .select('*, payee:payees(mobile, requires_otp, payee_type)')
       .eq('id', req.params.voucherId)
       .single();
     
@@ -1145,6 +1153,64 @@ app.post('/api/vouchers/:voucherId/approve', async (req, res) => {
       return res.status(400).json({ error: 'Voucher is not pending' });
     }
     
+    // Check if this payee requires OTP or document verification
+    const requiresOtp = voucher.payee?.requires_otp !== false;
+    const payeeType = voucher.payee?.payee_type || 'registered';
+    
+    console.log(`   Payee Type: ${payeeType}, Requires OTP: ${requiresOtp}`);
+    
+    // For ad-hoc payees or payees that don't require OTP, use document verification
+    if (!requiresOtp || payeeType === 'adhoc') {
+      console.log(`   📄 Ad-hoc payee - requires document verification`);
+      
+      // Check if document is uploaded
+      if (!voucher.document_url) {
+        // Update status to indicate document is required
+        await supabase.from('vouchers')
+          .update({
+            status: 'awaiting_document',
+            verification_type: 'document',
+            approved_by: approvedBy,
+            approved_at: new Date().toISOString()
+          })
+          .eq('id', req.params.voucherId);
+        
+        // Notify preparer to upload document
+        await supabase.from('notifications').insert({
+          user_id: voucher.prepared_by,
+          title: 'Document Upload Required',
+          message: `Voucher ${voucher.serial_number} requires invoice/receipt upload for completion.`,
+          type: 'document_required',
+          voucher_id: req.params.voucherId
+        });
+        
+        sendPushNotification(
+          voucher.prepared_by,
+          '📄 Document Required',
+          `Upload invoice/receipt for voucher ${voucher.serial_number}`,
+          '/'
+        );
+        
+        return res.json({
+          success: true,
+          requiresDocument: true,
+          message: 'Voucher pre-approved. Document upload required for completion.',
+          verificationType: 'document'
+        });
+      } else {
+        // Document already uploaded - redirect to attestation flow
+        return res.json({
+          success: true,
+          requiresAttestation: true,
+          hasDocument: true,
+          documentUrl: voucher.document_url,
+          message: 'Document found. Please verify and attest.',
+          verificationType: 'document'
+        });
+      }
+    }
+    
+    // Standard OTP flow for registered payees
     if (!voucher.payee || !voucher.payee.mobile) {
       console.log(`   ❌ Payee or mobile not found. Payee data: ${JSON.stringify(voucher.payee)}`);
       return res.status(400).json({ error: 'Payee mobile number not found' });
@@ -1154,6 +1220,7 @@ app.post('/api/vouchers/:voucherId/approve', async (req, res) => {
     await supabase.from('vouchers')
       .update({
         status: 'awaiting_payee_otp',
+        verification_type: 'otp',
         approved_by: approvedBy,
         approved_at: new Date().toISOString()
       })
@@ -1855,6 +1922,198 @@ app.put('/api/sub-heads-of-account/:id', async (req, res) => {
     res.json({ success: true, data });
   } catch (error) {
     console.error('Error updating sub-head of account:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ==========================================
+// DOCUMENT-BASED VERIFICATION ENDPOINTS
+// For payments to random/unregistered establishments
+// ==========================================
+
+// Upload document (invoice/receipt) for a voucher
+app.post('/api/vouchers/:voucherId/upload-document', async (req, res) => {
+  const { documentData, mimeType, uploadedBy } = req.body;
+  
+  console.log(`\n📄 DOCUMENT UPLOAD REQUEST`);
+  console.log(`   Voucher ID: ${req.params.voucherId}`);
+  console.log(`   Uploaded By: ${uploadedBy}`);
+  
+  if (!documentData || !uploadedBy) {
+    return res.status(400).json({ error: 'Document data and uploader ID are required' });
+  }
+  
+  try {
+    // Verify voucher exists
+    const { data: voucher, error: voucherError } = await supabase.from('vouchers')
+      .select('*, payee:payees(requires_otp, payee_type)')
+      .eq('id', req.params.voucherId)
+      .single();
+    
+    if (voucherError || !voucher) {
+      return res.status(404).json({ error: 'Voucher not found' });
+    }
+    
+    // Decode base64 and upload to Supabase Storage
+    const base64Data = documentData.replace(/^data:.*?;base64,/, '');
+    const buffer = Buffer.from(base64Data, 'base64');
+    const extension = mimeType?.includes('pdf') ? 'pdf' : 
+                      mimeType?.includes('png') ? 'png' : 
+                      mimeType?.includes('webp') ? 'webp' : 'jpg';
+    const fileName = `voucher-${voucher.serial_number}-${Date.now()}.${extension}`;
+    
+    const { data: uploadData, error: uploadError } = await supabase.storage
+      .from('voucher-documents')
+      .upload(fileName, buffer, {
+        contentType: mimeType || 'image/jpeg',
+        upsert: true
+      });
+    
+    if (uploadError) {
+      console.error('   ❌ Upload error:', uploadError);
+      return res.status(500).json({ error: 'Failed to upload document', details: uploadError.message });
+    }
+    
+    // Get public URL
+    const { data: urlData } = supabase.storage
+      .from('voucher-documents')
+      .getPublicUrl(fileName);
+    
+    const documentUrl = urlData?.publicUrl || fileName;
+    
+    // Update voucher with document info
+    const { error: updateError } = await supabase.from('vouchers')
+      .update({
+        document_url: documentUrl,
+        document_uploaded_at: new Date().toISOString(),
+        document_uploaded_by: uploadedBy,
+        verification_type: 'document'
+      })
+      .eq('id', req.params.voucherId);
+    
+    if (updateError) throw updateError;
+    
+    console.log(`   ✅ Document uploaded: ${fileName}`);
+    
+    res.json({ 
+      success: true, 
+      documentUrl,
+      message: 'Document uploaded successfully. Awaiting approver attestation.'
+    });
+  } catch (error) {
+    console.error('   ❌ Error:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Approve voucher with document attestation (for non-OTP payees)
+app.post('/api/vouchers/:voucherId/approve-with-attestation', async (req, res) => {
+  const { approvedBy, attestationNotes } = req.body;
+  
+  console.log(`\n✅ APPROVE WITH ATTESTATION REQUEST`);
+  console.log(`   Voucher ID: ${req.params.voucherId}`);
+  console.log(`   Approved By: ${approvedBy}`);
+  
+  if (!approvedBy) {
+    return res.status(400).json({ error: 'Approver ID is required' });
+  }
+  
+  try {
+    // Get voucher with payee info
+    const { data: voucher, error: voucherError } = await supabase.from('vouchers')
+      .select('*, payee:payees(name, requires_otp, payee_type)')
+      .eq('id', req.params.voucherId)
+      .single();
+    
+    if (voucherError || !voucher) {
+      return res.status(404).json({ error: 'Voucher not found' });
+    }
+    
+    if (voucher.status !== 'pending') {
+      return res.status(400).json({ error: 'Voucher is not pending approval' });
+    }
+    
+    // Check if document is uploaded
+    if (!voucher.document_url) {
+      return res.status(400).json({ error: 'Document must be uploaded before attestation' });
+    }
+    
+    // Get approver name for signature
+    const { data: approver } = await supabase.from('users')
+      .select('name')
+      .eq('id', approvedBy)
+      .single();
+    
+    // Create attestation signature
+    const attestationSignature = Buffer.from(
+      `${approver?.name || approvedBy}:${req.params.voucherId}:${Date.now()}:document-attested`
+    ).toString('base64');
+    
+    // Update voucher - mark as completed with document verification
+    const { error: updateError } = await supabase.from('vouchers')
+      .update({
+        status: 'completed',
+        approved_by: approvedBy,
+        approved_at: new Date().toISOString(),
+        attested_by: approvedBy,
+        attested_at: new Date().toISOString(),
+        attestation_notes: attestationNotes || `Document verified by ${approver?.name || 'Approver'}`,
+        verification_type: 'document',
+        payee_signature: attestationSignature,
+        completed_at: new Date().toISOString()
+      })
+      .eq('id', req.params.voucherId);
+    
+    if (updateError) throw updateError;
+    
+    // Notify preparer
+    await supabase.from('notifications').insert({
+      user_id: voucher.prepared_by,
+      title: 'Voucher Approved with Document Attestation',
+      message: `Voucher ${voucher.serial_number} has been approved and completed. Document verified by approver.`,
+      type: 'completed',
+      voucher_id: req.params.voucherId
+    });
+    
+    // Send push notification
+    sendPushNotification(
+      voucher.prepared_by,
+      '📄 Voucher Approved (Document Verified)',
+      `Voucher ${voucher.serial_number} completed with document attestation.`,
+      '/'
+    );
+    
+    console.log(`   ✅ Voucher approved with document attestation`);
+    
+    res.json({ 
+      success: true, 
+      message: 'Voucher approved and completed with document attestation.',
+      verificationType: 'document'
+    });
+  } catch (error) {
+    console.error('   ❌ Error:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get document URL for a voucher
+app.get('/api/vouchers/:voucherId/document', async (req, res) => {
+  try {
+    const { data: voucher, error } = await supabase.from('vouchers')
+      .select('document_url, document_uploaded_at, document_uploaded_by')
+      .eq('id', req.params.voucherId)
+      .single();
+    
+    if (error) throw error;
+    if (!voucher) return res.status(404).json({ error: 'Voucher not found' });
+    
+    res.json({
+      hasDocument: !!voucher.document_url,
+      documentUrl: voucher.document_url,
+      uploadedAt: voucher.document_uploaded_at,
+      uploadedBy: voucher.document_uploaded_by
+    });
+  } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });

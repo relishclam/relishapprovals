@@ -274,6 +274,7 @@ body {
 .status-pending { background: rgba(245,158,11,0.1); color: var(--warning); }
 .status-approved { background: rgba(59,130,246,0.1); color: var(--info); }
 .status-awaiting_payee_otp { background: rgba(123,75,148,0.1); color: var(--relish-purple); }
+.status-awaiting_document { background: rgba(59,130,246,0.15); color: #2563eb; }
 .status-completed { background: rgba(16,185,129,0.1); color: var(--success); }
 .status-rejected { background: rgba(239,68,68,0.1); color: var(--error); }
 

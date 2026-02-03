@@ -27,6 +27,10 @@ const Icons = {
   printer: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect width="12" height="8" x="6" y="14"/></svg>,
   calendar: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect width="18" height="18" x="3" y="4" rx="2" ry="2"/><line x1="16" x2="16" y1="2" y2="6"/><line x1="8" x2="8" y1="2" y2="6"/><line x1="3" x2="21" y1="10" y2="10"/></svg>,
   menu: <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="3" x2="21" y1="12" y2="12"/><line x1="3" x2="21" y1="6" y2="6"/><line x1="3" x2="21" y1="18" y2="18"/></svg>,
+  upload: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>,
+  camera: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg>,
+  image: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>,
+  fileCheck: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><path d="m9 15 2 2 4-4"/></svg>,
 };
 
 // Number to Words Converter for Indian Rupees
@@ -114,6 +118,10 @@ const api = {
   deleteVoucher: (voucherId) => fetch(`${API_BASE}/vouchers/${voucherId}`, { method: 'DELETE' }).then(r => r.json()),
   updateVoucher: (voucherId, data) => fetch(`${API_BASE}/vouchers/${voucherId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
   submitVoucher: (voucherId) => fetch(`${API_BASE}/vouchers/${voucherId}/submit`, { method: 'POST' }).then(r => r.json()),
+  // Document verification APIs
+  uploadVoucherDocument: (voucherId, documentData, mimeType, uploadedBy) => fetch(`${API_BASE}/vouchers/${voucherId}/upload-document`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ documentData, mimeType, uploadedBy }) }).then(r => r.json()),
+  approveWithAttestation: (voucherId, approvedBy, attestationNotes) => fetch(`${API_BASE}/vouchers/${voucherId}/approve-with-attestation`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ approvedBy, attestationNotes }) }).then(r => r.json()),
+  getVoucherDocument: (voucherId) => fetch(`${API_BASE}/vouchers/${voucherId}/document`).then(r => r.json()),
   getNotifications: (userId) => fetch(`${API_BASE}/users/${userId}/notifications`).then(r => r.json()),
   markAllNotificationsRead: (userId) => fetch(`${API_BASE}/users/${userId}/notifications/read-all`, { method: 'POST' }).then(r => r.json()),
   getHeadsOfAccount: (companyId) => fetch(`${API_BASE}/heads-of-account?companyId=${companyId}`).then(r => r.json()),
@@ -371,7 +379,12 @@ const VoucherPreview = ({ voucher }) => {
         />
         <div className="voucher-signature">
           <div className="voucher-signature-line">
-            {voucher.payee_otp_verified ? (
+            {voucher.verification_type === 'document' && voucher.status === 'completed' ? (
+              <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:'2px',fontSize:'0.75rem'}}>
+                <span className="signature-verified" style={{background: '#3b82f6', color: 'white', padding: '2px 8px', borderRadius: '4px'}}>📄 Document Verified</span>
+                <span style={{color:'#888',fontSize:'0.65rem'}}>{voucher.completed_at ? formatDate(voucher.completed_at) : ''}</span>
+              </div>
+            ) : voucher.payee_otp_verified ? (
               <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:'2px',fontSize:'0.75rem'}}>
                 <span className="signature-verified">✓ OTP Verified</span>
                 <span style={{color:'#888',fontSize:'0.65rem'}}>{voucher.completed_at ? formatDate(voucher.completed_at) : ''}</span>
@@ -1330,6 +1343,10 @@ const VoucherList = ({ filter }) => {
   const [printDateTo, setPrintDateTo] = useState('');
   const [loading, setLoading] = useState(false);
   
+  // Document verification state
+  const [showAttestationModal, setShowAttestationModal] = useState(false);
+  const [attestationNotes, setAttestationNotes] = useState('');
+  
   // Edit Draft state
   const [showEditModal, setShowEditModal] = useState(false);
   const [editForm, setEditForm] = useState({ headOfAccount: '', subHeadOfAccount: '', narration: '', narrationItems: [], payeeId: '', paymentMode: 'UPI', amount: '', invoiceReference: '' });
@@ -1732,7 +1749,92 @@ const VoucherList = ({ filter }) => {
 </html>`;
   };
   
-  const handleApprove = async () => { setLoading(true); try { const result = await api.approveVoucher(selectedVoucher.id, user.id); if (result.success) { addToast('Voucher approved. OTP sent to payee.', 'success'); refreshVouchers(); setShowModal(false); } else addToast(result.error, 'error'); } catch { addToast('Failed', 'error'); } setLoading(false); };
+  const handleApprove = async () => { 
+    setLoading(true); 
+    try { 
+      const result = await api.approveVoucher(selectedVoucher.id, user.id); 
+      if (result.success) { 
+        if (result.requiresDocument) {
+          // Ad-hoc payee - needs document upload
+          addToast('Voucher pre-approved. Document upload required.', 'info');
+          refreshVouchers();
+          setShowModal(false);
+        } else if (result.requiresAttestation) {
+          // Document already uploaded - show attestation UI
+          addToast('Document found. Please review and attest.', 'info');
+          refreshVouchers();
+        } else {
+          // Standard OTP flow
+          addToast('Voucher approved. OTP sent to payee.', 'success'); 
+          refreshVouchers(); 
+          setShowModal(false);
+        }
+      } else addToast(result.error, 'error'); 
+    } catch { addToast('Failed', 'error'); } 
+    setLoading(false); 
+  };
+  const handleApproveWithAttestation = async () => {
+    if (!attestationNotes.trim()) {
+      addToast('Please add attestation notes', 'error');
+      return;
+    }
+    setLoading(true);
+    try {
+      const result = await api.approveWithAttestation(selectedVoucher.id, user.id, attestationNotes);
+      if (result.success) {
+        addToast('Voucher approved with document attestation!', 'success');
+        refreshVouchers();
+        setShowModal(false);
+        setShowAttestationModal(false);
+        setAttestationNotes('');
+      } else {
+        addToast(result.error, 'error');
+      }
+    } catch {
+      addToast('Failed', 'error');
+    }
+    setLoading(false);
+  };
+  const handleDocumentUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    // Validate file type
+    const validTypes = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
+    if (!validTypes.includes(file.type)) {
+      addToast('Please upload a JPG, PNG, WebP or PDF file', 'error');
+      return;
+    }
+    
+    // Validate file size (max 5MB)
+    if (file.size > 5 * 1024 * 1024) {
+      addToast('File size must be less than 5MB', 'error');
+      return;
+    }
+    
+    setLoading(true);
+    try {
+      // Convert to base64
+      const reader = new FileReader();
+      reader.onloadend = async () => {
+        const base64Data = reader.result;
+        const result = await api.uploadVoucherDocument(selectedVoucher.id, base64Data, file.type, user.id);
+        if (result.success) {
+          addToast('Document uploaded! Awaiting approver attestation.', 'success');
+          refreshVouchers();
+          // Update local voucher state
+          setSelectedVoucher({...selectedVoucher, document_url: result.documentUrl, verification_type: 'document'});
+        } else {
+          addToast(result.error || 'Upload failed', 'error');
+        }
+        setLoading(false);
+      };
+      reader.readAsDataURL(file);
+    } catch {
+      addToast('Upload failed', 'error');
+      setLoading(false);
+    }
+  };
   const handleReject = async () => { setLoading(true); try { await api.rejectVoucher(selectedVoucher.id, user.id, rejectReason); addToast('Voucher rejected', 'info'); refreshVouchers(); setShowRejectModal(false); setShowModal(false); } catch { addToast('Failed', 'error'); } setLoading(false); };
   const handleComplete = async () => { if (payeeOtp.length < 6) { addToast('Enter complete OTP', 'error'); return; } setLoading(true); try { const result = await api.completeVoucher(selectedVoucher.id, payeeOtp); if (result.success) { addToast('Voucher completed!', 'success'); refreshVouchers(); setShowModal(false); setPayeeOtp(''); } else addToast(result.error, 'error'); } catch { addToast('Failed', 'error'); } setLoading(false); };
   const handleResend = async () => { try { await api.resendPayeeOtp(selectedVoucher.id); addToast('OTP resent', 'success'); } catch { addToast('Failed', 'error'); } };
@@ -1777,6 +1879,48 @@ const VoucherList = ({ filter }) => {
           </div>
           <div className="modal-body">
             <VoucherPreview voucher={selectedVoucher} />
+            {/* Document Upload Section - for awaiting_document status */}
+            {selectedVoucher.status === 'awaiting_document' && (selectedVoucher.prepared_by === user.id || user.role === 'admin') && !selectedVoucher.document_url && (
+              <div className="document-upload-section" style={{background: '#fef3c7', padding: '1.5rem', borderRadius: '8px', marginTop: '1rem', textAlign: 'center'}}>
+                <div style={{fontSize: '2rem', marginBottom: '0.5rem'}}>📄</div>
+                <p style={{fontWeight: 600, color: '#92400e', marginBottom: '0.5rem'}}>Invoice/Receipt Upload Required</p>
+                <p style={{fontSize: '0.85rem', color: '#a16207', marginBottom: '1rem'}}>This payment requires document verification. Please upload the invoice or receipt.</p>
+                <label className="btn btn-primary" style={{cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '0.5rem'}}>
+                  {Icons.upload} Choose File
+                  <input type="file" accept="image/*,.pdf" style={{display: 'none'}} onChange={handleDocumentUpload} disabled={loading} />
+                </label>
+                <p style={{fontSize: '0.75rem', color: '#a16207', marginTop: '0.5rem'}}>Accepts: JPG, PNG, WebP, PDF (max 5MB)</p>
+              </div>
+            )}
+            {/* Document Preview - when document is uploaded */}
+            {selectedVoucher.document_url && (
+              <div className="document-preview-section" style={{background: '#ecfdf5', padding: '1rem', borderRadius: '8px', marginTop: '1rem', border: '1px solid #10b981'}}>
+                <div style={{display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem'}}>
+                  {Icons.fileCheck}
+                  <span style={{fontWeight: 600, color: '#059669'}}>Document Uploaded</span>
+                  {selectedVoucher.verification_type === 'document' && selectedVoucher.status === 'completed' && (
+                    <span style={{background: '#10b981', color: 'white', padding: '2px 8px', borderRadius: '4px', fontSize: '0.7rem', marginLeft: 'auto'}}>ATTESTED</span>
+                  )}
+                </div>
+                <a href={selectedVoucher.document_url} target="_blank" rel="noopener noreferrer" className="btn btn-sm btn-secondary" style={{marginTop: '0.5rem'}}>
+                  {Icons.eye} View Document
+                </a>
+                {selectedVoucher.attestation_notes && (
+                  <div style={{marginTop: '0.75rem', padding: '0.5rem', background: '#d1fae5', borderRadius: '4px', fontSize: '0.85rem'}}>
+                    <strong>Attestation Notes:</strong> {selectedVoucher.attestation_notes}
+                  </div>
+                )}
+              </div>
+            )}
+            {/* Awaiting Attestation - Admin can now attest after document upload */}
+            {user.role === 'admin' && selectedVoucher.status === 'awaiting_document' && selectedVoucher.document_url && (
+              <div className="attestation-section" style={{background: '#eff6ff', padding: '1rem', borderRadius: '8px', marginTop: '1rem', border: '1px solid #3b82f6'}}>
+                <p style={{fontWeight: 600, color: '#1d4ed8', marginBottom: '0.5rem'}}>📋 Document Ready for Attestation</p>
+                <p style={{fontSize: '0.85rem', color: '#3b82f6', marginBottom: '1rem'}}>Review the uploaded document and attest to complete this voucher.</p>
+                <button className="btn btn-primary" onClick={() => setShowAttestationModal(true)}>{Icons.fileCheck} Review & Attest</button>
+              </div>
+            )}
+            {/* OTP Section - for registered payees */}
             {selectedVoucher.status === 'awaiting_payee_otp' && (selectedVoucher.prepared_by === user.id || user.role === 'admin') && (
               <div className="otp-section">
                 {Icons.smartphone}<p style={{fontWeight:500,margin:'0.5rem 0'}}>Enter Payee OTP</p><p style={{fontSize:'0.85rem',color:'#666',marginBottom:'1rem'}}>OTP sent to payee: {selectedVoucher.payee_mobile?.replace(/\d(?=\d{4})/g, '*')}</p>
@@ -1810,6 +1954,50 @@ const VoucherList = ({ filter }) => {
           <div className="modal-header"><h3 className="modal-title">Reject Voucher</h3><button className="modal-close" onClick={() => setShowRejectModal(false)}>×</button></div>
           <div className="modal-body"><div className="form-group"><label className="form-label">Reason for Rejection</label><textarea className="form-input" rows={3} placeholder="Enter reason..." value={rejectReason} onChange={(e) => setRejectReason(e.target.value)} /></div></div>
           <div className="modal-footer"><button className="btn btn-secondary" onClick={() => setShowRejectModal(false)}>Cancel</button><button className="btn btn-danger" onClick={handleReject} disabled={loading}>{loading && Icons.loader}Confirm Rejection</button></div>
+        </div></div>
+      )}
+      {/* Attestation Modal for Document Verification */}
+      {showAttestationModal && selectedVoucher && (
+        <div className="modal-overlay" onClick={() => setShowAttestationModal(false)}><div className="modal" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-header" style={{background: '#3b82f6', color: 'white'}}>
+            <h3 className="modal-title" style={{color: 'white'}}>📋 Document Attestation</h3>
+            <button className="modal-close" style={{color: 'white'}} onClick={() => setShowAttestationModal(false)}>×</button>
+          </div>
+          <div className="modal-body">
+            <div style={{background: '#eff6ff', padding: '1rem', borderRadius: '8px', marginBottom: '1rem'}}>
+              <p style={{fontWeight: 600, color: '#1d4ed8', marginBottom: '0.5rem'}}>Document Verification</p>
+              <p style={{fontSize: '0.85rem', color: '#3b82f6'}}>
+                You are attesting that you have reviewed the uploaded invoice/receipt and confirm it is valid for this payment.
+              </p>
+            </div>
+            {selectedVoucher.document_url && (
+              <div style={{marginBottom: '1rem'}}>
+                <a href={selectedVoucher.document_url} target="_blank" rel="noopener noreferrer" className="btn btn-secondary" style={{width: '100%', justifyContent: 'center'}}>
+                  {Icons.eye} View Uploaded Document
+                </a>
+              </div>
+            )}
+            <div className="form-group">
+              <label className="form-label">Attestation Notes <span style={{color: '#dc2626'}}>*</span></label>
+              <textarea 
+                className="form-input" 
+                rows={3} 
+                placeholder="I have verified the attached invoice/receipt and confirm..." 
+                value={attestationNotes} 
+                onChange={(e) => setAttestationNotes(e.target.value)} 
+              />
+              <p style={{fontSize: '0.75rem', color: '#666', marginTop: '0.25rem'}}>Describe what you verified (invoice number, amount match, vendor details, etc.)</p>
+            </div>
+            <div style={{background: '#fef3c7', padding: '0.75rem', borderRadius: '6px', fontSize: '0.85rem', color: '#92400e'}}>
+              ⚠️ By attesting, you confirm that you have physically verified the invoice/receipt and authorize this payment.
+            </div>
+          </div>
+          <div className="modal-footer">
+            <button className="btn btn-secondary" onClick={() => setShowAttestationModal(false)}>Cancel</button>
+            <button className="btn btn-success" onClick={handleApproveWithAttestation} disabled={loading || !attestationNotes.trim()}>
+              {loading && Icons.loader}{Icons.fileCheck} Attest & Complete Voucher
+            </button>
+          </div>
         </div></div>
       )}
       {showDeleteModal && selectedVoucher && (
@@ -2915,8 +3103,8 @@ const PayeesManagement = () => {
   const [showEditModal, setShowEditModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [newPayee, setNewPayee] = useState({ name: '', alias: '', mobile: '', bankAccount: '', ifsc: '', upiId: '', isGlobal: false });
-  const [editPayee, setEditPayee] = useState({ id: '', name: '', alias: '', mobile: '', bankAccount: '', ifsc: '', upiId: '', is_global: false });
+  const [newPayee, setNewPayee] = useState({ name: '', alias: '', mobile: '', bankAccount: '', ifsc: '', upiId: '', isGlobal: false, payeeType: 'registered', requiresOtp: true });
+  const [editPayee, setEditPayee] = useState({ id: '', name: '', alias: '', mobile: '', bankAccount: '', ifsc: '', upiId: '', is_global: false, payee_type: 'registered', requires_otp: true });
   const [importData, setImportData] = useState('');
   const [importMethod, setImportMethod] = useState('excel'); // 'paste' or 'excel'
 
@@ -2937,7 +3125,7 @@ const PayeesManagement = () => {
       await api.createPayee({ ...newPayee, companyId: user.company.id });
       addToast('Payee added successfully', 'success');
       setShowAddModal(false);
-      setNewPayee({ name: '', alias: '', mobile: '', bankAccount: '', ifsc: '', upiId: '', isGlobal: false });
+      setNewPayee({ name: '', alias: '', mobile: '', bankAccount: '', ifsc: '', upiId: '', isGlobal: false, payeeType: 'registered', requiresOtp: true });
       refreshPayees();
     } catch (error) {
       addToast('Failed to add payee: ' + error.message, 'error');
@@ -3191,6 +3379,7 @@ const PayeesManagement = () => {
               <thead>
                 <tr>
                   <th>Name</th>
+                  <th>Type</th>
                   <th>Alias</th>
                   <th>Mobile</th>
                   <th>Bank Account</th>
@@ -3201,7 +3390,7 @@ const PayeesManagement = () => {
               </thead>
               <tbody>
                 {payees.length === 0 ? (
-                  <tr><td colSpan="7" style={{textAlign: 'center', padding: '2rem', color: 'var(--text-secondary)'}}>No payees added yet. Click "Add Payee" to get started.</td></tr>
+                  <tr><td colSpan="8" style={{textAlign: 'center', padding: '2rem', color: 'var(--text-secondary)'}}>No payees added yet. Click "Add Payee" to get started.</td></tr>
                 ) : (
                   payees.map(p => (
                     <tr key={p.id} style={p.is_global && p.company_id !== user.company.id ? {background: '#f0f9ff'} : {}}>
@@ -3209,6 +3398,13 @@ const PayeesManagement = () => {
                         {p.name}
                         {p.is_global && <span style={{marginLeft: '0.5rem', fontSize: '0.7rem', background: '#3b82f6', color: 'white', padding: '2px 6px', borderRadius: '4px'}}>🌐 Global</span>}
                         {p.is_global && p.company_id !== user.company.id && <span style={{marginLeft: '0.25rem', fontSize: '0.65rem', color: '#666'}}>(from other company)</span>}
+                      </td>
+                      <td>
+                        {p.payee_type === 'adhoc' ? (
+                          <span style={{fontSize: '0.75rem', background: '#fef3c7', color: '#92400e', padding: '2px 8px', borderRadius: '4px'}}>📄 Ad-hoc</span>
+                        ) : (
+                          <span style={{fontSize: '0.75rem', background: '#d1fae5', color: '#059669', padding: '2px 8px', borderRadius: '4px'}}>✅ Registered</span>
+                        )}
                       </td>
                       <td>{p.alias || '-'}</td>
                       <td>{p.mobile}</td>
@@ -3242,6 +3438,25 @@ const PayeesManagement = () => {
               <button className="modal-close" onClick={() => setShowAddModal(false)}>×</button>
             </div>
             <div className="modal-body">
+              {/* Payee Type Selector */}
+              <div className="form-group" style={{background: '#fef3c7', padding: '1rem', borderRadius: '8px', border: '1px solid #fcd34d', marginBottom: '1rem'}}>
+                <label className="form-label" style={{marginBottom: '0.75rem', fontWeight: 600, color: '#92400e'}}>📋 Payee Type</label>
+                <div style={{display: 'flex', gap: '1rem', flexWrap: 'wrap'}}>
+                  <label style={{display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', padding: '0.5rem 1rem', borderRadius: '6px', background: newPayee.payeeType === 'registered' ? '#10b981' : '#e5e7eb', color: newPayee.payeeType === 'registered' ? 'white' : '#374151'}}>
+                    <input type="radio" name="payeeType" checked={newPayee.payeeType === 'registered'} onChange={() => setNewPayee({...newPayee, payeeType: 'registered', requiresOtp: true})} style={{display: 'none'}} />
+                    ✅ Registered Vendor
+                  </label>
+                  <label style={{display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', padding: '0.5rem 1rem', borderRadius: '6px', background: newPayee.payeeType === 'adhoc' ? '#3b82f6' : '#e5e7eb', color: newPayee.payeeType === 'adhoc' ? 'white' : '#374151'}}>
+                    <input type="radio" name="payeeType" checked={newPayee.payeeType === 'adhoc'} onChange={() => setNewPayee({...newPayee, payeeType: 'adhoc', requiresOtp: false})} style={{display: 'none'}} />
+                    📄 Ad-hoc / One-time
+                  </label>
+                </div>
+                <p style={{fontSize: '0.8rem', color: '#92400e', marginTop: '0.75rem'}}>
+                  {newPayee.payeeType === 'registered' 
+                    ? '✓ OTP verification will be sent to payee mobile for payment confirmation.' 
+                    : '📄 Document upload required instead of OTP (for random shops, one-time vendors, etc.)'}
+                </p>
+              </div>
               <div className="form-group">
                 <label className="form-label">Name *</label>
                 <input type="text" className="form-input" value={newPayee.name} onChange={e => setNewPayee({...newPayee, name: e.target.value})} placeholder="Vendor/Payee Name" />
@@ -3251,7 +3466,7 @@ const PayeesManagement = () => {
                 <input type="text" className="form-input" value={newPayee.alias} onChange={e => setNewPayee({...newPayee, alias: e.target.value})} placeholder="Short Name" />
               </div>
               <div className="form-group">
-                <label className="form-label">Mobile *</label>
+                <label className="form-label">Mobile {newPayee.payeeType === 'registered' ? '*' : '(for records)'}</label>
                 <input type="tel" className="form-input" value={newPayee.mobile} onChange={e => setNewPayee({...newPayee, mobile: e.target.value})} placeholder="10-digit mobile" />
               </div>
               <div className="form-group">
