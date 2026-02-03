@@ -117,8 +117,8 @@ const api = {
   getNotifications: (userId) => fetch(`${API_BASE}/users/${userId}/notifications`).then(r => r.json()),
   markAllNotificationsRead: (userId) => fetch(`${API_BASE}/users/${userId}/notifications/read-all`, { method: 'POST' }).then(r => r.json()),
   getHeadsOfAccount: (companyId) => fetch(`${API_BASE}/heads-of-account?companyId=${companyId}`).then(r => r.json()),
-  addHeadOfAccount: (companyId, name) => fetch(`${API_BASE}/heads-of-account`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ companyId, name }) }).then(r => r.json()),
-  updateHeadOfAccount: (id, name) => fetch(`${API_BASE}/heads-of-account/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) }).then(r => r.json()),
+  addHeadOfAccount: (companyId, name, isGlobal) => fetch(`${API_BASE}/heads-of-account`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ companyId, name, isGlobal }) }).then(r => r.json()),
+  updateHeadOfAccount: (id, name, isGlobal) => fetch(`${API_BASE}/heads-of-account/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, isGlobal }) }).then(r => r.json()),
   deleteHeadOfAccount: (id) => fetch(`${API_BASE}/heads-of-account/${id}`, { method: 'DELETE' }).then(r => r.json()),
   importHeadsOfAccount: (companyId, names) => fetch(`${API_BASE}/heads-of-account/import`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ companyId, names }) }).then(r => r.json()),
   // Sub-heads of account
@@ -2915,8 +2915,8 @@ const PayeesManagement = () => {
   const [showEditModal, setShowEditModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [newPayee, setNewPayee] = useState({ name: '', alias: '', mobile: '', bankAccount: '', ifsc: '', upiId: '' });
-  const [editPayee, setEditPayee] = useState({ id: '', name: '', alias: '', mobile: '', bankAccount: '', ifsc: '', upiId: '' });
+  const [newPayee, setNewPayee] = useState({ name: '', alias: '', mobile: '', bankAccount: '', ifsc: '', upiId: '', isGlobal: false });
+  const [editPayee, setEditPayee] = useState({ id: '', name: '', alias: '', mobile: '', bankAccount: '', ifsc: '', upiId: '', is_global: false });
   const [importData, setImportData] = useState('');
   const [importMethod, setImportMethod] = useState('excel'); // 'paste' or 'excel'
 
@@ -2937,7 +2937,7 @@ const PayeesManagement = () => {
       await api.createPayee({ ...newPayee, companyId: user.company.id });
       addToast('Payee added successfully', 'success');
       setShowAddModal(false);
-      setNewPayee({ name: '', alias: '', mobile: '', bankAccount: '', ifsc: '', upiId: '' });
+      setNewPayee({ name: '', alias: '', mobile: '', bankAccount: '', ifsc: '', upiId: '', isGlobal: false });
       refreshPayees();
     } catch (error) {
       addToast('Failed to add payee: ' + error.message, 'error');
@@ -3204,18 +3204,26 @@ const PayeesManagement = () => {
                   <tr><td colSpan="7" style={{textAlign: 'center', padding: '2rem', color: 'var(--text-secondary)'}}>No payees added yet. Click "Add Payee" to get started.</td></tr>
                 ) : (
                   payees.map(p => (
-                    <tr key={p.id}>
-                      <td className="fw-600">{p.name}</td>
+                    <tr key={p.id} style={p.is_global && p.company_id !== user.company.id ? {background: '#f0f9ff'} : {}}>
+                      <td className="fw-600">
+                        {p.name}
+                        {p.is_global && <span style={{marginLeft: '0.5rem', fontSize: '0.7rem', background: '#3b82f6', color: 'white', padding: '2px 6px', borderRadius: '4px'}}>🌐 Global</span>}
+                        {p.is_global && p.company_id !== user.company.id && <span style={{marginLeft: '0.25rem', fontSize: '0.65rem', color: '#666'}}>(from other company)</span>}
+                      </td>
                       <td>{p.alias || '-'}</td>
                       <td>{p.mobile}</td>
                       <td>{p.bank_account || '-'}</td>
                       <td>{p.ifsc || '-'}</td>
                       <td>{p.upi_id || '-'}</td>
                       <td style={{textAlign: 'center'}}>
-                        <div style={{display: 'flex', gap: '0.5rem', justifyContent: 'center'}}>
-                          <button className="btn btn-sm btn-secondary" onClick={() => { setEditPayee(p); setShowEditModal(true); }}>✏️</button>
-                          <button className="btn btn-sm btn-danger" onClick={() => handleDeletePayee(p.id)}>🗑️</button>
-                        </div>
+                        {p.company_id === user.company.id ? (
+                          <div style={{display: 'flex', gap: '0.5rem', justifyContent: 'center'}}>
+                            <button className="btn btn-sm btn-secondary" onClick={() => { setEditPayee(p); setShowEditModal(true); }}>✏️</button>
+                            <button className="btn btn-sm btn-danger" onClick={() => handleDeletePayee(p.id)}>🗑️</button>
+                          </div>
+                        ) : (
+                          <span style={{fontSize: '0.75rem', color: '#888'}}>View Only</span>
+                        )}
                       </td>
                     </tr>
                   ))
@@ -3258,6 +3266,15 @@ const PayeesManagement = () => {
                 <label className="form-label">UPI ID</label>
                 <input type="text" className="form-input" value={newPayee.upiId} onChange={e => setNewPayee({...newPayee, upiId: e.target.value})} placeholder="user@bank" />
               </div>
+              <div className="form-group" style={{background: '#f0f9ff', padding: '1rem', borderRadius: '8px', border: '1px solid #bfdbfe'}}>
+                <label style={{display: 'flex', alignItems: 'center', gap: '0.75rem', cursor: 'pointer'}}>
+                  <input type="checkbox" checked={newPayee.isGlobal} onChange={e => setNewPayee({...newPayee, isGlobal: e.target.checked})} style={{width: '18px', height: '18px'}} />
+                  <span style={{fontWeight: 500}}>🌐 Available for All Companies</span>
+                </label>
+                <p style={{fontSize: '0.8rem', color: '#666', marginTop: '0.5rem', marginLeft: '2rem'}}>
+                  If checked, this payee will be visible and selectable across all companies.
+                </p>
+              </div>
             </div>
             <div className="modal-footer">
               <button className="btn btn-secondary" onClick={() => setShowAddModal(false)}>Cancel</button>
@@ -3298,6 +3315,15 @@ const PayeesManagement = () => {
               <div className="form-group">
                 <label className="form-label">UPI ID</label>
                 <input type="text" className="form-input" value={editPayee.upi_id || ''} onChange={e => setEditPayee({...editPayee, upi_id: e.target.value})} />
+              </div>
+              <div className="form-group" style={{background: '#f0f9ff', padding: '1rem', borderRadius: '8px', border: '1px solid #bfdbfe'}}>
+                <label style={{display: 'flex', alignItems: 'center', gap: '0.75rem', cursor: 'pointer'}}>
+                  <input type="checkbox" checked={editPayee.is_global || false} onChange={e => setEditPayee({...editPayee, is_global: e.target.checked})} style={{width: '18px', height: '18px'}} />
+                  <span style={{fontWeight: 500}}>🌐 Available for All Companies</span>
+                </label>
+                <p style={{fontSize: '0.8rem', color: '#666', marginTop: '0.5rem', marginLeft: '2rem'}}>
+                  If checked, this payee will be visible and selectable across all companies.
+                </p>
               </div>
             </div>
             <div className="modal-footer">
@@ -3390,11 +3416,12 @@ const AccountsManagement = () => {
   const [showEditModal, setShowEditModal] = useState(false);
   const [showEditSubModal, setShowEditSubModal] = useState(false);
   const [selectedHeadForSub, setSelectedHeadForSub] = useState(null);
-  const [editAccount, setEditAccount] = useState({ id: '', name: '' });
+  const [editAccount, setEditAccount] = useState({ id: '', name: '', is_global: false });
   const [editSubAccount, setEditSubAccount] = useState({ id: '', name: '' });
   const [showImportModal, setShowImportModal] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [newAccount, setNewAccount] = useState('');
+  const [newAccountIsGlobal, setNewAccountIsGlobal] = useState(false);
   const [newSubAccount, setNewSubAccount] = useState('');
   const [importData, setImportData] = useState('');
   const [importFile, setImportFile] = useState(null);
@@ -3448,12 +3475,13 @@ const AccountsManagement = () => {
 
     setSubmitting(true);
     try {
-      const result = await api.addHeadOfAccount(user.company.id, newAccount.trim());
+      const result = await api.addHeadOfAccount(user.company.id, newAccount.trim(), newAccountIsGlobal);
       if (result.error) {
         addToast(result.error, 'error');
       } else {
         addToast('Account added successfully', 'success');
         setNewAccount('');
+        setNewAccountIsGlobal(false);
         setShowAddModal(false);
         loadAccounts();
       }
@@ -3519,7 +3547,7 @@ const AccountsManagement = () => {
     
     setSubmitting(true);
     try {
-      const result = await api.updateHeadOfAccount(editAccount.id, editAccount.name.trim());
+      const result = await api.updateHeadOfAccount(editAccount.id, editAccount.name.trim(), editAccount.is_global);
       if (result.error) {
         addToast(result.error, 'error');
       } else {
@@ -3799,19 +3827,26 @@ const AccountsManagement = () => {
               {accounts.map(account => {
                 const subs = subHeadsMap[account.id] || [];
                 const isExpanded = expandedHeads[account.id];
+                const isFromOtherCompany = account.is_global && account.company_id !== user.company.id;
                 return (
-                  <div key={account.id} style={{border: '1px solid var(--border-color)', borderRadius: '8px', overflow: 'hidden'}}>
-                    <div style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.75rem', background: subs.length > 0 ? '#fef3c7' : 'white'}}>
+                  <div key={account.id} style={{border: '1px solid var(--border-color)', borderRadius: '8px', overflow: 'hidden', background: isFromOtherCompany ? '#f0f9ff' : 'white'}}>
+                    <div style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.75rem', background: subs.length > 0 ? '#fef3c7' : (isFromOtherCompany ? '#f0f9ff' : 'white')}}>
                       <div style={{display: 'flex', alignItems: 'center', gap: '0.5rem', flex: 1, cursor: subs.length > 0 ? 'pointer' : 'default'}} onClick={() => subs.length > 0 && toggleExpand(account.id)}>
                         {subs.length > 0 && <span style={{fontSize: '0.8rem'}}>{isExpanded ? '▼' : '▶'}</span>}
                         <span style={{fontWeight: 500}}>{account.name}</span>
+                        {account.is_global && <span style={{fontSize: '0.7rem', background: '#3b82f6', color: 'white', padding: '2px 6px', borderRadius: '4px'}}>🌐 Global</span>}
+                        {isFromOtherCompany && <span style={{fontSize: '0.65rem', color: '#666'}}>(from other company)</span>}
                         {subs.length > 0 && <span style={{fontSize: '0.75rem', color: '#666', background: '#e5e7eb', padding: '0.1rem 0.4rem', borderRadius: '10px'}}>{subs.length} sub</span>}
                       </div>
-                      <div style={{display: 'flex', gap: '0.5rem'}}>
-                        <button className="btn btn-sm btn-secondary" onClick={() => { setSelectedHeadForSub(account); setShowAddSubModal(true); }} title="Add Sub-Category">➕ Sub</button>
-                        <button className="btn btn-sm btn-secondary" onClick={() => { setEditAccount({ id: account.id, name: account.name }); setShowEditModal(true); }} title="Edit">✏️</button>
-                        <button className="btn btn-sm btn-danger" onClick={() => handleDeleteAccount(account)} title="Delete">🗑️</button>
-                      </div>
+                      {account.company_id === user.company.id ? (
+                        <div style={{display: 'flex', gap: '0.5rem'}}>
+                          <button className="btn btn-sm btn-secondary" onClick={() => { setSelectedHeadForSub(account); setShowAddSubModal(true); }} title="Add Sub-Category">➕ Sub</button>
+                          <button className="btn btn-sm btn-secondary" onClick={() => { setEditAccount({ id: account.id, name: account.name, is_global: account.is_global || false }); setShowEditModal(true); }} title="Edit">✏️</button>
+                          <button className="btn btn-sm btn-danger" onClick={() => handleDeleteAccount(account)} title="Delete">🗑️</button>
+                        </div>
+                      ) : (
+                        <span style={{fontSize: '0.75rem', color: '#888', padding: '0.25rem 0.5rem'}}>View Only</span>
+                      )}
                     </div>
                     {isExpanded && subs.length > 0 && (
                       <div style={{background: '#f9fafb', borderTop: '1px solid var(--border-color)'}}>
@@ -3852,6 +3887,15 @@ const AccountsManagement = () => {
                   placeholder="e.g., Equipment Purchase"
                   onKeyPress={e => e.key === 'Enter' && handleAddAccount()}
                 />
+              </div>
+              <div className="form-group" style={{background: '#f0f9ff', padding: '1rem', borderRadius: '8px', border: '1px solid #bfdbfe'}}>
+                <label style={{display: 'flex', alignItems: 'center', gap: '0.75rem', cursor: 'pointer'}}>
+                  <input type="checkbox" checked={newAccountIsGlobal} onChange={e => setNewAccountIsGlobal(e.target.checked)} style={{width: '18px', height: '18px'}} />
+                  <span style={{fontWeight: 500}}>🌐 Available for All Companies</span>
+                </label>
+                <p style={{fontSize: '0.8rem', color: '#666', marginTop: '0.5rem', marginLeft: '2rem'}}>
+                  If checked, this account will be visible and selectable across all companies.
+                </p>
               </div>
             </div>
             <div className="modal-footer">
@@ -4002,6 +4046,15 @@ const AccountsManagement = () => {
                   placeholder="Account name"
                   onKeyPress={e => e.key === 'Enter' && handleEditAccount()}
                 />
+              </div>
+              <div className="form-group" style={{background: '#f0f9ff', padding: '1rem', borderRadius: '8px', border: '1px solid #bfdbfe'}}>
+                <label style={{display: 'flex', alignItems: 'center', gap: '0.75rem', cursor: 'pointer'}}>
+                  <input type="checkbox" checked={editAccount.is_global || false} onChange={e => setEditAccount({...editAccount, is_global: e.target.checked})} style={{width: '18px', height: '18px'}} />
+                  <span style={{fontWeight: 500}}>🌐 Available for All Companies</span>
+                </label>
+                <p style={{fontSize: '0.8rem', color: '#666', marginTop: '0.5rem', marginLeft: '2rem'}}>
+                  If checked, this account will be visible and selectable across all companies.
+                </p>
               </div>
             </div>
             <div className="modal-footer">

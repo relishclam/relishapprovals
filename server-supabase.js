@@ -780,7 +780,7 @@ app.get('/api/companies/:companyId/users', async (req, res) => {
 
 // Add payee
 app.post('/api/payees', async (req, res) => {
-  const { companyId, name, alias, mobile, bankAccount, ifsc, upiId } = req.body;
+  const { companyId, name, alias, mobile, bankAccount, ifsc, upiId, isGlobal } = req.body;
   if (!companyId || !name || !mobile) {
     return res.status(400).json({ error: 'Company, name, and mobile are required' });
   }
@@ -795,7 +795,8 @@ app.post('/api/payees', async (req, res) => {
       mobile: formattedMobile,
       bank_account: bankAccount || null,
       ifsc: ifsc || null,
-      upi_id: upiId || null
+      upi_id: upiId || null,
+      is_global: isGlobal || false
     }).select().single();
     
     if (error) throw error;
@@ -805,12 +806,13 @@ app.post('/api/payees', async (req, res) => {
   }
 });
 
-// Get payees
+// Get payees (includes global payees from all companies)
 app.get('/api/companies/:companyId/payees', async (req, res) => {
   try {
     const { data, error } = await supabase.from('payees')
       .select('*')
-      .eq('company_id', req.params.companyId);
+      .or(`company_id.eq.${req.params.companyId},is_global.eq.true`)
+      .order('name');
     
     if (error) throw error;
     res.json(data);
@@ -821,18 +823,21 @@ app.get('/api/companies/:companyId/payees', async (req, res) => {
 
 // Update payee
 app.put('/api/payees/:payeeId', async (req, res) => {
-  const { name, alias, mobile, bank_account, ifsc, upi_id } = req.body;
+  const { name, alias, mobile, bank_account, ifsc, upi_id, is_global } = req.body;
   
   try {
+    const updateData = {
+      name,
+      alias: alias || null,
+      bank_account: bank_account || null,
+      ifsc: ifsc || null,
+      upi_id: upi_id || null
+    };
+    if (mobile) updateData.mobile = formatMobile(mobile);
+    if (is_global !== undefined) updateData.is_global = is_global;
+    
     const { data, error } = await supabase.from('payees')
-      .update({
-        name,
-        alias: alias || null,
-        mobile: mobile ? formatMobile(mobile) : undefined,
-        bank_account: bank_account || null,
-        ifsc: ifsc || null,
-        upi_id: upi_id || null
-      })
+      .update(updateData)
       .eq('id', req.params.payeeId)
       .select()
       .single();
@@ -1574,7 +1579,7 @@ app.post('/api/users/:userId/test-push', async (req, res) => {
 
 // ============ HEADS OF ACCOUNT ============
 
-// Get heads of account for a company
+// Get heads of account for a company (includes global heads)
 app.get('/api/heads-of-account', async (req, res) => {
   try {
     const companyId = req.query.companyId;
@@ -1583,14 +1588,14 @@ app.get('/api/heads-of-account', async (req, res) => {
     }
 
     const { data, error } = await supabase.from('heads_of_account')
-      .select('id, name')
-      .eq('company_id', companyId)
+      .select('id, name, is_global, company_id')
+      .or(`company_id.eq.${companyId},is_global.eq.true`)
       .order('name');
     
     if (error) throw error;
     
-    // If no heads exist, insert defaults
-    if (!data || data.length === 0) {
+    // If no heads exist for this company, insert defaults
+    if (!data || data.filter(h => h.company_id === companyId).length === 0) {
       const defaultHeads = [
         'Salaries & Wages', 'Rent', 'Utilities - Electricity', 'Utilities - Water',
         'Raw Materials', 'Packaging Materials', 'Transportation & Freight',
@@ -1599,13 +1604,15 @@ app.get('/api/heads-of-account', async (req, res) => {
         'Interest Expenses', 'Miscellaneous Expenses', 'Capital Expenditure', 'Petty Cash'
       ];
       
-      const insertData = defaultHeads.map(name => ({ company_id: companyId, name }));
+      const insertData = defaultHeads.map(name => ({ company_id: companyId, name, is_global: false }));
       const { data: inserted, error: insertError } = await supabase.from('heads_of_account')
         .insert(insertData)
-        .select('id, name');
+        .select('id, name, is_global, company_id');
       
       if (insertError) throw insertError;
-      return res.json(inserted || []);
+      // Combine with any existing global heads
+      const globalHeads = data ? data.filter(h => h.is_global) : [];
+      return res.json([...globalHeads, ...(inserted || [])].sort((a, b) => a.name.localeCompare(b.name)));
     }
     
     res.json(data);
@@ -1618,15 +1625,15 @@ app.get('/api/heads-of-account', async (req, res) => {
 // Add a new head of account
 app.post('/api/heads-of-account', async (req, res) => {
   try {
-    const { companyId, name } = req.body;
+    const { companyId, name, isGlobal } = req.body;
     
     if (!companyId || !name) {
       return res.status(400).json({ error: 'Company ID and name are required' });
     }
 
     const { data, error } = await supabase.from('heads_of_account')
-      .insert({ company_id: companyId, name: name.trim() })
-      .select('id, name')
+      .insert({ company_id: companyId, name: name.trim(), is_global: isGlobal || false })
+      .select('id, name, is_global, company_id')
       .single();
     
     if (error) {
@@ -1665,14 +1672,17 @@ app.delete('/api/heads-of-account/:id', async (req, res) => {
 app.put('/api/heads-of-account/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const { name } = req.body;
+    const { name, isGlobal } = req.body;
     
     if (!name?.trim()) {
       return res.status(400).json({ error: 'Name is required' });
     }
     
+    const updateData = { name: name.trim() };
+    if (isGlobal !== undefined) updateData.is_global = isGlobal;
+    
     const { data, error } = await supabase.from('heads_of_account')
-      .update({ name: name.trim() })
+      .update(updateData)
       .eq('id', id)
       .select()
       .single();
