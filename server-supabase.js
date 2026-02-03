@@ -867,7 +867,7 @@ const getNextVoucherNumber = async (companyId) => {
 
 // Create voucher (submit for approval) or save as draft
 app.post('/api/vouchers', async (req, res) => {
-  const { companyId, headOfAccount, subHeadOfAccount, narration, narrationItems, amount, paymentMode, payeeId, preparedBy, saveAsDraft } = req.body;
+  const { companyId, headOfAccount, subHeadOfAccount, narration, narrationItems, amount, paymentMode, payeeId, preparedBy, saveAsDraft, invoiceReference } = req.body;
   
   if (!companyId || !headOfAccount || !amount || !paymentMode || !payeeId || !preparedBy) {
     return res.status(400).json({ error: 'Missing required fields' });
@@ -889,7 +889,8 @@ app.post('/api/vouchers', async (req, res) => {
       payee_id: payeeId,
       prepared_by: preparedBy,
       status: status,
-      submitted_at: saveAsDraft ? null : new Date().toISOString()
+      submitted_at: saveAsDraft ? null : new Date().toISOString(),
+      invoice_reference: invoiceReference || null
     }).select().single();
     
     if (error) throw error;
@@ -943,7 +944,7 @@ app.post('/api/vouchers', async (req, res) => {
 
 // Update draft voucher
 app.put('/api/vouchers/:voucherId', async (req, res) => {
-  const { headOfAccount, subHeadOfAccount, narration, narrationItems, amount, paymentMode, payeeId } = req.body;
+  const { headOfAccount, subHeadOfAccount, narration, narrationItems, amount, paymentMode, payeeId, invoiceReference } = req.body;
   
   try {
     // First check if voucher exists and is a draft
@@ -966,6 +967,7 @@ app.put('/api/vouchers/:voucherId', async (req, res) => {
     if (amount !== undefined) updateData.amount = amount;
     if (paymentMode !== undefined) updateData.payment_mode = paymentMode;
     if (payeeId !== undefined) updateData.payee_id = payeeId;
+    if (invoiceReference !== undefined) updateData.invoice_reference = invoiceReference;
     
     const { data: voucher, error } = await supabase.from('vouchers')
       .update(updateData)

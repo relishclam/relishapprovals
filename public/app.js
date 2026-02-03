@@ -342,6 +342,7 @@ const VoucherPreview = ({ voucher }) => {
         <div className="voucher-meta-item"><span className="voucher-meta-label">Date:</span><span className="voucher-meta-value">{formatDate(voucher.created_at)}</span></div>
         <div className="voucher-meta-item"><span className="voucher-meta-label">Payee:</span><span className="voucher-meta-value">{voucher.payee_name} {voucher.payee_alias && `(${voucher.payee_alias})`}</span></div>
         <div className="voucher-meta-item"><span className="voucher-meta-label">Mode:</span><span className="voucher-meta-value">{voucher.payment_mode}</span></div>
+        {voucher.invoice_reference && <div className="voucher-meta-item"><span className="voucher-meta-label">Invoice Ref:</span><span className="voucher-meta-value">{voucher.invoice_reference}</span></div>}
       </div>
       <div className="voucher-meta-item mb-1"><span className="voucher-meta-label">Head:</span><span className="voucher-meta-value">{voucher.head_of_account}{voucher.sub_head_of_account && ` → ${voucher.sub_head_of_account}`}</span></div>
       {voucher.narration && <div className="voucher-meta-item mb-1"><span className="voucher-meta-label">Narration:</span><span className="voucher-meta-value">{voucher.narration}</span></div>}
@@ -858,7 +859,7 @@ const CreateVoucher = () => {
   const [showPreview, setShowPreview] = useState(false);
   const [newSubCategory, setNewSubCategory] = useState('');
   const [customAccount, setCustomAccount] = useState('');
-  const [form, setForm] = useState({ headOfAccount: '', subHeadOfAccount: '', narration: '', narrationItems: [], payeeId: '', paymentMode: 'UPI', amount: '' });
+  const [form, setForm] = useState({ headOfAccount: '', subHeadOfAccount: '', narration: '', narrationItems: [], payeeId: '', paymentMode: 'UPI', amount: '', invoiceReference: '' });
   const [newPayee, setNewPayee] = useState({ name: '', alias: '', mobile: '', bankAccount: '', ifsc: '', upiId: '' });
   const [useNarrationTable, setUseNarrationTable] = useState(true);  // Default to TRUE for tabulated format
 
@@ -982,11 +983,12 @@ const CreateVoucher = () => {
         paymentMode: form.paymentMode, 
         payeeId: form.payeeId, 
         preparedBy: user.id,
-        saveAsDraft: saveAsDraft
+        saveAsDraft: saveAsDraft,
+        invoiceReference: form.invoiceReference || null
       }); 
       if (result.success) { 
         addToast(saveAsDraft ? `Draft ${result.serialNumber} saved` : `Voucher ${result.serialNumber} submitted`, 'success'); 
-        setForm({ headOfAccount: '', subHeadOfAccount: '', narration: '', narrationItems: [], payeeId: '', paymentMode: 'UPI', amount: '' }); 
+        setForm({ headOfAccount: '', subHeadOfAccount: '', narration: '', narrationItems: [], payeeId: '', paymentMode: 'UPI', amount: '', invoiceReference: '' }); 
         setUseNarrationTable(false);
         refreshVouchers(); 
       } else {
@@ -1052,6 +1054,7 @@ const CreateVoucher = () => {
           </div>
           <div className="form-row">
             <div className="form-group"><label className="form-label">Payment Mode *</label><select className="form-select" value={form.paymentMode} onChange={(e) => setForm({ ...form, paymentMode: e.target.value })}><option value="UPI">UPI</option><option value="Account Transfer">Account Transfer</option><option value="Cash">Cash</option></select></div>
+            <div className="form-group"><label className="form-label">Invoice Reference</label><input type="text" className="form-input" placeholder="e.g., INV-2026-001 (optional)" value={form.invoiceReference} onChange={(e) => setForm({ ...form, invoiceReference: e.target.value })} /></div>
           </div>
           <div className="form-group"><label className="form-label form-label-row">Payee *<button className="btn btn-sm btn-secondary" onClick={() => setShowPayeeModal(true)}>{Icons.plus} Add Payee</button></label><select className="form-select" value={form.payeeId} onChange={(e) => setForm({ ...form, payeeId: e.target.value })}><option value="">Select Payee</option>{payees.map(p => <option key={p.id} value={p.id}>{p.name} {p.alias && `(${p.alias})`}</option>)}</select></div>
           
@@ -1245,6 +1248,7 @@ const PreviewVoucher = ({ formData, payees, user }) => {
         <div className="voucher-meta-item"><span className="voucher-meta-label">Date:</span><span className="voucher-meta-value">{new Date().toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</span></div>
         <div className="voucher-meta-item"><span className="voucher-meta-label">Payee:</span><span className="voucher-meta-value">{selectedPayee?.name || 'Not selected'} {selectedPayee?.alias && `(${selectedPayee.alias})`}</span></div>
         <div className="voucher-meta-item"><span className="voucher-meta-label">Mode:</span><span className="voucher-meta-value">{formData.paymentMode}</span></div>
+        {formData.invoiceReference && <div className="voucher-meta-item"><span className="voucher-meta-label">Invoice Ref:</span><span className="voucher-meta-value">{formData.invoiceReference}</span></div>}
       </div>
       <div className="voucher-meta-item mb-1"><span className="voucher-meta-label">Head:</span><span className="voucher-meta-value">{formData.headOfAccount || 'Not selected'}{formData.subHeadOfAccount && ` → ${formData.subHeadOfAccount}`}</span></div>
       {formData.narration && <div className="voucher-meta-item mb-1"><span className="voucher-meta-label">Narration:</span><span className="voucher-meta-value">{formData.narration}</span></div>}
@@ -1328,7 +1332,7 @@ const VoucherList = ({ filter }) => {
   
   // Edit Draft state
   const [showEditModal, setShowEditModal] = useState(false);
-  const [editForm, setEditForm] = useState({ headOfAccount: '', subHeadOfAccount: '', narration: '', narrationItems: [], payeeId: '', paymentMode: 'UPI', amount: '' });
+  const [editForm, setEditForm] = useState({ headOfAccount: '', subHeadOfAccount: '', narration: '', narrationItems: [], payeeId: '', paymentMode: 'UPI', amount: '', invoiceReference: '' });
   const [payees, setPayees] = useState([]);
   const [heads, setHeads] = useState([]);
   const [headsData, setHeadsData] = useState([]);
@@ -1398,7 +1402,8 @@ const VoucherList = ({ filter }) => {
       narrationItems: narrationItems,
       payeeId: voucher.payee_id || '',
       paymentMode: voucher.payment_mode || 'UPI',
-      amount: voucher.amount?.toString() || ''
+      amount: voucher.amount?.toString() || '',
+      invoiceReference: voucher.invoice_reference || ''
     });
     setUseNarrationTable(hasItems);
     setShowModal(false);
@@ -1420,7 +1425,8 @@ const VoucherList = ({ filter }) => {
         amount: parseFloat(editForm.amount),
         paymentMode: editForm.paymentMode,
         payeeId: editForm.payeeId,
-        saveAsDraft: saveAsDraft
+        saveAsDraft: saveAsDraft,
+        invoiceReference: editForm.invoiceReference || null
       });
       if (result.success) {
         addToast(saveAsDraft ? 'Draft updated successfully' : 'Voucher submitted for approval', 'success');
@@ -1640,6 +1646,11 @@ const VoucherList = ({ filter }) => {
           <div class="meta-label">Payment Mode:</div>
           <div class="meta-value">${v.payment_mode}</div>
         </div>
+        ${v.invoice_reference ? `
+        <div class="meta-row">
+          <div class="meta-label">Invoice Ref:</div>
+          <div class="meta-value">${v.invoice_reference}</div>
+        </div>` : ''}
         <div class="meta-row">
           <div class="meta-label">Head of Account:</div>
           <div class="meta-value">${v.head_of_account}</div>
@@ -1889,6 +1900,10 @@ const VoucherList = ({ filter }) => {
                   <option value="Account Transfer">Account Transfer</option>
                   <option value="Cash">Cash</option>
                 </select>
+              </div>
+              <div className="form-group">
+                <label className="form-label">Invoice Reference</label>
+                <input type="text" className="form-input" placeholder="e.g., INV-2026-001 (optional)" value={editForm.invoiceReference} onChange={(e) => setEditForm({ ...editForm, invoiceReference: e.target.value })} />
               </div>
             </div>
             <div className="form-group">
