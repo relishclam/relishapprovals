@@ -877,6 +877,7 @@ const CreateVoucher = () => {
   const [useNarrationTable, setUseNarrationTable] = useState(true);  // Default to TRUE for tabulated format
 
   const refreshSubHeads = async () => {
+    // This now returns sub-heads for the company's own heads + sub-heads of global heads from other companies
     const data = await api.getSubHeadsByCompany(user.company.id);
     if (Array.isArray(data)) {
       setAllSubHeads(data);
@@ -3642,14 +3643,14 @@ const AccountsManagement = () => {
   const [importFile, setImportFile] = useState(null);
   const [importMethod, setImportMethod] = useState('paste'); // 'paste' or 'excel'
 
-  // Load accounts and sub-heads from database
+  // Load accounts and sub-heads from database (includes global heads + their sub-heads)
   const loadAccounts = async () => {
     try {
       setLoading(true);
       const data = await api.getHeadsOfAccount(user.company.id);
       if (Array.isArray(data)) {
         setAccounts(data.sort((a, b) => a.name.localeCompare(b.name)));
-        // Load sub-heads for all accounts
+        // Load sub-heads for own company + sub-heads of global heads from other companies
         const subData = await api.getSubHeadsByCompany(user.company.id);
         if (Array.isArray(subData)) {
           const grouped = {};

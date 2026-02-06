@@ -1755,6 +1755,16 @@ app.put('/api/heads-of-account/:id', async (req, res) => {
       .single();
     
     if (error) throw error;
+
+    // When global flag changes, cascade to all sub-heads under this head
+    if (isGlobal !== undefined) {
+      const { error: subError } = await supabase.from('sub_heads_of_account')
+        .update({ is_global: isGlobal })
+        .eq('head_id', id);
+      if (subError) {
+        console.error('Warning: Failed to cascade global flag to sub-heads:', subError);
+      }
+    }
     
     res.json({ success: true, data });
   } catch (error) {
@@ -1792,34 +1802,58 @@ app.post('/api/heads-of-account/import', async (req, res) => {
 
 // ============ SUB-HEADS OF ACCOUNT ============
 
-// Get sub-heads of account for a head or company
+// Get sub-heads of account for a head or company (includes sub-heads of global heads)
 app.get('/api/sub-heads-of-account', async (req, res) => {
   try {
     const { headId, companyId } = req.query;
     
-    let query = supabase.from('sub_heads_of_account')
-      .select('id, head_id, name, created_at')
-      .order('name');
-    
     if (headId) {
-      query = query.eq('head_id', headId);
+      // Get sub-heads for a specific head
+      const { data, error } = await supabase.from('sub_heads_of_account')
+        .select('id, head_id, name, created_at')
+        .eq('head_id', headId)
+        .order('name');
+      if (error) throw error;
+      return res.json(data || []);
     } else if (companyId) {
-      query = query.eq('company_id', companyId);
+      // Get sub-heads for this company's own heads
+      const { data: ownSubHeads, error: ownError } = await supabase.from('sub_heads_of_account')
+        .select('id, head_id, name, created_at')
+        .eq('company_id', companyId)
+        .order('name');
+      if (ownError) throw ownError;
+
+      // Also get sub-heads of global heads from OTHER companies
+      const { data: globalHeads, error: ghError } = await supabase.from('heads_of_account')
+        .select('id')
+        .eq('is_global', true)
+        .neq('company_id', companyId);
+      if (ghError) throw ghError;
+
+      let globalSubHeads = [];
+      if (globalHeads && globalHeads.length > 0) {
+        const globalHeadIds = globalHeads.map(h => h.id);
+        const { data: gSubHeads, error: gsError } = await supabase.from('sub_heads_of_account')
+          .select('id, head_id, name, created_at')
+          .in('head_id', globalHeadIds)
+          .order('name');
+        if (gsError) throw gsError;
+        globalSubHeads = gSubHeads || [];
+      }
+
+      // Combine and deduplicate
+      const allSubHeads = [...(ownSubHeads || []), ...globalSubHeads];
+      return res.json(allSubHeads);
     } else {
       return res.status(400).json({ error: 'headId or companyId is required' });
     }
-    
-    const { data, error } = await query;
-    if (error) throw error;
-    
-    res.json(data || []);
   } catch (error) {
     console.error('Error fetching sub-heads of account:', error);
     res.status(500).json({ error: error.message });
   }
 });
 
-// Get all sub-heads grouped by head for a company
+// Get all sub-heads grouped by head for a company (includes global heads + their sub-heads)
 app.get('/api/sub-heads-of-account/grouped', async (req, res) => {
   try {
     const { companyId } = req.query;
@@ -1827,25 +1861,30 @@ app.get('/api/sub-heads-of-account/grouped', async (req, res) => {
       return res.status(400).json({ error: 'Company ID is required' });
     }
 
-    // Get all heads with their sub-heads
+    // Get heads for this company + global heads from other companies
     const { data: heads, error: headsError } = await supabase.from('heads_of_account')
-      .select('id, name')
-      .eq('company_id', companyId)
+      .select('id, name, is_global, company_id')
+      .or(`company_id.eq.${companyId},is_global.eq.true`)
       .order('name');
     
     if (headsError) throw headsError;
 
-    const { data: subHeads, error: subHeadsError } = await supabase.from('sub_heads_of_account')
-      .select('id, head_id, name')
-      .eq('company_id', companyId)
-      .order('name');
-    
-    if (subHeadsError) throw subHeadsError;
+    // Get sub-heads for all these heads
+    const headIds = (heads || []).map(h => h.id);
+    let subHeads = [];
+    if (headIds.length > 0) {
+      const { data: subData, error: subHeadsError } = await supabase.from('sub_heads_of_account')
+        .select('id, head_id, name')
+        .in('head_id', headIds)
+        .order('name');
+      if (subHeadsError) throw subHeadsError;
+      subHeads = subData || [];
+    }
 
     // Group sub-heads by head_id
-    const grouped = heads.map(head => ({
+    const grouped = (heads || []).map(head => ({
       ...head,
-      subHeads: (subHeads || []).filter(sh => sh.head_id === head.id)
+      subHeads: subHeads.filter(sh => sh.head_id === head.id)
     }));
     
     res.json(grouped);
@@ -1864,8 +1903,15 @@ app.post('/api/sub-heads-of-account', async (req, res) => {
       return res.status(400).json({ error: 'headId, companyId, and name are required' });
     }
 
+    // Check if parent head is global — if so, sub-head should inherit global flag
+    const { data: parentHead } = await supabase.from('heads_of_account')
+      .select('is_global')
+      .eq('id', headId)
+      .single();
+    const isParentGlobal = parentHead?.is_global || false;
+
     const { data, error } = await supabase.from('sub_heads_of_account')
-      .insert({ head_id: headId, company_id: companyId, name: name.trim() })
+      .insert({ head_id: headId, company_id: companyId, name: name.trim(), is_global: isParentGlobal })
       .select('id, head_id, name')
       .single();
     
