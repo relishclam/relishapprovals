@@ -31,6 +31,9 @@ const Icons = {
   camera: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg>,
   image: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>,
   fileCheck: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><path d="m9 15 2 2 4-4"/></svg>,
+  lock: <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>,
+  fingerprint: <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M2 12C2 6.5 6.5 2 12 2a10 10 0 0 1 8 4"/><path d="M5 19.5C5.5 18 6 15 6 12c0-.7.12-1.37.34-2"/><path d="M17.29 21.02c.12-.6.43-2.3.5-3.02"/><path d="M12 10a2 2 0 0 0-2 2c0 1.02-.1 2.51-.26 4"/><path d="M8.65 22c.21-.66.45-1.32.57-2"/><path d="M14 13.12c0 2.38 0 6.38-1 8.88"/><path d="M2 16h.01"/><path d="M21.8 16c.2-2 .131-5.354 0-6"/><path d="M9 6.8a6 6 0 0 1 9 5.2c0 .47 0 1.17-.02 2"/></svg>,
+  unlock: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg>,
 };
 
 // Number to Words Converter for Indian Rupees
@@ -227,6 +230,209 @@ const PWAInstallPrompt = () => {
       <div className="pwa-install-actions">
         <button className="btn btn-sm btn-secondary" onClick={handleDismiss}>Later</button>
         <button className="btn btn-sm btn-primary" onClick={handleInstall}>Install</button>
+      </div>
+    </div>
+  );
+};
+
+// Device Lock Screen - uses Web Authentication API for biometric/PIN/pattern unlock
+const DeviceLockScreen = ({ savedUser, onUnlock, onLogout }) => {
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [showFallback, setShowFallback] = useState(false);
+
+  // Check if Web Authentication API with platform authenticator is available
+  const isWebAuthnAvailable = () => {
+    return window.PublicKeyCredential !== undefined && 
+           typeof window.PublicKeyCredential === 'function';
+  };
+
+  // Attempt device lock authentication using WebAuthn
+  const attemptDeviceAuth = async () => {
+    setLoading(true);
+    setError('');
+
+    // Check if platform authenticator is available (fingerprint, face, PIN)
+    if (isWebAuthnAvailable()) {
+      try {
+        const available = await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
+        if (available) {
+          // Check if we already have a credential stored
+          const storedCredentialId = localStorage.getItem('relish_device_credential_id');
+          
+          if (storedCredentialId) {
+            // Authenticate with existing credential
+            const challenge = new Uint8Array(32);
+            crypto.getRandomValues(challenge);
+            
+            const credentialIdBytes = Uint8Array.from(atob(storedCredentialId), c => c.charCodeAt(0));
+            
+            const assertionOptions = {
+              challenge: challenge,
+              timeout: 60000,
+              userVerification: 'required',
+              allowCredentials: [{
+                type: 'public-key',
+                id: credentialIdBytes,
+                transports: ['internal']
+              }]
+            };
+
+            await navigator.credentials.get({ publicKey: assertionOptions });
+            // If we get here, authentication was successful
+            setLoading(false);
+            onUnlock(savedUser);
+            return;
+          } else {
+            // No stored credential - register one now
+            const registered = await registerDeviceCredential();
+            if (registered) {
+              setLoading(false);
+              onUnlock(savedUser);
+              return;
+            }
+          }
+        } else {
+          // Platform authenticator not available, show fallback
+          setShowFallback(true);
+        }
+      } catch (err) {
+        console.log('WebAuthn error:', err.name, err.message);
+        if (err.name === 'NotAllowedError') {
+          setError('Authentication cancelled. Please try again.');
+        } else if (err.name === 'InvalidStateError') {
+          // Credential might be stale, clear and re-register
+          localStorage.removeItem('relish_device_credential_id');
+          setError('Security key expired. Please authenticate again.');
+          setShowFallback(true);
+        } else {
+          setShowFallback(true);
+        }
+      }
+    } else {
+      // WebAuthn not supported at all
+      setShowFallback(true);
+    }
+    setLoading(false);
+  };
+
+  // Register a new platform credential
+  const registerDeviceCredential = async () => {
+    try {
+      const challenge = new Uint8Array(32);
+      crypto.getRandomValues(challenge);
+      
+      const userId = new TextEncoder().encode(savedUser.id.toString());
+      
+      const createOptions = {
+        challenge: challenge,
+        rp: {
+          name: 'Relish Approvals',
+          id: window.location.hostname
+        },
+        user: {
+          id: userId,
+          name: savedUser.username || savedUser.name,
+          displayName: savedUser.name || savedUser.username
+        },
+        pubKeyCredParams: [
+          { type: 'public-key', alg: -7 },   // ES256
+          { type: 'public-key', alg: -257 }  // RS256
+        ],
+        authenticatorSelection: {
+          authenticatorAttachment: 'platform',
+          userVerification: 'required',
+          residentKey: 'preferred'
+        },
+        timeout: 60000,
+        attestation: 'none'
+      };
+
+      const credential = await navigator.credentials.create({ publicKey: createOptions });
+      
+      // Store credential ID for future authentication
+      const credentialIdBase64 = btoa(String.fromCharCode(...new Uint8Array(credential.rawId)));
+      localStorage.setItem('relish_device_credential_id', credentialIdBase64);
+      
+      return true;
+    } catch (err) {
+      console.log('Credential registration error:', err.name, err.message);
+      if (err.name === 'NotAllowedError') {
+        setError('Device authentication was cancelled.');
+      } else {
+        setShowFallback(true);
+      }
+      return false;
+    }
+  };
+
+  // Auto-trigger device auth on mount
+  useEffect(() => {
+    // Small delay for UI to render before prompting
+    const timer = setTimeout(() => {
+      attemptDeviceAuth();
+    }, 500);
+    return () => clearTimeout(timer);
+  }, []);
+
+  // Fallback: just let them back in (the session is already verified from first login)
+  const handleFallbackUnlock = () => {
+    onUnlock(savedUser);
+  };
+
+  const handleSignOut = () => {
+    // Clear saved session and device credential
+    localStorage.removeItem('relish_saved_session');
+    localStorage.removeItem('relish_device_credential_id');
+    onLogout();
+  };
+
+  return (
+    <div className="lock-screen-container">
+      <div className="lock-screen-card">
+        <div className="lock-screen-icon">
+          {Icons.fingerprint}
+        </div>
+        <div className="lock-screen-avatar">
+          {savedUser.name ? savedUser.name.charAt(0).toUpperCase() : '?'}
+        </div>
+        <h2 className="lock-screen-name">{savedUser.name}</h2>
+        <p className="lock-screen-company">{savedUser.company?.name || ''}</p>
+        <p className="lock-screen-subtitle">
+          {loading ? 'Verifying your identity...' : 'Use your device lock to continue'}
+        </p>
+        
+        {error && <div className="alert alert-error" style={{marginBottom: '1rem', fontSize: '0.85rem'}}>{error}</div>}
+        
+        <button 
+          className="btn btn-primary lock-screen-btn" 
+          onClick={attemptDeviceAuth} 
+          disabled={loading}
+          style={{width: '100%', padding: '14px', fontSize: '1rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px'}}
+        >
+          {loading ? Icons.loader : Icons.unlock}
+          {loading ? 'Authenticating...' : 'Unlock with Device'}
+        </button>
+
+        {showFallback && (
+          <div className="lock-screen-fallback">
+            <p style={{fontSize: '0.8rem', color: '#888', margin: '1rem 0 0.75rem'}}>Device lock not available on this browser</p>
+            <button 
+              className="btn btn-secondary" 
+              onClick={handleFallbackUnlock}
+              style={{width: '100%', padding: '12px'}}
+            >
+              Continue Without Device Lock
+            </button>
+          </div>
+        )}
+
+        <button 
+          className="lock-screen-signout" 
+          onClick={handleSignOut}
+        >
+          {Icons.logOut} Sign in with a different account
+        </button>
       </div>
     </div>
   );
@@ -4326,6 +4532,27 @@ const App = () => {
   const [pushEnabled, setPushEnabled] = useState(false);
   const lastNotificationCount = React.useRef(0);
 
+  // Device Lock state
+  const [isLocked, setIsLocked] = useState(false);
+  const [savedSessionUser, setSavedSessionUser] = useState(null);
+
+  // On mount: check for saved session → show lock screen instead of login
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('relish_saved_session');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && parsed.id && parsed.company) {
+          setSavedSessionUser(parsed);
+          setIsLocked(true);
+        }
+      }
+    } catch (e) {
+      console.log('No saved session found');
+      localStorage.removeItem('relish_saved_session');
+    }
+  }, []);
+
   // Notification sound (using Web Audio API for better compatibility)
   const playNotificationSound = useCallback(() => {
     try {
@@ -4527,8 +4754,37 @@ const App = () => {
 
   useEffect(() => { if (user) { refreshVouchers(); refreshNotifications(); const interval = setInterval(() => { refreshVouchers(); refreshNotifications(); }, 30000); return () => clearInterval(interval); } }, [user, refreshVouchers, refreshNotifications]);
 
-  const handleLogin = (userData) => { setUser(userData); setCurrentPage('dashboard'); };
-  const handleLogout = () => { setUser(null); setVouchers([]); setNotifications([]); setCurrentPage('dashboard'); };
+  const handleLogin = (userData) => {
+    setUser(userData);
+    setCurrentPage('dashboard');
+    // Save session for device lock on next app open
+    try {
+      localStorage.setItem('relish_saved_session', JSON.stringify(userData));
+    } catch (e) {
+      console.log('Could not save session:', e);
+    }
+    setIsLocked(false);
+    setSavedSessionUser(null);
+  };
+  const handleLogout = () => {
+    setUser(null); setVouchers([]); setNotifications([]); setCurrentPage('dashboard');
+    // Clear saved session and device credential
+    localStorage.removeItem('relish_saved_session');
+    localStorage.removeItem('relish_device_credential_id');
+    setIsLocked(false);
+    setSavedSessionUser(null);
+  };
+  const handleDeviceUnlock = (savedUser) => {
+    // Re-login with saved session data
+    setUser(savedUser);
+    setCurrentPage('dashboard');
+    setIsLocked(false);
+    setSavedSessionUser(null);
+  };
+  const handleLockLogout = () => {
+    setIsLocked(false);
+    setSavedSessionUser(null);
+  };
   const handleSwitchCompany = async (companyId) => {
     setSwitchingCompany(true);
     try {
@@ -4538,6 +4794,8 @@ const App = () => {
         setVouchers([]);
         setCurrentPage('dashboard');
         setShowCompanySwitcher(false);
+        // Update saved session with new company
+        try { localStorage.setItem('relish_saved_session', JSON.stringify(result.user)); } catch(e) {}
         // Refresh data for new company
         const newVouchers = await api.getVouchers(result.user.company.id);
         setVouchers(newVouchers);
@@ -4550,6 +4808,11 @@ const App = () => {
   const unreadCount = notifications.filter(n => !n.read).length;
   const markAllRead = async () => { await api.markAllNotificationsRead(user.id); refreshNotifications(); };
   const hasMultipleCompanies = user?.companies?.length > 1;
+
+  // Show device lock screen if a saved session exists
+  if (!user && isLocked && savedSessionUser) {
+    return <DeviceLockScreen savedUser={savedSessionUser} onUnlock={handleDeviceUnlock} onLogout={handleLockLogout} />;
+  }
 
   if (!user) return <LoginPage onLogin={handleLogin} />;
 
