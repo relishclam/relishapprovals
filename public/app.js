@@ -4552,26 +4552,63 @@ const App = () => {
   const [pushEnabled, setPushEnabled] = useState(false);
   const lastNotificationCount = React.useRef(0);
 
-  // Device Lock state
-  const [isLocked, setIsLocked] = useState(false);
-  const [savedSessionUser, setSavedSessionUser] = useState(null);
-
-  // On mount: check for saved session → show lock screen instead of login
-  useEffect(() => {
+  // Device Lock state - initialize synchronously from localStorage to avoid flash
+  const [isLocked, setIsLocked] = useState(() => {
     try {
       const saved = localStorage.getItem('relish_saved_session');
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (parsed && parsed.id && parsed.company) {
-          setSavedSessionUser(parsed);
-          setIsLocked(true);
+        return !!(parsed && parsed.id && parsed.company);
+      }
+    } catch (e) {}
+    return false;
+  });
+  const [savedSessionUser, setSavedSessionUser] = useState(() => {
+    try {
+      const saved = localStorage.getItem('relish_saved_session');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && parsed.id && parsed.company) return parsed;
+      }
+    } catch (e) {}
+    return null;
+  });
+  const backgroundTimestamp = React.useRef(null);
+
+  // Lock the app when it returns from background (like a banking app)
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        // App going to background - record timestamp
+        backgroundTimestamp.current = Date.now();
+      } else if (document.visibilityState === 'visible') {
+        // App coming back to foreground
+        const wasInBackground = backgroundTimestamp.current;
+        const elapsed = wasInBackground ? Date.now() - wasInBackground : 0;
+        backgroundTimestamp.current = null;
+
+        // If user is logged in and was in background for > 10 seconds, lock the app
+        if (user && elapsed > 10000) {
+          const hasCredential = !!localStorage.getItem('relish_device_credential_id');
+          const savedSession = localStorage.getItem('relish_saved_session');
+          if (hasCredential && savedSession) {
+            try {
+              const parsed = JSON.parse(savedSession);
+              if (parsed && parsed.id && parsed.company) {
+                setSavedSessionUser(parsed);
+                setIsLocked(true);
+                setUser(null);
+                console.log('App locked after returning from background');
+              }
+            } catch (e) {}
+          }
         }
       }
-    } catch (e) {
-      console.log('No saved session found');
-      localStorage.removeItem('relish_saved_session');
-    }
-  }, []);
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [user]);
 
   // Notification sound (using Web Audio API for better compatibility)
   const playNotificationSound = useCallback(() => {
@@ -4810,6 +4847,8 @@ const App = () => {
     setCurrentPage('dashboard');
     setIsLocked(false);
     setSavedSessionUser(null);
+    // Refresh the saved session timestamp
+    try { localStorage.setItem('relish_saved_session', JSON.stringify(savedUser)); } catch(e) {}
   };
   const handleLockLogout = () => {
     setIsLocked(false);
