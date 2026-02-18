@@ -235,186 +235,228 @@ const PWAInstallPrompt = () => {
   );
 };
 
-// App PIN Helper - simple hash function for PIN storage
-const hashPin = (pin) => {
-  let hash = 0;
-  const str = 'relish_salt_' + pin + '_secure';
-  for (let i = 0; i < str.length; i++) {
-    const char = str.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash = hash & hash; // Convert to 32bit integer
-  }
-  return 'pin_' + Math.abs(hash).toString(36);
+// Device Unlock Helpers - WebAuthn for mobile device PIN/pattern/biometric
+const isMobileDevice = () => {
+  return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || 
+    (navigator.maxTouchPoints > 0 && window.innerWidth < 768);
 };
 
-// Set App PIN Modal - shown after first login
-const SetPinModal = ({ onPinSet, onSkip }) => {
-  const [pin, setPin] = useState('');
-  const [confirmPin, setConfirmPin] = useState('');
-  const [step, setStep] = useState(1); // 1 = enter, 2 = confirm
+const isWebAuthnAvailable = async () => {
+  if (!window.PublicKeyCredential) return false;
+  try {
+    return await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
+  } catch (e) {
+    return false;
+  }
+};
+
+// Convert base64url string to ArrayBuffer
+const base64urlToBuffer = (base64url) => {
+  const base64 = base64url.replace(/-/g, '+').replace(/_/g, '/');
+  const pad = base64.length % 4 === 0 ? '' : '='.repeat(4 - (base64.length % 4));
+  const binary = atob(base64 + pad);
+  const buffer = new ArrayBuffer(binary.length);
+  const view = new Uint8Array(buffer);
+  for (let i = 0; i < binary.length; i++) view[i] = binary.charCodeAt(i);
+  return buffer;
+};
+
+// Convert ArrayBuffer to base64url string
+const bufferToBase64url = (buffer) => {
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+};
+
+// Register a WebAuthn platform credential (device unlock)
+const registerDeviceUnlock = async (userId, userName) => {
+  const challenge = new Uint8Array(32);
+  crypto.getRandomValues(challenge);
+  
+  const userIdBytes = new TextEncoder().encode(userId.toString());
+  
+  const credential = await navigator.credentials.create({
+    publicKey: {
+      challenge: challenge,
+      rp: { name: 'Relish Approvals', id: window.location.hostname },
+      user: {
+        id: userIdBytes,
+        name: userName,
+        displayName: userName
+      },
+      pubKeyCredParams: [
+        { alg: -7, type: 'public-key' },   // ES256
+        { alg: -257, type: 'public-key' }   // RS256
+      ],
+      authenticatorSelection: {
+        authenticatorAttachment: 'platform',  // Device built-in only
+        userVerification: 'required',         // Force device PIN/biometric
+        residentKey: 'preferred'
+      },
+      timeout: 60000
+    }
+  });
+  
+  // Store the credential ID for future authentication
+  return bufferToBase64url(credential.rawId);
+};
+
+// Authenticate using device unlock (verify with stored credential)
+const authenticateDeviceUnlock = async (credentialId) => {
+  const challenge = new Uint8Array(32);
+  crypto.getRandomValues(challenge);
+  
+  const assertion = await navigator.credentials.get({
+    publicKey: {
+      challenge: challenge,
+      allowCredentials: [{
+        id: base64urlToBuffer(credentialId),
+        type: 'public-key',
+        transports: ['internal']
+      }],
+      userVerification: 'required',
+      timeout: 60000
+    }
+  });
+  
+  return !!assertion;
+};
+
+// Device Unlock Setup Modal - shown after first login on mobile
+const DeviceUnlockSetupModal = ({ onSetup, onSkip, userName }) => {
+  const [status, setStatus] = useState('ask'); // ask, setting-up, success, error
   const [error, setError] = useState('');
 
-  const handlePinChange = (value) => {
-    if (!/^\d*$/.test(value) || value.length > 4) return;
-    if (step === 1) {
-      setPin(value);
-      setError('');
-      if (value.length === 4) {
-        setTimeout(() => setStep(2), 300);
-      }
-    } else {
-      setConfirmPin(value);
-      setError('');
-      if (value.length === 4) {
-        if (value === pin) {
-          onPinSet(value);
-        } else {
-          setError('PINs do not match. Try again.');
-          setConfirmPin('');
-          setStep(1);
-          setPin('');
-        }
-      }
+  const handleEnable = async () => {
+    setStatus('setting-up');
+    setError('');
+    try {
+      // This will trigger the device's native unlock prompt (fingerprint/face/PIN/pattern)
+      await onSetup();
+      setStatus('success');
+      setTimeout(() => onSkip(), 1500); // Auto-close after success
+    } catch (e) {
+      console.error('Device unlock setup failed:', e);
+      setError(e.name === 'NotAllowedError' 
+        ? 'Setup was cancelled. You can enable this later from settings.' 
+        : 'Your device does not support this feature. You can continue using your login credentials.');
+      setStatus('error');
     }
   };
 
-  const currentValue = step === 1 ? pin : confirmPin;
-
   return (
     <div className="modal-overlay">
-      <div className="modal" style={{maxWidth: '380px'}}>
+      <div className="modal" style={{maxWidth: '400px'}}>
         <div className="modal-header">
-          <h3 className="modal-title">🔒 Set App PIN</h3>
+          <h3 className="modal-title">🔐 Quick App Unlock</h3>
         </div>
         <div className="modal-body" style={{textAlign: 'center', padding: '2rem 1.5rem'}}>
-          <div style={{fontSize: '0.9rem', color: '#666', marginBottom: '1.5rem'}}>
-            {step === 1 
-              ? 'Set a 4-digit PIN to secure your app. You\'ll need this PIN each time you open the app.'
-              : 'Confirm your 4-digit PIN'}
-          </div>
-          
-          {error && <div className="alert alert-error" style={{marginBottom: '1rem'}}>{error}</div>}
-          
-          <div style={{display: 'flex', justifyContent: 'center', gap: '12px', marginBottom: '1.5rem'}}>
-            {[0,1,2,3].map(i => (
-              <div key={i} style={{
-                width: '48px', height: '56px',
-                border: '2px solid ' + (i < currentValue.length ? 'var(--relish-orange)' : '#ddd'),
-                borderRadius: '12px',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontSize: '1.5rem', fontWeight: 700,
-                background: i < currentValue.length ? 'rgba(245,132,31,0.05)' : 'white',
-                transition: 'all 0.2s'
-              }}>
-                {i < currentValue.length ? '●' : ''}
+          {status === 'ask' && (
+            <>
+              <div style={{marginBottom: '1.5rem'}}>
+                {Icons.fingerprint}
               </div>
-            ))}
-          </div>
-          
-          <input 
-            type="tel" 
-            inputMode="numeric"
-            pattern="[0-9]*"
-            maxLength={4}
-            value={currentValue}
-            onChange={(e) => handlePinChange(e.target.value)}
-            autoFocus
-            style={{
-              position: 'absolute', opacity: 0, width: '1px', height: '1px',
-              pointerEvents: 'none'
-            }}
-            id="pin-hidden-input"
-          />
-          
-          {/* Number Pad */}
-          <div style={{display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px', maxWidth: '240px', margin: '0 auto'}}>
-            {[1,2,3,4,5,6,7,8,9,'',0,'⌫'].map((num, idx) => (
-              <button 
-                key={idx}
-                type="button"
-                onClick={() => {
-                  if (num === '⌫') {
-                    handlePinChange(currentValue.slice(0, -1));
-                  } else if (num !== '') {
-                    handlePinChange(currentValue + num.toString());
-                  }
-                }}
-                disabled={num === ''}
-                style={{
-                  width: '100%', height: '52px',
-                  border: num === '' ? 'none' : '1px solid #e0e0e0',
-                  borderRadius: '12px',
-                  background: num === '' ? 'transparent' : '#fafafa',
-                  fontSize: num === '⌫' ? '1.2rem' : '1.3rem',
-                  fontWeight: 600,
-                  cursor: num === '' ? 'default' : 'pointer',
-                  fontFamily: 'inherit',
-                  color: '#333',
-                  transition: 'all 0.1s'
-                }}
-              >
-                {num}
-              </button>
-            ))}
-          </div>
-          
-          <div style={{fontSize: '0.8rem', color: '#999', marginTop: '1.25rem'}}>
-            Step {step} of 2: {step === 1 ? 'Enter new PIN' : 'Confirm PIN'}
-          </div>
-        </div>
-        <div className="modal-footer" style={{justifyContent: 'center'}}>
-          <button className="btn btn-secondary" onClick={onSkip} style={{fontSize: '0.85rem'}}>
-            Skip for now
-          </button>
+              <div style={{fontSize: '1rem', fontWeight: 600, color: '#333', marginBottom: '0.75rem'}}>
+                Use Device Unlock?
+              </div>
+              <div style={{fontSize: '0.9rem', color: '#666', marginBottom: '1.5rem', lineHeight: 1.5}}>
+                Would you like to use your device's <strong>PIN, Pattern, or Biometric</strong> (fingerprint/face) to quickly open the Relish Approvals app?
+              </div>
+              <div style={{fontSize: '0.8rem', color: '#999', marginBottom: '1.5rem', background: '#f8f9fa', padding: '0.75rem', borderRadius: '8px'}}>
+                This replaces your login ({userName}) for opening the app. Your device's own security will protect the app.
+              </div>
+              <div style={{display: 'flex', flexDirection: 'column', gap: '0.75rem'}}>
+                <button className="btn btn-primary" style={{width: '100%'}} onClick={handleEnable}>
+                  {Icons.shield} Yes, Enable Device Unlock
+                </button>
+                <button className="btn btn-secondary" style={{width: '100%'}} onClick={onSkip}>
+                  No thanks, I'll use my login
+                </button>
+              </div>
+            </>
+          )}
+          {status === 'setting-up' && (
+            <>
+              <div style={{marginBottom: '1rem'}}>{Icons.loader}</div>
+              <div style={{fontSize: '0.95rem', color: '#666'}}>Confirm your device unlock...</div>
+              <div style={{fontSize: '0.8rem', color: '#999', marginTop: '0.5rem'}}>Use your fingerprint, face, PIN, or pattern when prompted</div>
+            </>
+          )}
+          {status === 'success' && (
+            <>
+              <div style={{fontSize: '3rem', marginBottom: '1rem'}}>✅</div>
+              <div style={{fontSize: '1rem', fontWeight: 600, color: '#16a34a'}}>Device Unlock Enabled!</div>
+              <div style={{fontSize: '0.85rem', color: '#666', marginTop: '0.5rem'}}>Next time you open the app, just use your device unlock.</div>
+            </>
+          )}
+          {status === 'error' && (
+            <>
+              <div style={{fontSize: '3rem', marginBottom: '1rem'}}>⚠️</div>
+              <div className="alert alert-error" style={{marginBottom: '1rem'}}>{error}</div>
+              <div style={{display: 'flex', gap: '0.75rem'}}>
+                <button className="btn btn-primary" style={{flex: 1}} onClick={() => setStatus('ask')}>Try Again</button>
+                <button className="btn btn-secondary" style={{flex: 1}} onClick={onSkip}>Skip</button>
+              </div>
+            </>
+          )}
         </div>
       </div>
     </div>
   );
 };
 
-// Device Lock Screen - PIN entry to unlock the app
+// Device Lock Screen - uses WebAuthn device unlock (PIN/pattern/biometric)
 const DeviceLockScreen = ({ savedUser, onUnlock, onLogout }) => {
-  const [pin, setPin] = useState('');
   const [error, setError] = useState('');
+  const [status, setStatus] = useState('idle'); // idle, authenticating, failed
   const [attempts, setAttempts] = useState(0);
-  const [shake, setShake] = useState(false);
+  const hasTriedAuto = React.useRef(false);
 
-  const handlePinChange = (value) => {
-    if (!/^\d*$/.test(value) || value.length > 4) return;
-    setPin(value);
+  // Auto-trigger device unlock on mount
+  useEffect(() => {
+    if (!hasTriedAuto.current) {
+      hasTriedAuto.current = true;
+      triggerUnlock();
+    }
+  }, []);
+
+  const triggerUnlock = async () => {
+    setStatus('authenticating');
     setError('');
-    
-    if (value.length === 4) {
-      // Verify PIN
-      const storedHash = localStorage.getItem('relish_app_pin');
-      if (storedHash && hashPin(value) === storedHash) {
-        // Correct PIN!
+    try {
+      const credentialId = localStorage.getItem('relish_device_credential');
+      if (!credentialId) {
+        throw new Error('No device credential found');
+      }
+      const success = await authenticateDeviceUnlock(credentialId);
+      if (success) {
         onUnlock(savedUser);
       } else {
-        // Wrong PIN
-        const newAttempts = attempts + 1;
-        setAttempts(newAttempts);
-        setShake(true);
-        setTimeout(() => setShake(false), 500);
-        setPin('');
-        
-        if (newAttempts >= 5) {
-          setError('Too many failed attempts. Please sign in again.');
-          setTimeout(() => {
-            localStorage.removeItem('relish_saved_session');
-            localStorage.removeItem('relish_app_pin');
-            onLogout();
-          }, 2000);
-        } else {
-          setError(`Wrong PIN. ${5 - newAttempts} attempts remaining.`);
-        }
+        throw new Error('Authentication failed');
+      }
+    } catch (e) {
+      console.error('Device unlock failed:', e);
+      const newAttempts = attempts + 1;
+      setAttempts(newAttempts);
+      
+      if (e.name === 'NotAllowedError') {
+        setError('Unlock cancelled. Tap below to try again.');
+      } else {
+        setError('Device unlock failed. Tap below to try again or sign in with your login.');
+      }
+      setStatus('failed');
+      
+      if (newAttempts >= 5) {
+        setError('Too many failed attempts. Please sign in with your login.');
+        setTimeout(() => handleSignOut(), 3000);
       }
     }
   };
 
   const handleSignOut = () => {
     localStorage.removeItem('relish_saved_session');
-    localStorage.removeItem('relish_app_pin');
+    localStorage.removeItem('relish_device_credential');
     onLogout();
   };
 
@@ -429,37 +471,37 @@ const DeviceLockScreen = ({ savedUser, onUnlock, onLogout }) => {
         </div>
         <h2 className="lock-screen-name">{savedUser.name}</h2>
         <p className="lock-screen-company">{savedUser.company?.name || ''}</p>
-        <p className="lock-screen-subtitle">Enter your 4-digit PIN</p>
         
-        {error && <div className="alert alert-error" style={{marginBottom: '1rem', fontSize: '0.85rem'}}>{error}</div>}
+        {status === 'authenticating' && (
+          <>
+            <div style={{margin: '1.5rem 0'}}>{Icons.fingerprint}</div>
+            <p className="lock-screen-subtitle">Confirm your identity...</p>
+            <div style={{fontSize: '0.8rem', color: '#999'}}>Use your fingerprint, face, PIN, or pattern</div>
+          </>
+        )}
         
-        {/* PIN Dots */}
-        <div className={`pin-dots-container${shake ? ' pin-shake' : ''}`}>
-          {[0,1,2,3].map(i => (
-            <div key={i} className={`pin-dot${i < pin.length ? ' filled' : ''}`} />
-          ))}
-        </div>
+        {status === 'idle' && (
+          <>
+            <div style={{margin: '1.5rem 0'}}>{Icons.fingerprint}</div>
+            <p className="lock-screen-subtitle">Tap to unlock with your device</p>
+          </>
+        )}
         
-        {/* Number Pad */}
-        <div className="pin-numpad">
-          {[1,2,3,4,5,6,7,8,9,'',0,'⌫'].map((num, idx) => (
-            <button 
-              key={idx}
-              type="button"
-              className={`pin-numpad-btn${num === '' ? ' pin-numpad-empty' : ''}`}
-              onClick={() => {
-                if (num === '⌫') {
-                  handlePinChange(pin.slice(0, -1));
-                } else if (num !== '') {
-                  handlePinChange(pin + num.toString());
-                }
-              }}
-              disabled={num === '' || attempts >= 5}
-            >
-              {num}
-            </button>
-          ))}
-        </div>
+        {status === 'failed' && (
+          <>
+            <div style={{margin: '1rem 0'}}>{Icons.lock}</div>
+            {error && <div className="alert alert-error" style={{marginBottom: '1rem', fontSize: '0.85rem'}}>{error}</div>}
+            {attempts < 5 && (
+              <button 
+                className="btn btn-primary" 
+                style={{width: '100%', marginBottom: '0.75rem'}}
+                onClick={triggerUnlock}
+              >
+                {Icons.fingerprint} Unlock with Device
+              </button>
+            )}
+          </>
+        )}
 
         <button className="lock-screen-signout" onClick={handleSignOut}>
           {Icons.logOut} Sign in with a different account
@@ -4561,15 +4603,17 @@ const App = () => {
   const [switchingCompany, setSwitchingCompany] = useState(false);
   const [toasts, setToasts] = useState([]);
   const [pushEnabled, setPushEnabled] = useState(false);
-  const [showPinSetup, setShowPinSetup] = useState(false);
+  const [showDeviceUnlockSetup, setShowDeviceUnlockSetup] = useState(false);
   const lastNotificationCount = React.useRef(0);
 
   // Device Lock state - initialize synchronously from localStorage to avoid flash
+  // Only lock on mobile devices that have device unlock credential registered
   const [isLocked, setIsLocked] = useState(() => {
     try {
-      const hasPin = !!localStorage.getItem('relish_app_pin');
+      if (!isMobileDevice()) return false; // Desktop: never lock
+      const hasCredential = !!localStorage.getItem('relish_device_credential');
       const saved = localStorage.getItem('relish_saved_session');
-      if (hasPin && saved) {
+      if (hasCredential && saved) {
         const parsed = JSON.parse(saved);
         return !!(parsed && parsed.id && parsed.company);
       }
@@ -4578,9 +4622,10 @@ const App = () => {
   });
   const [savedSessionUser, setSavedSessionUser] = useState(() => {
     try {
-      const hasPin = !!localStorage.getItem('relish_app_pin');
+      if (!isMobileDevice()) return null; // Desktop: no saved session lock
+      const hasCredential = !!localStorage.getItem('relish_device_credential');
       const saved = localStorage.getItem('relish_saved_session');
-      if (hasPin && saved) {
+      if (hasCredential && saved) {
         const parsed = JSON.parse(saved);
         if (parsed && parsed.id && parsed.company) return parsed;
       }
@@ -4601,11 +4646,11 @@ const App = () => {
         const elapsed = wasInBackground ? Date.now() - wasInBackground : 0;
         backgroundTimestamp.current = null;
 
-        // If user is logged in and was in background for > 10 seconds, lock the app
-        if (user && elapsed > 10000) {
-          const hasPin = !!localStorage.getItem('relish_app_pin');
+        // If user is logged in and was in background for > 10 seconds, lock the app (mobile only)
+        if (user && elapsed > 10000 && isMobileDevice()) {
+          const hasCredential = !!localStorage.getItem('relish_device_credential');
           const savedSession = localStorage.getItem('relish_saved_session');
-          if (hasPin && savedSession) {
+          if (hasCredential && savedSession) {
             try {
               const parsed = JSON.parse(savedSession);
               if (parsed && parsed.id && parsed.company) {
@@ -4828,7 +4873,7 @@ const App = () => {
   const handleLogin = (userData) => {
     setUser(userData);
     setCurrentPage('dashboard');
-    // Save session for device lock on next app open
+    // Save session for device lock on next app open (mobile only)
     try {
       localStorage.setItem('relish_saved_session', JSON.stringify(userData));
     } catch (e) {
@@ -4836,23 +4881,30 @@ const App = () => {
     }
     setIsLocked(false);
     setSavedSessionUser(null);
-    // If no PIN is set yet, prompt the user to set one
-    if (!localStorage.getItem('relish_app_pin')) {
-      setShowPinSetup(true);
+    // On mobile, if no device unlock credential is registered yet, offer setup
+    if (isMobileDevice() && !localStorage.getItem('relish_device_credential')) {
+      // Check if WebAuthn is available before offering
+      isWebAuthnAvailable().then(available => {
+        if (available) {
+          setShowDeviceUnlockSetup(true);
+        }
+      });
     }
   };
-  const handlePinSet = (pin) => {
-    localStorage.setItem('relish_app_pin', hashPin(pin));
-    setShowPinSetup(false);
+  const handleDeviceUnlockSetup = async () => {
+    // Register WebAuthn credential using device's native unlock
+    const credentialId = await registerDeviceUnlock(user.id, user.username || user.name);
+    localStorage.setItem('relish_device_credential', credentialId);
+    setShowDeviceUnlockSetup(false);
   };
-  const handlePinSkip = () => {
-    setShowPinSetup(false);
+  const handleDeviceUnlockSkip = () => {
+    setShowDeviceUnlockSetup(false);
   };
   const handleLogout = () => {
     setUser(null); setVouchers([]); setNotifications([]); setCurrentPage('dashboard');
-    // Clear saved session and app PIN
+    // Clear saved session and device unlock credential
     localStorage.removeItem('relish_saved_session');
-    localStorage.removeItem('relish_app_pin');
+    localStorage.removeItem('relish_device_credential');
     setIsLocked(false);
     setSavedSessionUser(null);
   };
@@ -4867,7 +4919,7 @@ const App = () => {
   };
   const handleLockLogout = () => {
     localStorage.removeItem('relish_saved_session');
-    localStorage.removeItem('relish_app_pin');
+    localStorage.removeItem('relish_device_credential');
     setIsLocked(false);
     setSavedSessionUser(null);
   };
@@ -4895,15 +4947,16 @@ const App = () => {
   const markAllRead = async () => { await api.markAllNotificationsRead(user.id); refreshNotifications(); };
   const hasMultipleCompanies = user?.companies?.length > 1;
 
-  // Show device lock screen if a saved session exists AND a PIN is set
-  if (!user && isLocked && savedSessionUser && localStorage.getItem('relish_app_pin')) {
+  // Show device lock screen if saved session exists AND device credential is registered (mobile only)
+  if (!user && isLocked && savedSessionUser && localStorage.getItem('relish_device_credential')) {
     return <DeviceLockScreen savedUser={savedSessionUser} onUnlock={handleDeviceUnlock} onLogout={handleLockLogout} />;
   }
 
   if (!user) return <LoginPage onLogin={handleLogin} />;
 
-  // Show PIN setup modal after first login if no PIN set
-  const pinSetupModal = showPinSetup ? <SetPinModal onPinSet={handlePinSet} onSkip={handlePinSkip} /> : null;
+  // Show device unlock setup modal after first login on mobile (if not yet set up)
+  const deviceUnlockSetupModal = showDeviceUnlockSetup ? 
+    <DeviceUnlockSetupModal onSetup={handleDeviceUnlockSetup} onSkip={handleDeviceUnlockSkip} userName={user.username || user.name} /> : null;
 
   const contextValue = { user, vouchers, notifications, addToast, refreshVouchers, refreshNotifications };
   const renderPage = () => { switch(currentPage) { case 'dashboard': return <Dashboard />; case 'create': return <CreateVoucher />; case 'drafts': return <VoucherList filter="draft" />; case 'pending': return <VoucherList filter="pending" />; case 'approved': return <VoucherList filter="approved" />; case 'completed': return <VoucherList filter="completed" />; case 'all': return <VoucherList filter="all" />; case 'users': return <UsersManagement />; case 'payees': return <PayeesManagement />; case 'accounts': return <AccountsManagement />; default: return <Dashboard />; } };
@@ -4916,7 +4969,7 @@ const App = () => {
   return (
     <AppContext.Provider value={contextValue}>
       <PWAInstallPrompt />
-      {pinSetupModal}
+      {deviceUnlockSetupModal}
       <div className="app-container">
         <header className="header">
           <div className="header-left">
