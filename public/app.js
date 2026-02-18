@@ -334,13 +334,18 @@ const DeviceUnlockSetupModal = ({ onSetup, onSkip, userName }) => {
     try {
       // This will trigger the device's native unlock prompt (fingerprint/face/PIN/pattern)
       await onSetup();
-      setStatus('success');
-      setTimeout(() => onSkip(), 1500); // Auto-close after success
+      // Verify credential was actually stored
+      if (localStorage.getItem('relish_device_credential')) {
+        setStatus('success');
+        setTimeout(() => onSkip(), 1500); // Auto-close after success
+      } else {
+        throw new Error('Credential was not saved. Please try again.');
+      }
     } catch (e) {
       console.error('Device unlock setup failed:', e);
       setError(e.name === 'NotAllowedError' 
         ? 'Setup was cancelled. You can enable this later from settings.' 
-        : 'Your device does not support this feature. You can continue using your login credentials.');
+        : (e.message || 'Your device does not support this feature. You can continue using your login credentials.'));
       setStatus('error');
     }
   };
@@ -4607,10 +4612,9 @@ const App = () => {
   const lastNotificationCount = React.useRef(0);
 
   // Device Lock state - initialize synchronously from localStorage to avoid flash
-  // Only lock on mobile devices that have device unlock credential registered
+  // If a device credential exists (can only be registered on mobile), always show lock screen
   const [isLocked, setIsLocked] = useState(() => {
     try {
-      if (!isMobileDevice()) return false; // Desktop: never lock
       const hasCredential = !!localStorage.getItem('relish_device_credential');
       const saved = localStorage.getItem('relish_saved_session');
       if (hasCredential && saved) {
@@ -4622,7 +4626,6 @@ const App = () => {
   });
   const [savedSessionUser, setSavedSessionUser] = useState(() => {
     try {
-      if (!isMobileDevice()) return null; // Desktop: no saved session lock
       const hasCredential = !!localStorage.getItem('relish_device_credential');
       const saved = localStorage.getItem('relish_saved_session');
       if (hasCredential && saved) {
@@ -4646,8 +4649,8 @@ const App = () => {
         const elapsed = wasInBackground ? Date.now() - wasInBackground : 0;
         backgroundTimestamp.current = null;
 
-        // If user is logged in and was in background for > 10 seconds, lock the app (mobile only)
-        if (user && elapsed > 10000 && isMobileDevice()) {
+        // If user is logged in and was in background for > 10 seconds, lock the app
+        if (user && elapsed > 10000) {
           const hasCredential = !!localStorage.getItem('relish_device_credential');
           const savedSession = localStorage.getItem('relish_saved_session');
           if (hasCredential && savedSession) {
@@ -4895,7 +4898,7 @@ const App = () => {
     // Register WebAuthn credential using device's native unlock
     const credentialId = await registerDeviceUnlock(user.id, user.username || user.name);
     localStorage.setItem('relish_device_credential', credentialId);
-    setShowDeviceUnlockSetup(false);
+    // Don't close modal here - let the modal show success state first
   };
   const handleDeviceUnlockSkip = () => {
     setShowDeviceUnlockSetup(false);
@@ -4947,7 +4950,7 @@ const App = () => {
   const markAllRead = async () => { await api.markAllNotificationsRead(user.id); refreshNotifications(); };
   const hasMultipleCompanies = user?.companies?.length > 1;
 
-  // Show device lock screen if saved session exists AND device credential is registered (mobile only)
+  // Show device lock screen if saved session exists AND device credential is registered
   if (!user && isLocked && savedSessionUser && localStorage.getItem('relish_device_credential')) {
     return <DeviceLockScreen savedUser={savedSessionUser} onUnlock={handleDeviceUnlock} onLogout={handleLockLogout} />;
   }
