@@ -1,5 +1,5 @@
-const CACHE_NAME = 'relish-approvals-v10';
-const DYNAMIC_CACHE = 'relish-approvals-dynamic-v9';
+const CACHE_NAME = 'relish-approvals-v11';
+const DYNAMIC_CACHE = 'relish-approvals-dynamic-v10';
 const urlsToCache = [
   '/',
   '/index.html',
@@ -71,6 +71,27 @@ self.addEventListener('fetch', (event) => {
         .catch(() => {
           // Network failed, try to serve from cache
           console.log('[Service Worker] Network failed, serving API from cache:', event.request.url);
+          return caches.match(event.request);
+        })
+    );
+    return;
+  }
+
+  // App code files: Network-first strategy (always serve latest code)
+  if (event.request.url.endsWith('/app.js') || event.request.url.endsWith('/styles.css') || event.request.url.endsWith('/index.html') || event.request.url.endsWith('/service-worker.js')) {
+    event.respondWith(
+      fetch(event.request)
+        .then((response) => {
+          if (response && response.status === 200) {
+            const responseToCache = response.clone();
+            caches.open(CACHE_NAME).then((cache) => {
+              cache.put(event.request, responseToCache);
+            });
+          }
+          return response;
+        })
+        .catch(() => {
+          console.log('[Service Worker] Network failed, serving app code from cache:', event.request.url);
           return caches.match(event.request);
         })
     );
