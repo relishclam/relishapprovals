@@ -1,10 +1,10 @@
-const CACHE_NAME = 'relish-approvals-v11';
-const DYNAMIC_CACHE = 'relish-approvals-dynamic-v10';
+const CACHE_NAME = 'relish-approvals-v12';
+const DYNAMIC_CACHE = 'relish-approvals-dynamic-v11';
 const urlsToCache = [
   '/',
   '/index.html',
-  '/styles.css',
-  '/app.js',
+  '/styles.css?v=12',
+  '/app.js?v=12',
   '/logo.png',
   '/manifest.json',
   '/android-launchericon-192-192.png',
@@ -77,8 +77,11 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // App code files: Network-first strategy (always serve latest code)
-  if (event.request.url.endsWith('/app.js') || event.request.url.endsWith('/styles.css') || event.request.url.endsWith('/index.html') || event.request.url.endsWith('/service-worker.js')) {
+  // App code files & navigation: Network-first strategy (always serve latest code)
+  const url = new URL(event.request.url);
+  const isAppCode = url.pathname === '/' || url.pathname === '/index.html' || url.pathname === '/app.js' || url.pathname === '/styles.css' || url.pathname === '/service-worker.js';
+  const isNavigation = event.request.mode === 'navigate';
+  if (isAppCode || isNavigation) {
     event.respondWith(
       fetch(event.request)
         .then((response) => {

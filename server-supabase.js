@@ -910,10 +910,11 @@ app.post('/api/vouchers', async (req, res) => {
     
     // Only notify admins if submitting (not drafts)
     if (!saveAsDraft) {
-      const { data: admins } = await supabase.from('users')
-        .select('id')
+      const { data: adminEntries } = await supabase.from('user_companies')
+        .select('user_id')
         .eq('company_id', companyId)
         .eq('role', 'admin');
+      const admins = adminEntries ? adminEntries.map(a => ({ id: a.user_id })) : [];
       
       const { data: preparer } = await supabase.from('users')
         .select('name')
@@ -1021,10 +1022,11 @@ app.post('/api/vouchers/:voucherId/submit', async (req, res) => {
     if (updateError) throw updateError;
     
     // Notify admins
-    const { data: admins } = await supabase.from('users')
-      .select('id')
+    const { data: adminEntries } = await supabase.from('user_companies')
+      .select('user_id')
       .eq('company_id', voucher.company_id)
       .eq('role', 'admin');
+    const admins = adminEntries ? adminEntries.map(a => ({ id: a.user_id })) : [];
     
     if (admins && admins.length > 0) {
       const notifications = admins.map(admin => ({

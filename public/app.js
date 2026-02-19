@@ -1,6 +1,8 @@
 const { useState, useEffect, createContext, useContext, useCallback } = React;
 
 const API_BASE = '/api';
+const APP_VERSION = 'v12'; // Version marker for cache debugging
+console.log('[Relish App] Version:', APP_VERSION);
 
 // Simple SVG Icons
 const Icons = {
@@ -4951,8 +4953,23 @@ const App = () => {
   const hasMultipleCompanies = user?.companies?.length > 1;
 
   // Show device lock screen if saved session exists AND device credential is registered
-  if (!user && isLocked && savedSessionUser && localStorage.getItem('relish_device_credential')) {
-    return <DeviceLockScreen savedUser={savedSessionUser} onUnlock={handleDeviceUnlock} onLogout={handleLockLogout} />;
+  // This check is the FIRST render gate — device unlock REPLACES the login screen
+  const hasDeviceCredential = !!localStorage.getItem('relish_device_credential');
+  const hasSavedSession = !!localStorage.getItem('relish_saved_session');
+  
+  if (!user && hasDeviceCredential && hasSavedSession) {
+    // Parse saved session if not already parsed
+    const lockUser = savedSessionUser || (() => {
+      try {
+        const parsed = JSON.parse(localStorage.getItem('relish_saved_session'));
+        if (parsed && parsed.id && parsed.company) return parsed;
+      } catch(e) {}
+      return null;
+    })();
+    
+    if (lockUser) {
+      return <DeviceLockScreen savedUser={lockUser} onUnlock={handleDeviceUnlock} onLogout={handleLockLogout} />;
+    }
   }
 
   if (!user) return <LoginPage onLogin={handleLogin} />;
