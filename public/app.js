@@ -104,8 +104,8 @@ const api = {
   onboardUser: (data) => fetch(`${API_BASE}/admin/onboard-user`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
   updateUser: (userId, data) => fetch(`${API_BASE}/users/${userId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
   getUserCompanies: (userId) => fetch(`${API_BASE}/users/${userId}/companies`).then(r => r.json()),
-  updateUserCompanies: (userId, companyAccess) => fetch(`${API_BASE}/users/${userId}/companies`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ companyAccess }) }).then(r => r.json()),
-  deleteUser: (userId) => fetch(`${API_BASE}/users/${userId}`, { method: 'DELETE' }).then(r => r.json()),
+  updateUserCompanies: (userId, companyAccess, requesterId) => fetch(`${API_BASE}/users/${userId}/companies`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ companyAccess, requesterId }) }).then(r => r.json()),
+  deleteUser: (userId, requesterId) => fetch(`${API_BASE}/users/${userId}`, { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ requesterId }) }).then(r => r.json()),
   sendOtp: (mobile, purpose) => fetch(`${API_BASE}/otp/send`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mobile, purpose }) }).then(r => r.json()),
   verifyOtp: (mobile, code) => fetch(`${API_BASE}/otp/verify`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mobile, code }) }).then(r => r.json()),
   addPayee: (data) => fetch(`${API_BASE}/payees`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
@@ -120,7 +120,7 @@ const api = {
   rejectVoucher: (voucherId, rejectedBy, reason) => fetch(`${API_BASE}/vouchers/${voucherId}/reject`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rejectedBy, reason }) }).then(r => r.json()),
   completeVoucher: (voucherId, otp) => fetch(`${API_BASE}/vouchers/${voucherId}/complete`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ otp }) }).then(r => r.json()),
   resendPayeeOtp: (voucherId) => fetch(`${API_BASE}/vouchers/${voucherId}/resend-otp`, { method: 'POST' }).then(r => r.json()),
-  deleteVoucher: (voucherId) => fetch(`${API_BASE}/vouchers/${voucherId}`, { method: 'DELETE' }).then(r => r.json()),
+  deleteVoucher: (voucherId, deletedBy) => fetch(`${API_BASE}/vouchers/${voucherId}`, { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ deletedBy }) }).then(r => r.json()),
   updateVoucher: (voucherId, data) => fetch(`${API_BASE}/vouchers/${voucherId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
   submitVoucher: (voucherId) => fetch(`${API_BASE}/vouchers/${voucherId}/submit`, { method: 'POST' }).then(r => r.json()),
   // Document verification APIs
@@ -560,7 +560,7 @@ const Dashboard = () => {
     <div>
       <div className="page-header"><h1 className="page-title">Dashboard</h1><p className="page-subtitle">Welcome back, {user.name}</p></div>
       <div className="stats-grid">
-        {user.role === 'accounts' && stats.draft > 0 && (
+        {(user.role === 'accounts' || user.isSuperAdmin) && stats.draft > 0 && (
           <div className="stat-card" style={{borderColor: '#fcd34d', background: '#fffbeb'}}><div className="stat-icon" style={{background: '#fef3c7', color: '#92400e'}}>📝</div><div className="stat-value">{stats.draft}</div><div className="stat-label">Saved Drafts</div></div>
         )}
         <div className="stat-card"><div className="stat-icon orange">⏱</div><div className="stat-value">{stats.pending}</div><div className="stat-label">Pending Approval</div></div>
@@ -1844,7 +1844,7 @@ const VoucherList = ({ filter }) => {
   const handleReject = async () => { setLoading(true); try { await api.rejectVoucher(selectedVoucher.id, user.id, rejectReason); addToast('Voucher rejected', 'info'); refreshVouchers(); setShowRejectModal(false); setShowModal(false); } catch { addToast('Failed', 'error'); } setLoading(false); };
   const handleComplete = async () => { if (payeeOtp.length < 6) { addToast('Enter complete OTP', 'error'); return; } setLoading(true); try { const result = await api.completeVoucher(selectedVoucher.id, payeeOtp); if (result.success) { addToast('Voucher completed!', 'success'); refreshVouchers(); setShowModal(false); setPayeeOtp(''); } else addToast(result.error, 'error'); } catch { addToast('Failed', 'error'); } setLoading(false); };
   const handleResend = async () => { try { await api.resendPayeeOtp(selectedVoucher.id); addToast('OTP resent', 'success'); } catch { addToast('Failed', 'error'); } };
-  const handleDelete = async () => { setLoading(true); try { const result = await api.deleteVoucher(selectedVoucher.id); if (result.success) { addToast('Voucher deleted', 'success'); refreshVouchers(); setShowDeleteModal(false); setShowModal(false); } else addToast(result.error || 'Failed to delete', 'error'); } catch { addToast('Failed to delete voucher', 'error'); } setLoading(false); };
+  const handleDelete = async () => { setLoading(true); try { const result = await api.deleteVoucher(selectedVoucher.id, user.id); if (result.success) { addToast('Voucher deleted', 'success'); refreshVouchers(); setShowDeleteModal(false); setShowModal(false); } else addToast(result.error || 'Failed to delete', 'error'); } catch { addToast('Failed to delete voucher', 'error'); } setLoading(false); };
   const titles = { all: 'All Vouchers', draft: 'Saved Drafts', pending: 'Pending Approval', approved: 'Approved / Awaiting OTP', completed: 'Completed Vouchers' };
 
   return (
@@ -1872,7 +1872,7 @@ const VoucherList = ({ filter }) => {
           <div className="modal-header" style={{background: '#f5841f', color: 'white'}}>
             <h3 className="modal-title" style={{color: 'white'}}>Voucher Details</h3>
             <div style={{display: 'flex', gap: '0.5rem', alignItems: 'center'}}>
-              {user.role === 'admin' && (
+              {(user.role === 'admin' || user.isSuperAdmin) && (
                 <button className="btn btn-sm btn-danger" onClick={(e) => { e.stopPropagation(); setShowDeleteModal(true); }}>
                   🗑️ <span className="btn-text">Delete</span>
                 </button>
@@ -1886,7 +1886,7 @@ const VoucherList = ({ filter }) => {
           <div className="modal-body">
             <VoucherPreview voucher={selectedVoucher} />
             {/* Document Upload Section - for awaiting_document status */}
-            {selectedVoucher.status === 'awaiting_document' && (selectedVoucher.prepared_by === user.id || user.role === 'admin') && !selectedVoucher.document_url && (
+            {selectedVoucher.status === 'awaiting_document' && (selectedVoucher.prepared_by === user.id || user.role === 'admin' || user.isSuperAdmin) && !selectedVoucher.document_url && (
               <div className="document-upload-section" style={{background: '#fef3c7', padding: '1.5rem', borderRadius: '8px', marginTop: '1rem', textAlign: 'center'}}>
                 <div style={{fontSize: '2rem', marginBottom: '0.5rem'}}>📄</div>
                 <p style={{fontWeight: 600, color: '#92400e', marginBottom: '0.5rem'}}>Invoice/Receipt Upload Required</p>
@@ -1919,7 +1919,7 @@ const VoucherList = ({ filter }) => {
               </div>
             )}
             {/* Awaiting Attestation - Admin can now attest after document upload */}
-            {user.role === 'admin' && selectedVoucher.status === 'awaiting_document' && selectedVoucher.document_url && (
+            {(user.role === 'admin' || user.isSuperAdmin) && selectedVoucher.status === 'awaiting_document' && selectedVoucher.document_url && (
               <div className="attestation-section" style={{background: '#eff6ff', padding: '1rem', borderRadius: '8px', marginTop: '1rem', border: '1px solid #3b82f6'}}>
                 <p style={{fontWeight: 600, color: '#1d4ed8', marginBottom: '0.5rem'}}>📋 Document Ready for Attestation</p>
                 <p style={{fontSize: '0.85rem', color: '#3b82f6', marginBottom: '1rem'}}>Review the uploaded document and attest to complete this voucher.</p>
@@ -1927,7 +1927,7 @@ const VoucherList = ({ filter }) => {
               </div>
             )}
             {/* OTP Section - for registered payees */}
-            {selectedVoucher.status === 'awaiting_payee_otp' && (selectedVoucher.prepared_by === user.id || user.role === 'admin') && (
+            {selectedVoucher.status === 'awaiting_payee_otp' && (selectedVoucher.prepared_by === user.id || user.role === 'admin' || user.isSuperAdmin) && (
               <div className="otp-section">
                 {Icons.smartphone}<p style={{fontWeight:500,margin:'0.5rem 0'}}>Enter Payee OTP</p><p style={{fontSize:'0.85rem',color:'#666',marginBottom:'1rem'}}>OTP sent to payee: {selectedVoucher.payee_mobile?.replace(/\d(?=\d{4})/g, '*')}</p>
                 <OTPInput value={payeeOtp} onChange={setPayeeOtp} />
@@ -1935,7 +1935,7 @@ const VoucherList = ({ filter }) => {
               </div>
             )}
           </div>
-          {user.role === 'admin' && selectedVoucher.status === 'pending' && (
+          {(user.role === 'admin' || user.isSuperAdmin) && selectedVoucher.status === 'pending' && (
             <div className="modal-footer"><button className="btn btn-danger" onClick={() => setShowRejectModal(true)}>{Icons.x} Reject</button><button className="btn btn-success" onClick={handleApprove} disabled={loading}>{loading && Icons.loader}{Icons.check} Approve & Send Payee OTP</button></div>
           )}
           {selectedVoucher.status === 'draft' && selectedVoucher.prepared_by === user.id && (
@@ -2254,6 +2254,7 @@ const UsersManagement = () => {
     const primaryCompany = newUser.companyAccess.find(ca => ca.isPrimary) || newUser.companyAccess[0];
     
     const payload = {
+      adminId: user.id,
       adminMobile: user.mobile,
       companyId: primaryCompany.companyId,
       name: newUser.name.trim(),
@@ -2480,12 +2481,13 @@ const UsersManagement = () => {
         name: editUser.name,
         mobile: editUser.mobile,
         aadhar: editUser.aadhar,
-        role: editUser.companyAccess.find(ca => ca.isPrimary)?.role || editUser.companyAccess[0].role
+        role: editUser.companyAccess.find(ca => ca.isPrimary)?.role || editUser.companyAccess[0].role,
+        requesterId: user.id
       });
       
       if (result.success) {
         // Update company access
-        const companyResult = await api.updateUserCompanies(selectedUser.id, editUser.companyAccess);
+        const companyResult = await api.updateUserCompanies(selectedUser.id, editUser.companyAccess, user.id);
         if (companyResult.success) {
           addToast('User and company access updated successfully', 'success');
         } else {
@@ -2506,7 +2508,7 @@ const UsersManagement = () => {
     if (!confirm(`Delete user "${userName}"? This action cannot be undone.`)) return;
     
     try {
-      const result = await api.deleteUser(userId);
+      const result = await api.deleteUser(userId, user.id);
       if (result.success) {
         addToast('User deleted successfully', 'success');
         refreshUsers();
@@ -4564,7 +4566,7 @@ const App = () => {
   if (!user) return <LoginPage onLogin={handleLogin} />;
 
   const contextValue = { user, vouchers, notifications, addToast, refreshVouchers, refreshNotifications };
-  const renderPage = () => { switch(currentPage) { case 'dashboard': return <Dashboard />; case 'create': return <CreateVoucher />; case 'drafts': return <VoucherList filter="draft" />; case 'pending': return <VoucherList filter="pending" />; case 'approved': return <VoucherList filter="approved" />; case 'completed': return <VoucherList filter="completed" />; case 'all': return <VoucherList filter="all" />; case 'users': return <UsersManagement />; case 'payees': return <PayeesManagement />; case 'accounts': return <AccountsManagement />; default: return <Dashboard />; } };
+  const renderPage = () => { switch(currentPage) { case 'dashboard': return <Dashboard />; case 'create': return (user.role === 'accounts' || user.isSuperAdmin) ? <CreateVoucher /> : <Dashboard />; case 'drafts': return (user.role === 'accounts' || user.isSuperAdmin) ? <VoucherList filter="draft" /> : <Dashboard />; case 'pending': return <VoucherList filter="pending" />; case 'approved': return <VoucherList filter="approved" />; case 'completed': return <VoucherList filter="completed" />; case 'all': return <VoucherList filter="all" />; case 'users': return user.isSuperAdmin ? <UsersManagement /> : <Dashboard />; case 'payees': return (user.role === 'accounts' || user.isSuperAdmin) ? <PayeesManagement /> : <Dashboard />; case 'accounts': return (user.role === 'accounts' || user.isSuperAdmin) ? <AccountsManagement /> : <Dashboard />; default: return <Dashboard />; } };
 
   const handleNavClick = (page) => {
     setCurrentPage(page);
@@ -4640,7 +4642,7 @@ const App = () => {
             </div>
           </div>
           <div className="header-right">
-            <div className="user-badge">{user.role === 'admin' ? Icons.shield : Icons.user} {user.username}</div>
+            <div className="user-badge">{user.isSuperAdmin ? '👑' : user.role === 'admin' ? Icons.shield : Icons.user} {user.username}</div>
             <button className="notification-btn" onClick={() => setShowNotifications(!showNotifications)}>{Icons.bell}{unreadCount > 0 && <span className="notification-badge">{unreadCount}</span>}</button>
             <button className="logout-btn" onClick={handleLogout}>{Icons.logOut} Sign Out</button>
           </div>
@@ -4655,18 +4657,18 @@ const App = () => {
           <aside className="sidebar">
             <div className="nav-section"><div className="nav-section-title">Main</div><div className={`nav-item ${currentPage === 'dashboard' ? 'active' : ''}`} onClick={() => handleNavClick('dashboard')}>{Icons.home} Dashboard</div></div>
             <div className="nav-section"><div className="nav-section-title">Vouchers</div>
-              {user.role === 'accounts' && <div className={`nav-item ${currentPage === 'create' ? 'active' : ''}`} onClick={() => handleNavClick('create')}>{Icons.plus} Create Voucher</div>}
-              {user.role === 'accounts' && <div className={`nav-item ${currentPage === 'drafts' ? 'active' : ''}`} onClick={() => handleNavClick('drafts')}>📝 Drafts</div>}
+              {(user.role === 'accounts' || user.isSuperAdmin) && <div className={`nav-item ${currentPage === 'create' ? 'active' : ''}`} onClick={() => handleNavClick('create')}>{Icons.plus} Create Voucher</div>}
+              {(user.role === 'accounts' || user.isSuperAdmin) && <div className={`nav-item ${currentPage === 'drafts' ? 'active' : ''}`} onClick={() => handleNavClick('drafts')}>📝 Drafts</div>}
               <div className={`nav-item ${currentPage === 'pending' ? 'active' : ''}`} onClick={() => handleNavClick('pending')}>{Icons.clock} Pending Approval</div>
               <div className={`nav-item ${currentPage === 'approved' ? 'active' : ''}`} onClick={() => handleNavClick('approved')}>{Icons.smartphone} Awaiting OTP</div>
               <div className={`nav-item ${currentPage === 'completed' ? 'active' : ''}`} onClick={() => handleNavClick('completed')}>{Icons.checkCircle} Completed</div>
               <div className={`nav-item ${currentPage === 'all' ? 'active' : ''}`} onClick={() => handleNavClick('all')}>{Icons.fileText} All Vouchers</div>
             </div>
-            {user.role === 'accounts' && <div className="nav-section"><div className="nav-section-title">Master Data</div>
+            {(user.role === 'accounts' || user.isSuperAdmin) && <div className="nav-section"><div className="nav-section-title">Master Data</div>
               <div className={`nav-item ${currentPage === 'payees' ? 'active' : ''}`} onClick={() => handleNavClick('payees')}>{Icons.users} Manage Payees</div>
               <div className={`nav-item ${currentPage === 'accounts' ? 'active' : ''}`} onClick={() => handleNavClick('accounts')}>{Icons.fileText} Heads of Account</div>
             </div>}
-            {user.role === 'admin' && <div className="nav-section"><div className="nav-section-title">Admin Dashboard</div><div className={`nav-item ${currentPage === 'users' ? 'active' : ''}`} onClick={() => handleNavClick('users')}>{Icons.users} User Management</div></div>}
+            {user.isSuperAdmin && <div className="nav-section"><div className="nav-section-title">Admin Dashboard</div><div className={`nav-item ${currentPage === 'users' ? 'active' : ''}`} onClick={() => handleNavClick('users')}>{Icons.users} User Management</div></div>}
           </aside>
           
           {showMobileMenu && (
@@ -4677,20 +4679,44 @@ const App = () => {
                   <h3>Menu</h3>
                   <button className="mobile-menu-close" onClick={() => setShowMobileMenu(false)}>{Icons.x}</button>
                 </div>
+                {hasMultipleCompanies && (
+                  <div className="nav-section">
+                    <div className="nav-section-title">{Icons.building} Company</div>
+                    {user.companies.map(company => (
+                      <div
+                        key={company.id}
+                        className="nav-item"
+                        onClick={() => { handleSwitchCompany(company.id); setShowMobileMenu(false); }}
+                        style={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          background: company.id === user.company.id ? 'rgba(255,255,255,0.15)' : 'transparent',
+                          borderLeft: company.id === user.company.id ? '3px solid white' : '3px solid transparent',
+                          opacity: switchingCompany ? 0.6 : 1
+                        }}
+                      >
+                        <span>{company.name}</span>
+                        {company.id === user.company.id && <span style={{fontSize:'12px'}}>✓ Active</span>}
+                      </div>
+                    ))}
+                    {switchingCompany && <div style={{padding:'8px 16px', fontSize:'0.8rem', opacity:0.7}}>Switching...</div>}
+                  </div>
+                )}
                 <div className="nav-section"><div className="nav-section-title">Main</div><div className={`nav-item ${currentPage === 'dashboard' ? 'active' : ''}`} onClick={() => handleNavClick('dashboard')}>{Icons.home} Dashboard</div></div>
                 <div className="nav-section"><div className="nav-section-title">Vouchers</div>
-                  {user.role === 'accounts' && <div className={`nav-item ${currentPage === 'create' ? 'active' : ''}`} onClick={() => handleNavClick('create')}>{Icons.plus} Create Voucher</div>}
-                  {user.role === 'accounts' && <div className={`nav-item ${currentPage === 'drafts' ? 'active' : ''}`} onClick={() => handleNavClick('drafts')}>📝 Drafts</div>}
+                  {(user.role === 'accounts' || user.isSuperAdmin) && <div className={`nav-item ${currentPage === 'create' ? 'active' : ''}`} onClick={() => handleNavClick('create')}>{Icons.plus} Create Voucher</div>}
+                  {(user.role === 'accounts' || user.isSuperAdmin) && <div className={`nav-item ${currentPage === 'drafts' ? 'active' : ''}`} onClick={() => handleNavClick('drafts')}>📝 Drafts</div>}
                   <div className={`nav-item ${currentPage === 'pending' ? 'active' : ''}`} onClick={() => handleNavClick('pending')}>{Icons.clock} Pending Approval</div>
                   <div className={`nav-item ${currentPage === 'approved' ? 'active' : ''}`} onClick={() => handleNavClick('approved')}>{Icons.smartphone} Awaiting OTP</div>
                   <div className={`nav-item ${currentPage === 'completed' ? 'active' : ''}`} onClick={() => handleNavClick('completed')}>{Icons.checkCircle} Completed</div>
                   <div className={`nav-item ${currentPage === 'all' ? 'active' : ''}`} onClick={() => handleNavClick('all')}>{Icons.fileText} All Vouchers</div>
                 </div>
-                {user.role === 'accounts' && <div className="nav-section"><div className="nav-section-title">Master Data</div>
+                {(user.role === 'accounts' || user.isSuperAdmin) && <div className="nav-section"><div className="nav-section-title">Master Data</div>
                   <div className={`nav-item ${currentPage === 'payees' ? 'active' : ''}`} onClick={() => handleNavClick('payees')}>{Icons.users} Manage Payees</div>
                   <div className={`nav-item ${currentPage === 'accounts' ? 'active' : ''}`} onClick={() => handleNavClick('accounts')}>{Icons.fileText} Heads of Account</div>
                 </div>}
-                {user.role === 'admin' && <div className="nav-section"><div className="nav-section-title">Admin Dashboard</div><div className={`nav-item ${currentPage === 'users' ? 'active' : ''}`} onClick={() => handleNavClick('users')}>{Icons.users} User Management</div></div>}
+                {user.isSuperAdmin && <div className="nav-section"><div className="nav-section-title">Admin Dashboard</div><div className={`nav-item ${currentPage === 'users' ? 'active' : ''}`} onClick={() => handleNavClick('users')}>{Icons.users} User Management</div></div>}
               </aside>
             </>
           )}

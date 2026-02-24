@@ -105,6 +105,16 @@ const formatMobile = (mobile) => {
   return cleaned;
 };
 
+// RBAC helper: returns { role, is_super_admin } for a given user id
+const getActorRole = async (userId) => {
+  if (!userId) return {};
+  const { data } = await supabase.from('users')
+    .select('role, is_super_admin')
+    .eq('id', userId)
+    .single();
+  return data || {};
+};
+
 // Helper function to call 2Factor API with logging
 const call2FactorAPI = async (endpoint, description) => {
   const url = `${TWOFACTOR_BASE_URL}/${TWOFACTOR_API_KEY}${endpoint}`;
@@ -300,15 +310,10 @@ app.post('/api/admin/onboard-user', async (req, res) => {
   }
   
   try {
-    // Verify admin privileges
-    const { data: admin, error: adminError } = await supabase.from('users')
-      .select('role')
-      .eq('mobile', formatMobile(adminMobile))
-      .eq('role', 'admin')
-      .single();
-    
-    if (adminError || !admin) {
-      return res.status(403).json({ error: 'Unauthorized: Admin access required' });
+    // Verify Super Admin privileges
+    const admin = await getActorRole(req.body.adminId);
+    if (!admin.is_super_admin) {
+      return res.status(403).json({ error: 'Unauthorized: Super Admin access required' });
     }
     
     const firstName = name.split(' ')[0];
@@ -382,13 +387,18 @@ app.post('/api/users/:userId/verify-mobile', async (req, res) => {
 
 // Update user (Admin only)
 app.put('/api/users/:userId', async (req, res) => {
-  const { name, mobile, aadhar, role } = req.body;
+  const { name, mobile, aadhar, role, requesterId } = req.body;
   
   if (!name || !mobile || !aadhar || !role) {
     return res.status(400).json({ error: 'All fields are required' });
   }
   
   try {
+    const actor = await getActorRole(requesterId);
+    if (!actor.is_super_admin) {
+      return res.status(403).json({ error: 'Unauthorized: Super Admin access required' });
+    }
+    
     const firstName = name.split(' ')[0];
     const rolePrefix = role === 'admin' ? 'Approve' : 'Accounts';
     const username = `${rolePrefix}-${firstName}`;
@@ -448,13 +458,18 @@ app.get('/api/users/:userId/companies', async (req, res) => {
 
 // Update user's company access
 app.put('/api/users/:userId/companies', async (req, res) => {
-  const { companyAccess } = req.body;
+  const { companyAccess, requesterId } = req.body;
   
   if (!companyAccess || !Array.isArray(companyAccess) || companyAccess.length === 0) {
     return res.status(400).json({ error: 'At least one company access is required' });
   }
   
   try {
+    const actor = await getActorRole(requesterId);
+    if (!actor.is_super_admin) {
+      return res.status(403).json({ error: 'Unauthorized: Super Admin access required' });
+    }
+    
     // Delete existing company access
     await supabase
       .from('user_companies')
@@ -488,9 +503,14 @@ app.put('/api/users/:userId/companies', async (req, res) => {
   }
 });
 
-// Delete user (Admin only)
+// Delete user (Super Admin only)
 app.delete('/api/users/:userId', async (req, res) => {
   try {
+    const actor = await getActorRole(req.body.requesterId);
+    if (!actor.is_super_admin) {
+      return res.status(403).json({ error: 'Unauthorized: Super Admin access required' });
+    }
+    
     // Check if user has any vouchers
     const { data: vouchers } = await supabase.from('vouchers')
       .select('id')
@@ -655,6 +675,7 @@ app.post('/api/users/login', async (req, res) => {
         username: user.username,
         mobile: user.mobile,
         role: selectedRole,
+        isSuperAdmin: !!user.is_super_admin,
         company: selectedCompany,
         companies: companies.map(uc => ({
           id: uc.companies.id,
@@ -698,7 +719,7 @@ app.post('/api/users/:userId/switch-company', async (req, res) => {
     
     // Get user info
     const { data: user } = await supabase.from('users')
-      .select('id, name, username, mobile')
+      .select('id, name, username, mobile, is_super_admin')
       .eq('id', userId)
       .single();
     
@@ -727,6 +748,7 @@ app.post('/api/users/:userId/switch-company', async (req, res) => {
         username: user.username,
         mobile: user.mobile,
         role: userCompany.role,
+        isSuperAdmin: !!user.is_super_admin,
         company: userCompany.companies,
         companies: allCompanies.map(uc => ({
           id: uc.companies.id,
@@ -887,6 +909,11 @@ app.post('/api/vouchers', async (req, res) => {
   }
   
   try {
+    const preparer = await getActorRole(preparedBy);
+    if (preparer.role !== 'accounts' && !preparer.is_super_admin) {
+      return res.status(403).json({ error: 'Unauthorized: Only Accounts users or Super Admin can create vouchers' });
+    }
+    
     const serialNumber = await getNextVoucherNumber(companyId);
     const status = saveAsDraft ? 'draft' : 'pending';
     
@@ -1135,6 +1162,11 @@ app.post('/api/vouchers/:voucherId/approve', async (req, res) => {
   console.log(`   Approved By: ${approvedBy}`);
   
   try {
+    const approver = await getActorRole(approvedBy);
+    if (approver.role !== 'admin' && !approver.is_super_admin) {
+      return res.status(403).json({ error: 'Unauthorized: Only Approvers or Super Admin can approve vouchers' });
+    }
+    
     const { data: voucher, error: voucherError } = await supabase.from('vouchers')
       .select('*, payee:payees(mobile, requires_otp, payee_type)')
       .eq('id', req.params.voucherId)
@@ -1284,6 +1316,11 @@ app.post('/api/vouchers/:voucherId/reject', async (req, res) => {
   const { rejectedBy, reason } = req.body;
   
   try {
+    const rejecterActor = await getActorRole(rejectedBy);
+    if (rejecterActor.role !== 'admin' && !rejecterActor.is_super_admin) {
+      return res.status(403).json({ error: 'Unauthorized: Only Approvers or Super Admin can reject vouchers' });
+    }
+    
     const { data: voucher } = await supabase.from('vouchers')
       .select('*')
       .eq('id', req.params.voucherId)
@@ -1455,9 +1492,14 @@ app.post('/api/vouchers/:voucherId/resend-otp', async (req, res) => {
   }
 });
 
-// Delete voucher (Admin only)
+// Delete voucher (Approver or Super Admin only)
 app.delete('/api/vouchers/:voucherId', async (req, res) => {
   try {
+    const actor = await getActorRole(req.body.deletedBy);
+    if (actor.role !== 'admin' && !actor.is_super_admin) {
+      return res.status(403).json({ error: 'Unauthorized: Only Approvers or Super Admin can delete vouchers' });
+    }
+    
     // First delete any notifications related to this voucher
     await supabase.from('notifications')
       .delete()
@@ -2067,6 +2109,11 @@ app.post('/api/vouchers/:voucherId/approve-with-attestation', async (req, res) =
   }
   
   try {
+    const approverActor = await getActorRole(approvedBy);
+    if (approverActor.role !== 'admin' && !approverActor.is_super_admin) {
+      return res.status(403).json({ error: 'Unauthorized: Only Approvers or Super Admin can attest vouchers' });
+    }
+    
     // Get voucher with payee info
     const { data: voucher, error: voucherError } = await supabase.from('vouchers')
       .select('*, payee:payees(name, requires_otp, payee_type)')
