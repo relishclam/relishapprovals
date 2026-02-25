@@ -454,6 +454,11 @@ const LoginPage = ({ onLogin }) => {
       const result = await api.login({ username, companyId });
       if (result.success) {
         onLogin(result.user);
+      } else if (result.requiresOtp) {
+        // First-time login: server already sent OTP — go back to login form with OTP input
+        setRequiresCompanySelection(false);
+        setRequiresOtp(true);
+        // selectedCompanyId is already set; next login() call will include it
       } else {
         setError(result.error || 'Login failed');
       }
@@ -2193,15 +2198,15 @@ const UsersManagement = () => {
     // Load all companies for multi-company access selection
     api.getCompanies().then(companies => {
       setAllCompanies(companies);
-      // Pre-select current company with current role
+      // Pre-select ALL companies with default role
       setNewUser(prev => ({
         ...prev,
-        companyAccess: [{
-          companyId: user.company.id,
-          companyName: user.company.name,
-          role: 'accounts',
-          isPrimary: true
-        }]
+        companyAccess: companies.map((company, index) => ({
+          companyId: company.id,
+          companyName: company.name,
+          role: prev.role || 'accounts',
+          isPrimary: company.id === user.company.id || index === 0
+        }))
       }));
     }).catch(console.error);
   }, [user.company.id]);
@@ -2235,6 +2240,23 @@ const UsersManagement = () => {
       companyAccess: prev.companyAccess.map(ca => 
         ca.companyId === companyId ? { ...ca, role: newRole } : ca
       )
+    }));
+  };
+
+  // Sync role across ALL company access entries when global role changes
+  const handleNewUserRoleChange = (newRole) => {
+    setNewUser(prev => ({
+      ...prev,
+      role: newRole,
+      companyAccess: prev.companyAccess.map(ca => ({ ...ca, role: newRole }))
+    }));
+  };
+
+  const handleEditUserRoleChange = (newRole) => {
+    setEditUser(prev => ({
+      ...prev,
+      role: newRole,
+      companyAccess: prev.companyAccess.map(ca => ({ ...ca, role: newRole }))
     }));
   };
   
@@ -2326,12 +2348,12 @@ const UsersManagement = () => {
       mobile: '', 
       aadhar: '', 
       role: 'accounts',
-      companyAccess: [{
-        companyId: user.company.id,
-        companyName: user.company.name,
+      companyAccess: allCompanies.map((company, index) => ({
+        companyId: company.id,
+        companyName: company.name,
         role: 'accounts',
-        isPrimary: true
-      }]
+        isPrimary: company.id === user.company.id || index === 0
+      }))
     });
     setOnboardStep(1);
     setOtp('');
@@ -2442,22 +2464,23 @@ const UsersManagement = () => {
       const companyAccess = await api.getUserCompanies(userToEdit.id);
       setEditUser(prev => ({ 
         ...prev, 
+        // Use unified role (prev.role = userToEdit.role) for all companies
         companyAccess: companyAccess.map(ca => ({
           companyId: ca.companyId,
-          role: ca.role,
+          role: prev.role,
           isPrimary: ca.isPrimary
         }))
       }));
     } catch (err) {
       console.error('Failed to load company access:', err);
-      // Fallback to current company
+      // Fallback: access all companies with the user's role
       setEditUser(prev => ({ 
         ...prev, 
-        companyAccess: [{
-          companyId: user.company.id,
+        companyAccess: allCompanies.map((company, index) => ({
+          companyId: company.id,
           role: userToEdit.role,
-          isPrimary: true
-        }]
+          isPrimary: company.id === user.company.id || index === 0
+        }))
       }));
     }
     setLoadingCompanyAccess(false);
@@ -2476,12 +2499,12 @@ const UsersManagement = () => {
     
     setSubmitting(true);
     try {
-      // Update user basic info
+      // Update user basic info (use unified role from editUser.role)
       const result = await api.updateUser(selectedUser.id, {
         name: editUser.name,
         mobile: editUser.mobile,
         aadhar: editUser.aadhar,
-        role: editUser.companyAccess.find(ca => ca.isPrimary)?.role || editUser.companyAccess[0].role,
+        role: editUser.role,
         requesterId: user.id
       });
       
@@ -2679,6 +2702,21 @@ const UsersManagement = () => {
                       onChange={(e) => setNewUser({ ...newUser, aadhar: e.target.value })} 
                     />
                   </div>
+
+                  <div className="form-group">
+                    <label className="form-label">Role *</label>
+                    <select
+                      className="form-input"
+                      value={newUser.role}
+                      onChange={(e) => handleNewUserRoleChange(e.target.value)}
+                    >
+                      <option value="accounts">👤 Accounts</option>
+                      <option value="admin">🛡️ Approver</option>
+                    </select>
+                    <small style={{color: '#666', fontSize: '0.85rem', marginTop: '4px', display: 'block'}}>
+                      Username will be: <code style={{background: '#f0f0f0', padding: '2px 6px', borderRadius: '4px'}}>{newUser.role === 'admin' ? 'Approve' : 'Accounts'}-{newUser.name.split(' ')[0] || 'FirstName'}</code>
+                    </small>
+                  </div>
                   
                   <div className="form-group">
                     <label className="form-label">Company Access *</label>
@@ -2689,8 +2727,7 @@ const UsersManagement = () => {
                         return (
                           <div key={company.id} style={{ 
                             display: 'flex', 
-                            alignItems: 'center', 
-                            justifyContent: 'space-between',
+                            alignItems: 'center',
                             padding: '10px',
                             marginBottom: '8px',
                             background: isChecked ? '#e8f5e9' : '#fff',
@@ -2706,16 +2743,6 @@ const UsersManagement = () => {
                               />
                               <span style={{ fontWeight: 500 }}>{company.name}</span>
                             </label>
-                            {isChecked && (
-                              <select 
-                                value={access.role}
-                                onChange={(e) => handleCompanyRoleChange(company.id, e.target.value)}
-                                style={{ padding: '6px 10px', borderRadius: '4px', border: '1px solid #ddd', fontSize: '13px' }}
-                              >
-                                <option value="accounts">👤 Accounts</option>
-                                <option value="admin">🛡️ Admin</option>
-                              </select>
-                            )}
                           </div>
                         );
                       })}
@@ -2724,15 +2751,8 @@ const UsersManagement = () => {
                       )}
                     </div>
                     <small style={{ color: '#666', fontSize: '0.85rem', marginTop: '6px', display: 'block' }}>
-                      Select companies this user can access and their role in each
+                      Select the companies this user can access
                     </small>
-                  </div>
-                  
-                  <div style={{background: '#f8f9fa', padding: '1rem', borderRadius: '8px', fontSize: '0.9rem', color: '#666'}}>
-                    <strong>ℹ️ Note:</strong> Username will be auto-generated as:<br/>
-                    <code style={{background: '#fff', padding: '0.25rem 0.5rem', borderRadius: '4px', marginTop: '0.5rem', display: 'inline-block'}}>
-                      {(newUser.companyAccess[0]?.role || 'accounts') === 'admin' ? 'Approve' : 'Accounts'}-{newUser.name.split(' ')[0] || 'FirstName'}
-                    </code>
                   </div>
                 </>
               )}
@@ -2844,6 +2864,18 @@ const UsersManagement = () => {
                   onChange={(e) => setEditUser({ ...editUser, aadhar: e.target.value })} 
                 />
               </div>
+
+              <div className="form-group">
+                <label className="form-label">Role *</label>
+                <select
+                  className="form-input"
+                  value={editUser.role}
+                  onChange={(e) => handleEditUserRoleChange(e.target.value)}
+                >
+                  <option value="accounts">👤 Accounts</option>
+                  <option value="admin">🛡️ Approver</option>
+                </select>
+              </div>
               
               <div className="form-group">
                 <label className="form-label">🏢 Company Access *</label>
@@ -2867,12 +2899,12 @@ const UsersManagement = () => {
                               checked={isEnabled}
                               onChange={(e) => {
                                 if (e.target.checked) {
-                                  // Add company access
+                                  // Add company access with current unified role
                                   setEditUser(prev => ({
                                     ...prev,
                                     companyAccess: [...(prev.companyAccess || []), {
                                       companyId: company.id,
-                                      role: 'accounts',
+                                      role: editUser.role,
                                       isPrimary: prev.companyAccess?.length === 0
                                     }]
                                   }));
@@ -2883,8 +2915,7 @@ const UsersManagement = () => {
                                     return;
                                   }
                                   const newAccess = editUser.companyAccess.filter(ca => ca.companyId !== company.id);
-                                  // If removed was primary, make first one primary
-                                  if (access?.isPrimary && newAccess.length > 0) {
+                                  if (newAccess.length > 0 && !newAccess.some(ca => ca.isPrimary)) {
                                     newAccess[0].isPrimary = true;
                                   }
                                   setEditUser(prev => ({ ...prev, companyAccess: newAccess }));
@@ -2892,46 +2923,7 @@ const UsersManagement = () => {
                               }}
                               style={{ width: '18px', height: '18px' }}
                             />
-                            <div style={{ flex: 1 }}>
-                              <div style={{ fontWeight: 500 }}>{company.name}</div>
-                              {isEnabled && (
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '8px' }}>
-                                  <select
-                                    className="form-select"
-                                    style={{ fontSize: '13px', padding: '4px 8px', width: 'auto' }}
-                                    value={access.role}
-                                    onChange={(e) => {
-                                      setEditUser(prev => ({
-                                        ...prev,
-                                        companyAccess: prev.companyAccess.map(ca => 
-                                          ca.companyId === company.id ? { ...ca, role: e.target.value } : ca
-                                        )
-                                      }));
-                                    }}
-                                  >
-                                    <option value="accounts">👤 Accounts</option>
-                                    <option value="admin">🛡 Admin</option>
-                                  </select>
-                                  <label style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px', color: '#666' }}>
-                                    <input
-                                      type="radio"
-                                      name="primaryCompanyEdit"
-                                      checked={access.isPrimary}
-                                      onChange={() => {
-                                        setEditUser(prev => ({
-                                          ...prev,
-                                          companyAccess: prev.companyAccess.map(ca => ({
-                                            ...ca,
-                                            isPrimary: ca.companyId === company.id
-                                          }))
-                                        }));
-                                      }}
-                                    />
-                                    Primary
-                                  </label>
-                                </div>
-                              )}
-                            </div>
+                            <div style={{ fontWeight: 500 }}>{company.name}</div>
                           </div>
                         </div>
                       );
@@ -2939,7 +2931,7 @@ const UsersManagement = () => {
                   </div>
                 )}
                 <div style={{ fontSize: '12px', color: '#666', marginTop: '6px' }}>
-                  Select which companies this user can access and their role in each
+                  Select the companies this user can access
                 </div>
               </div>
             </div>
@@ -3019,7 +3011,8 @@ const UsersManagement = () => {
               {!selectedUser.mobile_verified && (
                 <>
                   <button 
-                    className="btn btn-primary" 
+                    className="btn btn-secondary" 
+                    style={{borderColor: '#f59e0b', color: '#b45309'}}
                     onClick={() => {
                       handleResendVerification(selectedUser.id, selectedUser.mobile, selectedUser.name);
                       setShowDetailsModal(false);
