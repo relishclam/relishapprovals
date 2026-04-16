@@ -1865,20 +1865,28 @@ const VoucherList = ({ filter }) => {
       return vDate >= from && vDate <= to;
     });
     if (dateFiltered.length === 0) { addToast('No vouchers in selected date range', 'error'); return; }
-    const rows = dateFiltered.map((v, idx) => ({
-      'S.No.': idx + 1,
-      'Serial No.': v.serial_number || '',
-      'Voucher No.': v.voucher_number || '',
-      'Date': new Date(v.created_at).toLocaleDateString('en-IN'),
-      'Head of Account': v.head_of_account || '',
-      'Sub Head': v.sub_head_of_account || '',
-      'Payee': v.payee_name || '',
-      'Narration': v.narration || '',
-      'Invoice Ref': v.invoice_reference || '',
-      'Payment Mode': v.payment_mode || '',
-      'Amount (₹)': v.amount || 0,
-      'Status': (v.status || '').replace(/_/g, ' '),
-    }));
+    const rows = dateFiltered.map((v, idx) => {
+      const items = typeof v.narration_items === 'string'
+        ? JSON.parse(v.narration_items || '[]')
+        : (v.narration_items || []);
+      const narrationText = items.length > 0
+        ? items.filter(i => i.description).map(i => i.description).join(', ')
+        : (v.narration || '');
+      return {
+        'S.No.': idx + 1,
+        'Serial No.': v.serial_number || '',
+        'Voucher No.': v.serial_number || '',
+        'Date': new Date(v.created_at).toLocaleDateString('en-IN'),
+        'Head of Account': v.head_of_account || '',
+        'Sub Head': v.sub_head_of_account || '',
+        'Payee': v.payee_name || '',
+        'Narration': narrationText,
+        'Invoice Ref': v.invoice_reference || '',
+        'Payment Mode': v.payment_mode || '',
+        'Amount (₹)': v.amount || 0,
+        'Status': (v.status || '').replace(/_/g, ' '),
+      };
+    });
     const ws = XLSX.utils.json_to_sheet(rows);
     const colWidths = Object.keys(rows[0]).map(key => ({
       wch: Math.max(key.length, ...rows.map(r => String(r[key]).length)) + 2
