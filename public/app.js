@@ -1352,6 +1352,9 @@ const VoucherList = ({ filter }) => {
   const [showPrintModal, setShowPrintModal] = useState(false);
   const [printDateFrom, setPrintDateFrom] = useState('');
   const [printDateTo, setPrintDateTo] = useState('');
+  const [showExcelModal, setShowExcelModal] = useState(false);
+  const [excelDateFrom, setExcelDateFrom] = useState('');
+  const [excelDateTo, setExcelDateTo] = useState('');
   const [loading, setLoading] = useState(false);
   
   // Document verification state
@@ -1852,6 +1855,41 @@ const VoucherList = ({ filter }) => {
   const handleDelete = async () => { setLoading(true); try { const result = await api.deleteVoucher(selectedVoucher.id, user.id); if (result.success) { addToast('Voucher deleted', 'success'); refreshVouchers(); setShowDeleteModal(false); setShowModal(false); } else addToast(result.error || 'Failed to delete', 'error'); } catch { addToast('Failed to delete voucher', 'error'); } setLoading(false); };
   const titles = { all: 'All Vouchers', draft: 'Saved Drafts', pending: 'Pending Approval', approved: 'Approved / Awaiting OTP', completed: 'Completed Vouchers' };
 
+  const handleDownloadExcel = () => {
+    if (!excelDateFrom || !excelDateTo) { addToast('Select date range', 'error'); return; }
+    const from = new Date(excelDateFrom);
+    const to = new Date(excelDateTo);
+    to.setHours(23, 59, 59);
+    const dateFiltered = filtered.filter(v => {
+      const vDate = new Date(v.created_at);
+      return vDate >= from && vDate <= to;
+    });
+    if (dateFiltered.length === 0) { addToast('No vouchers in selected date range', 'error'); return; }
+    const rows = dateFiltered.map((v, idx) => ({
+      'S.No.': idx + 1,
+      'Serial No.': v.serial_number || '',
+      'Voucher No.': v.voucher_number || '',
+      'Date': new Date(v.created_at).toLocaleDateString('en-IN'),
+      'Head of Account': v.head_of_account || '',
+      'Sub Head': v.sub_head_of_account || '',
+      'Payee': v.payee_name || '',
+      'Narration': v.narration || '',
+      'Invoice Ref': v.invoice_reference || '',
+      'Payment Mode': v.payment_mode || '',
+      'Amount (₹)': v.amount || 0,
+      'Status': (v.status || '').replace(/_/g, ' '),
+    }));
+    const ws = XLSX.utils.json_to_sheet(rows);
+    const colWidths = Object.keys(rows[0]).map(key => ({
+      wch: Math.max(key.length, ...rows.map(r => String(r[key]).length)) + 2
+    }));
+    ws['!cols'] = colWidths;
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, titles[filter]);
+    XLSX.writeFile(wb, `${titles[filter].replace(/\s+/g, '_')}_${excelDateFrom}_to_${excelDateTo}.xlsx`);
+    setShowExcelModal(false);
+  };
+
   return (
     <div>
       <div className="page-header">
@@ -1860,9 +1898,16 @@ const VoucherList = ({ filter }) => {
           <p className="page-subtitle">{filtered.length} voucher(s)</p>
         </div>
         {filtered.length > 0 && (
-          <button className="btn btn-secondary" onClick={() => setShowPrintModal(true)}>
-            {Icons.printer} Print Report
-          </button>
+          <div style={{display: 'flex', gap: '0.5rem', flexWrap: 'wrap'}}>
+            {(filter === 'all' || filter === 'completed') && (
+              <button className="btn btn-secondary" onClick={() => setShowExcelModal(true)}>
+                {Icons.download} Excel
+              </button>
+            )}
+            <button className="btn btn-secondary" onClick={() => setShowPrintModal(true)}>
+              {Icons.printer} Print Report
+            </button>
+          </div>
         )}
       </div>
       <div className="card"><div className="card-body" style={{ padding: 0 }}>
@@ -2025,6 +2070,33 @@ const VoucherList = ({ filter }) => {
             </div>
           </div>
           <div className="modal-footer"><button className="btn btn-secondary" onClick={() => setShowDeleteModal(false)}>Cancel</button><button className="btn btn-danger" onClick={handleDelete} disabled={loading}>{loading && Icons.loader}Delete Voucher</button></div>
+        </div></div>
+      )}
+      {showExcelModal && (
+        <div className="modal-overlay" onClick={() => setShowExcelModal(false)}><div className="modal" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-header"><h3 className="modal-title">{Icons.download} Download Excel Report</h3><button className="modal-close" onClick={() => setShowExcelModal(false)}>×</button></div>
+          <div className="modal-body">
+            <p style={{marginBottom: '1rem', color: '#666'}}>Select date range for Excel report</p>
+            <div className="form-row">
+              <div className="form-group">
+                <label className="form-label">From Date</label>
+                <input type="date" className="form-input" value={excelDateFrom} onChange={(e) => setExcelDateFrom(e.target.value)} />
+              </div>
+              <div className="form-group">
+                <label className="form-label">To Date</label>
+                <input type="date" className="form-input" value={excelDateTo} onChange={(e) => setExcelDateTo(e.target.value)} />
+              </div>
+            </div>
+            <div style={{background: '#f8f9fa', padding: '1rem', borderRadius: '8px', fontSize: '0.9rem'}}>
+              <strong>ℹ️ Excel report will include:</strong>
+              <ul style={{margin: '0.5rem 0 0', paddingLeft: '1.5rem'}}>
+                <li>All {titles[filter].toLowerCase()} in selected date range</li>
+                <li>Serial No, Head of Account, Payee, Amount, Mode, Status</li>
+                <li>Narration, Invoice Reference, Sub Head details</li>
+              </ul>
+            </div>
+          </div>
+          <div className="modal-footer"><button className="btn btn-secondary" onClick={() => setShowExcelModal(false)}>Cancel</button><button className="btn btn-primary" onClick={handleDownloadExcel} disabled={!excelDateFrom || !excelDateTo}>{Icons.download} Download Excel</button></div>
         </div></div>
       )}
       {showPrintModal && (
