@@ -1874,7 +1874,6 @@ const VoucherList = ({ filter }) => {
         : (v.narration || '');
       return {
         'S.No.': idx + 1,
-        'Serial No.': v.serial_number || '',
         'Voucher No.': v.serial_number || '',
         'Date': new Date(v.created_at).toLocaleDateString('en-IN'),
         'Head of Account': v.head_of_account || '',
