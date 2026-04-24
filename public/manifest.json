@@ -58,5 +58,11 @@
       "icons": [{"src": "/android-launchericon-96-96.png", "sizes": "96x96"}]
     }
   ],
-  "categories": ["business", "finance", "productivity"]
+  "categories": ["business", "finance", "productivity"],
+  "protocol_handlers": [
+    {
+      "protocol": "web+relishapprovals",
+      "url": "/?from=%s"
+    }
+  ]
 }

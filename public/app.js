@@ -1,5 +1,10 @@
 const { useState, useEffect, createContext, useContext, useCallback } = React;
 
+// Register protocol handler so the installed PWA can be launched via web+relishapprovals://
+if ('registerProtocolHandler' in navigator) {
+  navigator.registerProtocolHandler('web+relishapprovals', '/?from=%s');
+}
+
 const API_BASE = '/api';
 const APP_VERSION = 'v12'; // Version marker for cache debugging
 console.log('[Relish App] Version:', APP_VERSION);
