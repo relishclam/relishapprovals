@@ -534,6 +534,41 @@ app.delete('/api/users/:userId', async (req, res) => {
   }
 });
 
+// Session refresh — returns current user profile (used on app load to hydrate stored session)
+app.get('/api/users/:userId/session', async (req, res) => {
+  const { userId } = req.params;
+  try {
+    const { data: user, error } = await supabase.from('users').select('*').eq('id', userId).single();
+    if (error || !user) return res.status(404).json({ error: 'User not found' });
+
+    const { data: userCompanies } = await supabase
+      .from('user_companies')
+      .select('company_id, role, is_primary, companies:company_id (id, name, address, gst)')
+      .eq('user_id', user.id);
+
+    let companies = userCompanies || [];
+    if (companies.length === 0) {
+      const { data: legacyCompany } = await supabase.from('companies').select('*').eq('id', user.company_id).single();
+      if (legacyCompany) companies = [{ company_id: legacyCompany.id, role: user.role, is_primary: true, companies: legacyCompany }];
+    }
+
+    const primaryOrFirst = companies.find(uc => uc.is_primary) || companies[0];
+    if (!primaryOrFirst) return res.status(400).json({ error: 'No company access' });
+
+    return res.json({
+      success: true,
+      user: {
+        id: user.id, name: user.name, username: user.username, mobile: user.mobile,
+        role: primaryOrFirst.role, isSuperAdmin: user.is_super_admin || false,
+        company: primaryOrFirst.companies,
+        companies: companies.map(uc => ({ id: uc.companies.id, name: uc.companies.name, role: uc.role }))
+      }
+    });
+  } catch (err) {
+    return res.status(500).json({ error: 'Session refresh failed' });
+  }
+});
+
 // Login
 app.post('/api/users/login', async (req, res) => {
   const { username, otp, companyId } = req.body;

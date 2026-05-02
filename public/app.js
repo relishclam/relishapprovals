@@ -105,6 +105,7 @@ const api = {
   verifyUserMobile: (userId) => fetch(`${API_BASE}/users/${userId}/verify-mobile`, { method: 'POST' }).then(r => r.json()),
   login: (data) => fetch(`${API_BASE}/users/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
   switchCompany: (userId, companyId) => fetch(`${API_BASE}/users/${userId}/switch-company`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ companyId }) }).then(r => r.json()),
+  refreshSession: (userId) => fetch(`${API_BASE}/users/${userId}/session`).then(r => r.json()),
   getCompanyUsers: (companyId) => fetch(`${API_BASE}/companies/${companyId}/users`).then(r => r.json()),
   onboardUser: (data) => fetch(`${API_BASE}/admin/onboard-user`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
   updateUser: (userId, data) => fetch(`${API_BASE}/users/${userId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
@@ -1030,12 +1031,25 @@ const CreateVoucher = () => {
   const [showCustomAccount, setShowCustomAccount] = useState(false);
   const [showAddSubCategory, setShowAddSubCategory] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
-  const [showDeductions, setShowDeductions] = useState(false);
+  const [showDeductions, setShowDeductions] = useState(() => {
+    try { const s = localStorage.getItem('cv_draft'); return s ? (JSON.parse(s).showDeductions || false) : false; } catch { return false; }
+  });
   const [newSubCategory, setNewSubCategory] = useState('');
   const [customAccount, setCustomAccount] = useState('');
-  const [form, setForm] = useState({ headOfAccount: '', subHeadOfAccount: '', narration: '', narrationItems: [], deductions: [], payeeId: '', paymentMode: 'UPI', amount: '', invoiceReference: '' });
+  const [form, setForm] = useState(() => {
+    try {
+      const s = localStorage.getItem('cv_draft');
+      if (s) {
+        const saved = JSON.parse(s);
+        return saved.form || { headOfAccount: '', subHeadOfAccount: '', narration: '', narrationItems: [], deductions: [], payeeId: '', paymentMode: 'UPI', amount: '', invoiceReference: '' };
+      }
+    } catch {}
+    return { headOfAccount: '', subHeadOfAccount: '', narration: '', narrationItems: [], deductions: [], payeeId: '', paymentMode: 'UPI', amount: '', invoiceReference: '' };
+  });
   const [newPayee, setNewPayee] = useState({ name: '', alias: '', mobile: '', bankAccount: '', ifsc: '', upiId: '' });
-  const [useNarrationTable, setUseNarrationTable] = useState(true);  // Default to TRUE for tabulated format
+  const [useNarrationTable, setUseNarrationTable] = useState(() => {
+    try { const s = localStorage.getItem('cv_draft'); return s ? (JSON.parse(s).useNarrationTable ?? true) : true; } catch { return true; }
+  });  // Default to TRUE for tabulated format
 
   const refreshSubHeads = async () => {
     // This now returns sub-heads for the company's own heads + sub-heads of global heads from other companies
@@ -1104,6 +1118,19 @@ const CreateVoucher = () => {
       }
     }
   }, [form.narrationItems, useNarrationTable]);
+
+  // Auto-save form draft to localStorage so it survives page refresh / connection loss
+  useEffect(() => {
+    const hasData = form.headOfAccount || form.payeeId || form.amount || form.narration ||
+      form.narrationItems.some(i => i.description || i.amount) ||
+      form.deductions.some(d => d.description || d.amount) ||
+      form.invoiceReference;
+    if (hasData) {
+      try {
+        localStorage.setItem('cv_draft', JSON.stringify({ form, showDeductions, useNarrationTable }));
+      } catch {}
+    }
+  }, [form, showDeductions, useNarrationTable]);
 
   const handleAddPayee = async () => {
     setLoading(true);
@@ -1180,6 +1207,7 @@ const CreateVoucher = () => {
       }); 
       if (result.success) { 
         addToast(saveAsDraft ? `Draft ${result.serialNumber} saved` : `Voucher ${result.serialNumber} submitted`, 'success'); 
+        localStorage.removeItem('cv_draft');
         setForm({ headOfAccount: '', subHeadOfAccount: '', narration: '', narrationItems: [], deductions: [], payeeId: '', paymentMode: 'UPI', amount: '', invoiceReference: '' }); 
         setShowDeductions(false);
         setUseNarrationTable(false);
@@ -1194,6 +1222,22 @@ const CreateVoucher = () => {
   return (
     <div>
       <div className="page-header"><h1 className="page-title">Create Payment Voucher</h1><p className="page-subtitle">Prepare a new payment voucher for approval</p></div>
+      {/* Draft restored banner */}
+      {(form.headOfAccount || form.payeeId || form.amount || form.narration || form.narrationItems.some(i => i.description || i.amount)) && (() => {
+        let hasSaved = false;
+        try { hasSaved = !!localStorage.getItem('cv_draft'); } catch {}
+        return hasSaved ? (
+          <div style={{marginBottom: '1rem', padding: '0.75rem 1rem', background: '#fffbeb', border: '1px solid #fbbf24', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem'}}>
+            <span style={{fontSize: '0.9rem', color: '#92400e'}}>⚡ <strong>Draft restored</strong> — your last unsaved voucher was recovered automatically.</span>
+            <button style={{fontSize: '0.8rem', padding: '0.3rem 0.75rem', background: 'transparent', border: '1px solid #f59e0b', borderRadius: '6px', color: '#92400e', cursor: 'pointer'}} onClick={() => {
+              localStorage.removeItem('cv_draft');
+              setForm({ headOfAccount: '', subHeadOfAccount: '', narration: '', narrationItems: [], deductions: [], payeeId: '', paymentMode: 'UPI', amount: '', invoiceReference: '' });
+              setShowDeductions(false);
+              setUseNarrationTable(true);
+            }}>✕ Discard Draft</button>
+          </div>
+        ) : null;
+      })()}
       <div className="card">
         <div className="card-header"><h3 className="card-title">{Icons.fileText} Voucher Details</h3></div>
         <div className="card-body">
@@ -4762,10 +4806,25 @@ const AccountsManagement = () => {
 
 // Main App
 const App = () => {
-  const [user, setUser] = useState(null);
+  const [user, setUser] = useState(() => {
+    try {
+      const s = localStorage.getItem('relish_session');
+      return s ? JSON.parse(s) : null;
+    } catch { return null; }
+  });
+  // biometricLocked: true when session exists but device biometric hasn't unlocked yet
+  const [biometricLocked, setBiometricLocked] = useState(() => {
+    try {
+      const hasSession = !!localStorage.getItem('relish_session');
+      const hasCredential = !!localStorage.getItem('relish_biometric_id');
+      return hasSession && hasCredential;
+    } catch { return false; }
+  });
   const [vouchers, setVouchers] = useState([]);
   const [notifications, setNotifications] = useState([]);
-  const [currentPage, setCurrentPage] = useState('dashboard');
+  const [currentPage, setCurrentPage] = useState(() => {
+    try { return localStorage.getItem('relish_page') || 'dashboard'; } catch { return 'dashboard'; }
+  });
   const [showNotifications, setShowNotifications] = useState(false);
   const [showMobileMenu, setShowMobileMenu] = useState(false);
   const [showCompanySwitcher, setShowCompanySwitcher] = useState(false);
@@ -4973,13 +5032,127 @@ const App = () => {
     }
   }, [user, requestPushPermission]);
 
+  // On mount: if session was restored from localStorage, silently refresh user data from server
+  // This keeps roles/company names up-to-date and invalidates deleted accounts
+  useEffect(() => {
+    const stored = (() => { try { return localStorage.getItem('relish_session'); } catch { return null; } })();
+    if (!stored) return;
+    const storedUser = (() => { try { return JSON.parse(stored); } catch { return null; } })();
+    if (!storedUser?.id) return;
+    api.refreshSession(storedUser.id).then(result => {
+      if (result.success) {
+        try { localStorage.setItem('relish_session', JSON.stringify(result.user)); } catch {}
+        setUser(result.user);
+      } else {
+        // User no longer valid — force logout
+        try { localStorage.removeItem('relish_session'); localStorage.removeItem('relish_page'); } catch {}
+        setUser(null);
+        setCurrentPage('dashboard');
+      }
+    }).catch(() => {
+      // Server unreachable (offline) — keep using stored session silently
+    });
+  }, []); // run once on mount
+
   useEffect(() => { if (user) { refreshVouchers(); refreshNotifications(); const interval = setInterval(() => { refreshVouchers(); refreshNotifications(); }, 30000); return () => clearInterval(interval); } }, [user, refreshVouchers, refreshNotifications]);
 
-  const handleLogin = (userData) => {
+  // ── Biometric helpers ────────────────────────────────────────────────────
+  const isBiometricSupported = () =>
+    window.PublicKeyCredential &&
+    typeof PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable === 'function';
+
+  const registerBiometric = async (userData) => {
+    if (!isBiometricSupported()) return;
+    try {
+      const available = await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
+      if (!available) return;
+      const challenge = crypto.getRandomValues(new Uint8Array(32));
+      const userId = new TextEncoder().encode(userData.id);
+      const credential = await navigator.credentials.create({
+        publicKey: {
+          challenge,
+          rp: { name: 'Relish Approvals', id: location.hostname },
+          user: { id: userId, name: userData.username, displayName: userData.name },
+          pubKeyCredParams: [{ alg: -7, type: 'public-key' }, { alg: -257, type: 'public-key' }],
+          authenticatorSelection: { authenticatorAttachment: 'platform', userVerification: 'required' },
+          timeout: 60000
+        }
+      });
+      if (credential) {
+        const credId = btoa(String.fromCharCode(...new Uint8Array(credential.rawId)));
+        localStorage.setItem('relish_biometric_id', credId);
+        return true;
+      }
+    } catch (e) {
+      console.log('Biometric registration cancelled or failed:', e.message);
+    }
+    return false;
+  };
+
+  const verifyBiometric = async () => {
+    if (!isBiometricSupported()) return false;
+    try {
+      const credIdB64 = localStorage.getItem('relish_biometric_id');
+      if (!credIdB64) return false;
+      const credIdBytes = Uint8Array.from(atob(credIdB64), c => c.charCodeAt(0));
+      const challenge = crypto.getRandomValues(new Uint8Array(32));
+      const assertion = await navigator.credentials.get({
+        publicKey: {
+          challenge,
+          allowCredentials: [{ id: credIdBytes, type: 'public-key', transports: ['internal'] }],
+          userVerification: 'required',
+          timeout: 60000
+        }
+      });
+      return !!assertion;
+    } catch (e) {
+      console.log('Biometric verify failed:', e.message);
+      return false;
+    }
+  };
+
+  const handleBiometricUnlock = async () => {
+    const ok = await verifyBiometric();
+    if (ok) {
+      setBiometricLocked(false);
+    } else {
+      addToast('Biometric verification failed. Use username to log in.', 'error');
+    }
+  };
+
+  const handleBiometricFallback = () => {
+    // Clear stored session + biometric, go to login
+    try { localStorage.removeItem('relish_session'); localStorage.removeItem('relish_biometric_id'); localStorage.removeItem('relish_page'); } catch {}
+    setBiometricLocked(false);
+    setUser(null);
+  };
+  // ────────────────────────────────────────────────────────────────────────
+
+  const handleLogin = async (userData) => {
+    try { localStorage.setItem('relish_session', JSON.stringify(userData)); } catch {}
+    try { localStorage.setItem('relish_page', 'dashboard'); } catch {}
     setUser(userData);
     setCurrentPage('dashboard');
+    // Offer biometric registration if not yet registered and platform supports it
+    if (isBiometricSupported() && !localStorage.getItem('relish_biometric_id')) {
+      try {
+        const available = await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
+        if (available) {
+          // Small delay so dashboard renders first
+          setTimeout(async () => {
+            const consent = window.confirm('Enable fingerprint / face login for faster sign-in?\n\nYou can disable this in Settings anytime.');
+            if (consent) {
+              const ok = await registerBiometric(userData);
+              if (ok) addToast('Biometric login enabled! Use your fingerprint/face next time.', 'success');
+            }
+          }, 800);
+        }
+      } catch {}
+    }
   };
   const handleLogout = () => {
+    try { localStorage.removeItem('relish_session'); localStorage.removeItem('relish_page'); localStorage.removeItem('relish_biometric_id'); } catch {}
+    setBiometricLocked(false);
     setUser(null); setVouchers([]); setNotifications([]); setCurrentPage('dashboard');
   };
   const handleSwitchCompany = async (companyId) => {
@@ -4987,6 +5160,8 @@ const App = () => {
     try {
       const result = await api.switchCompany(user.id, companyId);
       if (result.success) {
+        try { localStorage.setItem('relish_session', JSON.stringify(result.user)); } catch {}
+        try { localStorage.setItem('relish_page', 'dashboard'); } catch {}
         setUser(result.user);
         setVouchers([]);
         setCurrentPage('dashboard');
@@ -5006,10 +5181,33 @@ const App = () => {
 
   if (!user) return <LoginPage onLogin={handleLogin} />;
 
+  // Biometric lock screen — session exists but device hasn't verified yet
+  if (biometricLocked) return (
+    <div style={{minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--relish-dark)', flexDirection: 'column', gap: '2rem', padding: '2rem'}}>
+      <img src="logo.png" alt="Relish" style={{width: '90px', borderRadius: '18px'}} />
+      <div style={{textAlign: 'center'}}>
+        <div style={{fontSize: '1.4rem', fontWeight: 700, color: 'white', marginBottom: '0.5rem'}}>{user.name}</div>
+        <div style={{fontSize: '0.9rem', color: '#aaa'}}>{user.company.name}</div>
+      </div>
+      <button
+        onClick={handleBiometricUnlock}
+        style={{background: 'var(--relish-orange)', border: 'none', borderRadius: '50%', width: '88px', height: '88px', cursor: 'pointer', fontSize: '2.4rem', boxShadow: '0 0 0 6px rgba(245,132,31,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center'}}
+        title="Unlock with biometric"
+      >
+        🔐
+      </button>
+      <div style={{color: '#ddd', fontSize: '1rem', fontWeight: 500}}>Tap to unlock with Face / Fingerprint</div>
+      <button onClick={handleBiometricFallback} style={{background: 'transparent', border: '1px solid #555', color: '#aaa', borderRadius: '8px', padding: '0.5rem 1.5rem', cursor: 'pointer', fontSize: '0.85rem', marginTop: '1rem'}}>
+        Use username instead
+      </button>
+    </div>
+  );
+
   const contextValue = { user, vouchers, notifications, addToast, refreshVouchers, refreshNotifications };
   const renderPage = () => { switch(currentPage) { case 'dashboard': return <Dashboard />; case 'create': return (user.role === 'accounts' || user.isSuperAdmin) ? <CreateVoucher /> : <Dashboard />; case 'drafts': return (user.role === 'accounts' || user.isSuperAdmin) ? <VoucherList filter="draft" /> : <Dashboard />; case 'pending': return <VoucherList filter="pending" />; case 'approved': return <VoucherList filter="approved" />; case 'completed': return <VoucherList filter="completed" />; case 'all': return <VoucherList filter="all" />; case 'users': return user.isSuperAdmin ? <UsersManagement /> : <Dashboard />; case 'payees': return (user.role === 'accounts' || user.isSuperAdmin) ? <PayeesManagement /> : <Dashboard />; case 'accounts': return (user.role === 'accounts' || user.isSuperAdmin) ? <AccountsManagement /> : <Dashboard />; default: return <Dashboard />; } };
 
   const handleNavClick = (page) => {
+    try { localStorage.setItem('relish_page', page); } catch {}
     setCurrentPage(page);
     setShowMobileMenu(false);
   };
@@ -5085,6 +5283,26 @@ const App = () => {
           <div className="header-right">
             <div className="user-badge">{user.isSuperAdmin ? '👑' : user.role === 'admin' ? Icons.shield : Icons.user} {user.username}</div>
             <button className="notification-btn" onClick={() => setShowNotifications(!showNotifications)}>{Icons.bell}{unreadCount > 0 && <span className="notification-badge">{unreadCount}</span>}</button>
+            {/* Biometric toggle button */}
+            {isBiometricSupported() && (
+              <button
+                className="btn btn-sm btn-secondary"
+                title={localStorage.getItem('relish_biometric_id') ? 'Biometric login ON — click to disable' : 'Enable fingerprint/face login'}
+                style={{padding: '6px 10px', fontSize: '1.1rem', lineHeight: 1}}
+                onClick={async () => {
+                  if (localStorage.getItem('relish_biometric_id')) {
+                    if (window.confirm('Disable fingerprint/face login?')) {
+                      localStorage.removeItem('relish_biometric_id');
+                      addToast('Biometric login disabled', 'info');
+                    }
+                  } else {
+                    const ok = await registerBiometric(user);
+                    if (ok) addToast('Biometric login enabled!', 'success');
+                    else addToast('Biometric setup cancelled or not available', 'error');
+                  }
+                }}
+              >{localStorage.getItem('relish_biometric_id') ? '🔐' : '🔓'}</button>
+            )}
             <button className="logout-btn" onClick={handleLogout}>{Icons.logOut} Sign Out</button>
           </div>
         </header>
