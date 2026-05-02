@@ -273,6 +273,13 @@ const VoucherPreview = ({ voucher }) => {
   const narrationItems = typeof voucher.narration_items === 'string' 
     ? JSON.parse(voucher.narration_items || '[]') 
     : (voucher.narration_items || []);
+
+  // Parse deductions
+  const deductions = typeof voucher.deductions === 'string'
+    ? JSON.parse(voucher.deductions || '[]')
+    : (voucher.deductions || []);
+  const validDeductions = deductions.filter(d => d.description || d.amount);
+  const deductionTotal = validDeductions.reduce((sum, d) => sum + (parseFloat(d.amount) || 0), 0);
   
   // Signature block renderer
   const SignatureBlock = ({ name, role, timestamp, label, verified }) => (
@@ -325,20 +332,63 @@ const VoucherPreview = ({ voucher }) => {
               </tr>
             ))}
           </tbody>
-          <tfoot>
-            <tr style={{background: '#fef3c7', fontWeight: 700}}>
-              <td colSpan="2" style={{padding: '12px', textAlign: 'right', fontSize: '0.95rem', borderTop: '2px solid #f59e0b'}}>TOTAL:</td>
-              <td style={{padding: '12px', textAlign: 'right', fontSize: '1rem', fontFamily: 'monospace', color: '#f59e0b', borderTop: '2px solid #f59e0b'}}>
-                {formatRupees(total)}
-              </td>
-            </tr>
-            <tr style={{background: '#fffbeb'}}>
-              <td colSpan="3" style={{padding: '10px 12px', fontSize: '0.8rem', fontStyle: 'italic', color: '#92400e'}}>
-                <strong>Amount in Words:</strong> {numberToWordsIndian(total)}
-              </td>
-            </tr>
-          </tfoot>
+          {validDeductions.length === 0 && (
+            <tfoot>
+              <tr style={{background: '#fef3c7', fontWeight: 700}}>
+                <td colSpan="2" style={{padding: '12px', textAlign: 'right', fontSize: '0.95rem', borderTop: '2px solid #f59e0b'}}>TOTAL:</td>
+                <td style={{padding: '12px', textAlign: 'right', fontSize: '1rem', fontFamily: 'monospace', color: '#f59e0b', borderTop: '2px solid #f59e0b'}}>
+                  {formatRupees(total)}
+                </td>
+              </tr>
+              <tr style={{background: '#fffbeb'}}>
+                <td colSpan="3" style={{padding: '10px 12px', fontSize: '0.8rem', fontStyle: 'italic', color: '#92400e'}}>
+                  <strong>Amount in Words:</strong> {numberToWordsIndian(total)}
+                </td>
+              </tr>
+            </tfoot>
+          )}
         </table>
+      </div>
+    );
+  };
+
+  // Render deductions table
+  const DeductionsDisplay = () => {
+    if (validDeductions.length === 0) return null;
+    return (
+      <div style={{margin: '1rem 0'}}>
+        <div style={{fontSize: '0.9rem', fontWeight: 600, marginBottom: '0.75rem', color: '#3730a3', borderBottom: '2px solid #6366f1', paddingBottom: '0.5rem'}}>Less: Advance / Part Payments Deducted</div>
+        <table style={{width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem', border: '1px solid #c7d2fe'}}>
+          <thead>
+            <tr style={{background: '#6366f1', color: 'white'}}>
+              <th style={{padding: '10px 12px', textAlign: 'center', width: '60px'}}>S.No.</th>
+              <th style={{padding: '10px 12px', textAlign: 'left'}}>Description</th>
+              <th style={{padding: '10px 12px', textAlign: 'right', width: '140px'}}>Deduction (₹)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {validDeductions.map((d, idx) => (
+              <tr key={idx} style={{borderBottom: '1px solid #e0e7ff', background: idx % 2 === 0 ? '#fff' : '#f5f3ff'}}>
+                <td style={{padding: '10px 12px', textAlign: 'center', fontWeight: 600, color: '#6366f1'}}>{idx + 1}</td>
+                <td style={{padding: '10px 12px'}}>{d.description || '-'}</td>
+                <td style={{padding: '10px 12px', textAlign: 'right', fontWeight: 600, fontFamily: 'monospace', color: '#6366f1'}}>- {formatRupees(d.amount)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <div style={{marginTop: '0.75rem', padding: '0.75rem 1rem', background: '#eef2ff', borderRadius: '8px', border: '2px solid #6366f1'}}>
+          <div style={{display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', color: '#6366f1', marginBottom: '0.3rem'}}>
+            <span>Total Deductions:</span>
+            <span style={{fontFamily: 'monospace', fontWeight: 600}}>- {formatRupees(deductionTotal)}</span>
+          </div>
+          <div style={{display: 'flex', justifyContent: 'space-between', fontWeight: 700, fontSize: '1rem', borderTop: '2px solid #6366f1', paddingTop: '0.4rem'}}>
+            <span style={{color: '#3730a3'}}>NET PAYABLE:</span>
+            <span style={{fontFamily: 'monospace', color: '#3730a3'}}>{formatCurrency(voucher.amount)}</span>
+          </div>
+          <div style={{marginTop: '0.4rem', fontSize: '0.8rem', color: '#6366f1', fontStyle: 'italic'}}>
+            <strong>In Words:</strong> {numberToWordsIndian(voucher.amount)}
+          </div>
+        </div>
       </div>
     );
   };
@@ -365,8 +415,9 @@ const VoucherPreview = ({ voucher }) => {
       <div className="voucher-meta-item mb-1"><span className="voucher-meta-label">Head:</span><span className="voucher-meta-value">{voucher.head_of_account}{voucher.sub_head_of_account && ` → ${voucher.sub_head_of_account}`}</span></div>
       {voucher.narration && <div className="voucher-meta-item mb-1"><span className="voucher-meta-label">Narration:</span><span className="voucher-meta-value">{voucher.narration}</span></div>}
       <NarrationTable />
-      {/* Only show TOTAL section if there are no narration items (table already shows total) */}
-      {(!narrationItems || narrationItems.filter(item => item.description || item.amount).length === 0) && (
+      <DeductionsDisplay />
+      {/* Only show TOTAL section if there are no narration items AND no deductions */}
+      {(!narrationItems || narrationItems.filter(item => item.description || item.amount).length === 0) && validDeductions.length === 0 && (
         <>
           <div className="voucher-total">TOTAL: {formatCurrency(voucher.amount)}</div>
           <div style={{fontSize: '0.85rem', fontStyle: 'italic', color: '#666', marginTop: '0.5rem', marginBottom: '1rem', background: '#fffbeb', padding: '0.75rem', borderRadius: '6px', border: '1px solid #fcd34d'}}>
@@ -872,6 +923,100 @@ const LegacyNarrationItemsTable = ({ items, onChange, disabled }) => {
   );
 };
 
+// Deductions Table Component (Advance / Part Payment Deductions)
+const DeductionsTable = ({ items, onChange, disabled }) => {
+  const [currentItem, setCurrentItem] = useState({ description: '', amount: '' });
+
+  const addItem = () => {
+    if (!currentItem.description.trim() || !currentItem.amount || parseFloat(currentItem.amount) <= 0) return;
+    onChange([...items, { description: currentItem.description.trim(), amount: parseFloat(currentItem.amount).toFixed(2) }]);
+    setCurrentItem({ description: '', amount: '' });
+    setTimeout(() => document.getElementById('deduction-desc-input')?.focus(), 100);
+  };
+
+  const removeItem = (index) => onChange(items.filter((_, i) => i !== index));
+  const getTotal = () => items.reduce((sum, item) => sum + (parseFloat(item.amount) || 0), 0);
+
+  const handleKeyPress = (e, field) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (field === 'description' && currentItem.description.trim()) document.getElementById('deduction-amt-input')?.focus();
+      else if (field === 'amount' && currentItem.amount) addItem();
+    }
+  };
+
+  return (
+    <div style={{border: '2px solid #6366f1', borderRadius: '8px', padding: '1rem', background: '#eef2ff'}}>
+      <h4 style={{fontSize: '0.95rem', fontWeight: 600, color: '#3730a3', marginBottom: '0.75rem'}}>💰 Advance / Part Payments to Deduct</h4>
+      {!disabled && (
+        <div style={{background: 'white', padding: '1rem', borderRadius: '6px', border: '1px solid #c7d2fe', marginBottom: '1rem'}}>
+          <div className="form-group" style={{marginBottom: '0.75rem'}}>
+            <label className="form-label" style={{fontSize: '0.85rem', color: '#3730a3'}}>
+              1️⃣ Description * <span style={{fontSize: '0.75rem', fontWeight: 'normal'}}>(e.g., Advance paid on 15-Apr-26 · Ref: VCH-2025-00042)</span>
+            </label>
+            <input id="deduction-desc-input" type="text" className="form-input" placeholder="Describe the advance / part payment..."
+              value={currentItem.description} onChange={(e) => setCurrentItem({...currentItem, description: e.target.value})}
+              onKeyPress={(e) => handleKeyPress(e, 'description')} disabled={disabled} style={{borderColor: '#6366f1'}} />
+          </div>
+          {currentItem.description.trim() && (
+            <div className="form-group" style={{marginBottom: '0.75rem'}}>
+              <label className="form-label" style={{fontSize: '0.85rem', color: '#3730a3'}}>
+                2️⃣ Amount to Deduct (₹) * <span style={{fontSize: '0.75rem', fontWeight: 'normal'}}>(Press Enter to add)</span>
+              </label>
+              <input id="deduction-amt-input" type="number" className="form-input" placeholder="0.00"
+                value={currentItem.amount} onChange={(e) => setCurrentItem({...currentItem, amount: e.target.value})}
+                onKeyPress={(e) => handleKeyPress(e, 'amount')} disabled={disabled} step="0.01" min="0"
+                style={{borderColor: '#6366f1'}} />
+            </div>
+          )}
+          {currentItem.description.trim() && currentItem.amount && (
+            <button type="button" onClick={addItem}
+              style={{width: '100%', background: '#6366f1', color: 'white', border: 'none', padding: '0.75rem', borderRadius: '6px', fontWeight: 600, cursor: 'pointer', fontSize: '0.95rem'}}>
+              ➕ Add Deduction
+            </button>
+          )}
+        </div>
+      )}
+      {items.length > 0 && (
+        <table style={{width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem', background: 'white', borderRadius: '6px', overflow: 'hidden'}}>
+          <thead>
+            <tr style={{background: '#6366f1', color: 'white'}}>
+              <th style={{padding: '10px 12px', textAlign: 'center', width: '60px'}}>S.No.</th>
+              <th style={{padding: '10px 12px', textAlign: 'left'}}>Description</th>
+              <th style={{padding: '10px 12px', textAlign: 'right', width: '150px'}}>Deduction (₹)</th>
+              {!disabled && <th style={{padding: '10px 12px', textAlign: 'center', width: '60px'}}></th>}
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((item, index) => (
+              <tr key={index} style={{borderBottom: '1px solid #e0e7ff', background: index % 2 === 0 ? 'white' : '#f5f3ff'}}>
+                <td style={{padding: '10px 12px', textAlign: 'center', fontWeight: 600, color: '#6366f1'}}>{index + 1}</td>
+                <td style={{padding: '10px 12px'}}>{item.description}</td>
+                <td style={{padding: '10px 12px', textAlign: 'right', fontWeight: 600, fontFamily: 'monospace', color: '#6366f1'}}>- {formatRupees(item.amount)}</td>
+                {!disabled && (
+                  <td style={{padding: '10px 12px', textAlign: 'center'}}>
+                    <button type="button" className="btn btn-sm btn-danger" onClick={() => removeItem(index)} title="Remove" style={{padding: '4px 10px', fontSize: '0.85rem'}}>×</button>
+                  </td>
+                )}
+              </tr>
+            ))}
+          </tbody>
+          <tfoot>
+            <tr style={{background: '#e0e7ff', fontWeight: 700}}>
+              <td colSpan={!disabled ? "3" : "2"} style={{padding: '12px', textAlign: 'right', color: '#3730a3'}}>TOTAL DEDUCTIONS:</td>
+              <td style={{padding: '12px', textAlign: 'right', fontFamily: 'monospace', color: '#6366f1'}}>- {formatRupees(getTotal())}</td>
+              {!disabled && <td></td>}
+            </tr>
+          </tfoot>
+        </table>
+      )}
+      {items.length === 0 && disabled && (
+        <div style={{textAlign: 'center', padding: '1.5rem', color: '#6366f1', fontSize: '0.9rem'}}>No deductions recorded</div>
+      )}
+    </div>
+  );
+};
+
 // Create Voucher
 const CreateVoucher = () => {
   const { user, addToast, refreshVouchers } = useApp();
@@ -885,9 +1030,10 @@ const CreateVoucher = () => {
   const [showCustomAccount, setShowCustomAccount] = useState(false);
   const [showAddSubCategory, setShowAddSubCategory] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
+  const [showDeductions, setShowDeductions] = useState(false);
   const [newSubCategory, setNewSubCategory] = useState('');
   const [customAccount, setCustomAccount] = useState('');
-  const [form, setForm] = useState({ headOfAccount: '', subHeadOfAccount: '', narration: '', narrationItems: [], payeeId: '', paymentMode: 'UPI', amount: '', invoiceReference: '' });
+  const [form, setForm] = useState({ headOfAccount: '', subHeadOfAccount: '', narration: '', narrationItems: [], deductions: [], payeeId: '', paymentMode: 'UPI', amount: '', invoiceReference: '' });
   const [newPayee, setNewPayee] = useState({ name: '', alias: '', mobile: '', bankAccount: '', ifsc: '', upiId: '' });
   const [useNarrationTable, setUseNarrationTable] = useState(true);  // Default to TRUE for tabulated format
 
@@ -936,6 +1082,17 @@ const CreateVoucher = () => {
   // Calculate total from narration items
   const calculateNarrationTotal = () => {
     return form.narrationItems.reduce((sum, item) => sum + (parseFloat(item.amount) || 0), 0);
+  };
+
+  // Calculate total deductions
+  const calculateDeductionTotal = () => {
+    return form.deductions.reduce((sum, d) => sum + (parseFloat(d.amount) || 0), 0);
+  };
+
+  // Net payable = gross amount - total deductions
+  const calculateNetAmount = () => {
+    const gross = parseFloat(form.amount) || 0;
+    return Math.max(0, gross - calculateDeductionTotal());
   };
 
   // Auto-update amount when narration items change (if using table)
@@ -1000,6 +1157,11 @@ const CreateVoucher = () => {
       addToast('Fill all required fields (Head of Account, Payee, Amount)', 'error'); 
       return; 
     }
+    const netAmount = calculateNetAmount();
+    if (netAmount <= 0 && !saveAsDraft) {
+      addToast('Net payable amount must be greater than zero after deductions', 'error');
+      return;
+    }
     setLoading(true);
     try { 
       const result = await api.createVoucher({ 
@@ -1008,7 +1170,8 @@ const CreateVoucher = () => {
         subHeadOfAccount: form.subHeadOfAccount || null,
         narration: form.narration, 
         narrationItems: form.narrationItems,
-        amount: parseFloat(form.amount), 
+        deductions: form.deductions,
+        amount: netAmount, 
         paymentMode: form.paymentMode, 
         payeeId: form.payeeId, 
         preparedBy: user.id,
@@ -1017,7 +1180,8 @@ const CreateVoucher = () => {
       }); 
       if (result.success) { 
         addToast(saveAsDraft ? `Draft ${result.serialNumber} saved` : `Voucher ${result.serialNumber} submitted`, 'success'); 
-        setForm({ headOfAccount: '', subHeadOfAccount: '', narration: '', narrationItems: [], payeeId: '', paymentMode: 'UPI', amount: '', invoiceReference: '' }); 
+        setForm({ headOfAccount: '', subHeadOfAccount: '', narration: '', narrationItems: [], deductions: [], payeeId: '', paymentMode: 'UPI', amount: '', invoiceReference: '' }); 
+        setShowDeductions(false);
         setUseNarrationTable(false);
         refreshVouchers(); 
       } else {
@@ -1115,10 +1279,30 @@ const CreateVoucher = () => {
               <textarea className="form-input" rows={2} placeholder="Enter payment description" value={form.narration} onChange={(e) => setForm({ ...form, narration: e.target.value })} />
             )}
           </div>
+
+          {/* Deductions Section */}
+          <div className="form-group">
+            <label className="form-label form-label-row">
+              Deductions / Advance Payments
+              <label style={{display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem', cursor: 'pointer', background: showDeductions ? '#6366f1' : '#888', color: 'white', padding: '0.35rem 0.75rem', borderRadius: '6px'}}>
+                <input type="checkbox" checked={showDeductions} onChange={(e) => {
+                  setShowDeductions(e.target.checked);
+                  if (!e.target.checked) setForm({ ...form, deductions: [] });
+                }} />
+                {showDeductions ? '💰 Deductions Active' : '➖ Add Deductions'}
+              </label>
+            </label>
+            {showDeductions && (
+              <DeductionsTable
+                items={form.deductions}
+                onChange={(items) => setForm({ ...form, deductions: items })}
+              />
+            )}
+          </div>
           
           <div className="form-group">
             <label className="form-label">
-              Amount (₹) * 
+              {showDeductions && form.deductions.length > 0 ? 'Gross Amount (₹) *' : 'Amount (₹) *'}
               {useNarrationTable && form.narrationItems.length > 0 && <span style={{color: '#f59e0b', fontWeight: 'normal', marginLeft: '0.5rem'}}>(auto-calculated from items)</span>}
             </label>
             <input 
@@ -1130,7 +1314,28 @@ const CreateVoucher = () => {
               readOnly={useNarrationTable && form.narrationItems.some(i => parseFloat(i.amount) > 0)}
               style={useNarrationTable && form.narrationItems.some(i => parseFloat(i.amount) > 0) ? {background: '#f5f5f5', fontWeight: 600, fontSize: '1.1rem'} : {}}
             />
-            {form.amount > 0 && (
+            {/* Net amount breakdown when deductions are present */}
+            {showDeductions && form.deductions.length > 0 && parseFloat(form.amount) > 0 && (
+              <div style={{marginTop: '0.75rem', padding: '1rem', background: '#eef2ff', borderRadius: '8px', border: '2px solid #6366f1'}}>
+                <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: '0.4rem', fontSize: '0.9rem'}}>
+                  <span style={{color: '#374151'}}>Gross Amount:</span>
+                  <span style={{fontFamily: 'monospace', fontWeight: 600}}>{formatRupees(parseFloat(form.amount))}</span>
+                </div>
+                <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: '0.4rem', fontSize: '0.9rem', color: '#6366f1'}}>
+                  <span>Less: Deductions:</span>
+                  <span style={{fontFamily: 'monospace', fontWeight: 600}}>- {formatRupees(calculateDeductionTotal())}</span>
+                </div>
+                <div style={{borderTop: '2px solid #6366f1', paddingTop: '0.5rem', display: 'flex', justifyContent: 'space-between', fontSize: '1rem', fontWeight: 700}}>
+                  <span style={{color: '#3730a3'}}>Net Payable:</span>
+                  <span style={{fontFamily: 'monospace', color: '#3730a3'}}>{formatRupees(calculateNetAmount())}</span>
+                </div>
+                <div style={{marginTop: '0.5rem', fontSize: '0.8rem', color: '#6366f1', fontStyle: 'italic'}}>
+                  <strong>Net in Words:</strong> {numberToWordsIndian(calculateNetAmount())}
+                </div>
+              </div>
+            )}
+            {/* In words for gross (when no deductions) */}
+            {(!showDeductions || form.deductions.length === 0) && form.amount > 0 && (
               <div style={{marginTop: '0.5rem', fontSize: '0.85rem', color: '#666', fontStyle: 'italic', background: '#fffbeb', padding: '0.75rem', borderRadius: '6px', border: '1px solid #fcd34d'}}>
                 <strong style={{color: '#92400e'}}>In Words:</strong> {numberToWordsIndian(parseFloat(form.amount))}
               </div>
@@ -1259,8 +1464,12 @@ const CreateVoucher = () => {
 const PreviewVoucher = ({ formData, payees, user }) => {
   const selectedPayee = payees.find(p => p.id === formData.payeeId);
   const narrationItems = formData.narrationItems || [];
+  const deductions = formData.deductions || [];
   const validItems = narrationItems.filter(item => item.description || item.amount);
-  const total = validItems.reduce((sum, item) => sum + (parseFloat(item.amount) || 0), 0) || parseFloat(formData.amount) || 0;
+  const validDeductions = deductions.filter(d => d.description || d.amount);
+  const grossTotal = validItems.reduce((sum, item) => sum + (parseFloat(item.amount) || 0), 0) || parseFloat(formData.amount) || 0;
+  const deductionTotal = validDeductions.reduce((sum, d) => sum + (parseFloat(d.amount) || 0), 0);
+  const netTotal = Math.max(0, grossTotal - deductionTotal);
   
   return (
     <div className="voucher-preview" style={{margin: 0, boxShadow: 'none'}}>
@@ -1302,26 +1511,75 @@ const PreviewVoucher = ({ formData, payees, user }) => {
                 </tr>
               ))}
             </tbody>
-            <tfoot>
-              <tr style={{background: '#fef3c7', fontWeight: 700}}>
-                <td colSpan="2" style={{padding: '10px', textAlign: 'right'}}>TOTAL:</td>
-                <td style={{padding: '10px', textAlign: 'right', fontFamily: 'monospace', color: '#f59e0b'}}>{formatRupees(total)}</td>
-              </tr>
-              <tr style={{background: '#fffbeb'}}>
-                <td colSpan="3" style={{padding: '8px', fontSize: '0.85rem', fontStyle: 'italic', color: '#92400e'}}>
-                  <strong>Amount in Words:</strong> {numberToWordsIndian(total)}
-                </td>
-              </tr>
-            </tfoot>
+            {validDeductions.length === 0 && (
+              <tfoot>
+                <tr style={{background: '#fef3c7', fontWeight: 700}}>
+                  <td colSpan="2" style={{padding: '10px', textAlign: 'right'}}>TOTAL:</td>
+                  <td style={{padding: '10px', textAlign: 'right', fontFamily: 'monospace', color: '#f59e0b'}}>{formatRupees(grossTotal)}</td>
+                </tr>
+                <tr style={{background: '#fffbeb'}}>
+                  <td colSpan="3" style={{padding: '8px', fontSize: '0.85rem', fontStyle: 'italic', color: '#92400e'}}>
+                    <strong>Amount in Words:</strong> {numberToWordsIndian(grossTotal)}
+                  </td>
+                </tr>
+              </tfoot>
+            )}
           </table>
         </div>
       ) : (
-        <>
-          <div className="voucher-total">TOTAL: {formatRupees(total)}</div>
-          <div style={{fontSize: '0.85rem', fontStyle: 'italic', color: '#666', marginTop: '0.5rem', marginBottom: '1rem', background: '#fffbeb', padding: '0.75rem', borderRadius: '6px', border: '1px solid #fcd34d'}}>
-            <strong style={{color: '#92400e'}}>In Words:</strong> {numberToWordsIndian(total)}
+        validDeductions.length === 0 && (
+          <>
+            <div className="voucher-total">TOTAL: {formatRupees(grossTotal)}</div>
+            <div style={{fontSize: '0.85rem', fontStyle: 'italic', color: '#666', marginTop: '0.5rem', marginBottom: '1rem', background: '#fffbeb', padding: '0.75rem', borderRadius: '6px', border: '1px solid #fcd34d'}}>
+              <strong style={{color: '#92400e'}}>In Words:</strong> {numberToWordsIndian(grossTotal)}
+            </div>
+          </>
+        )
+      )}
+
+      {/* Deductions table */}
+      {validDeductions.length > 0 && (
+        <div style={{marginTop: '1rem', marginBottom: '1rem'}}>
+          <div style={{fontWeight: 600, marginBottom: '0.5rem', color: '#3730a3'}}>Less: Advance / Part Payments Deducted</div>
+          <table style={{width: '100%', borderCollapse: 'collapse', border: '2px solid #6366f1', borderRadius: '8px', overflow: 'hidden'}}>
+            <thead>
+              <tr style={{background: '#6366f1', color: 'white'}}>
+                <th style={{padding: '10px', textAlign: 'center', width: '60px'}}>S.No.</th>
+                <th style={{padding: '10px', textAlign: 'left'}}>Description</th>
+                <th style={{padding: '10px', textAlign: 'right', width: '130px'}}>Deduction (₹)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {validDeductions.map((d, idx) => (
+                <tr key={idx} style={{borderBottom: '1px solid #e0e7ff', background: idx % 2 === 0 ? 'white' : '#f5f3ff'}}>
+                  <td style={{padding: '8px', textAlign: 'center', fontWeight: 600}}>{idx + 1}</td>
+                  <td style={{padding: '8px'}}>{d.description}</td>
+                  <td style={{padding: '8px', textAlign: 'right', fontFamily: 'monospace', color: '#6366f1'}}>- {formatRupees(d.amount)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {/* Net payable summary */}
+          <div style={{marginTop: '0.75rem', padding: '0.75rem 1rem', background: '#eef2ff', borderRadius: '8px', border: '2px solid #6366f1'}}>
+            {validItems.length > 0 && (
+              <div style={{display: 'flex', justifyContent: 'space-between', fontSize: '0.9rem', color: '#374151', marginBottom: '0.3rem'}}>
+                <span>Gross Amount:</span>
+                <span style={{fontFamily: 'monospace', fontWeight: 600}}>{formatRupees(grossTotal)}</span>
+              </div>
+            )}
+            <div style={{display: 'flex', justifyContent: 'space-between', fontSize: '0.9rem', color: '#6366f1', marginBottom: '0.4rem'}}>
+              <span>Less: Deductions:</span>
+              <span style={{fontFamily: 'monospace', fontWeight: 600}}>- {formatRupees(deductionTotal)}</span>
+            </div>
+            <div style={{display: 'flex', justifyContent: 'space-between', fontWeight: 700, fontSize: '1.05rem', borderTop: '2px solid #6366f1', paddingTop: '0.4rem'}}>
+              <span style={{color: '#3730a3'}}>NET PAYABLE:</span>
+              <span style={{fontFamily: 'monospace', color: '#3730a3'}}>{formatRupees(netTotal)}</span>
+            </div>
+            <div style={{marginTop: '0.4rem', fontSize: '0.8rem', color: '#6366f1', fontStyle: 'italic'}}>
+              <strong>In Words:</strong> {numberToWordsIndian(netTotal)}
+            </div>
           </div>
-        </>
+        </div>
       )}
       
       <div className="voucher-signatures" style={{marginTop: '1.5rem'}}>
@@ -1368,13 +1626,14 @@ const VoucherList = ({ filter }) => {
   
   // Edit Draft state
   const [showEditModal, setShowEditModal] = useState(false);
-  const [editForm, setEditForm] = useState({ headOfAccount: '', subHeadOfAccount: '', narration: '', narrationItems: [], payeeId: '', paymentMode: 'UPI', amount: '', invoiceReference: '' });
+  const [editForm, setEditForm] = useState({ headOfAccount: '', subHeadOfAccount: '', narration: '', narrationItems: [], deductions: [], payeeId: '', paymentMode: 'UPI', amount: '', invoiceReference: '' });
   const [payees, setPayees] = useState([]);
   const [heads, setHeads] = useState([]);
   const [headsData, setHeadsData] = useState([]);
   const [subHeads, setSubHeads] = useState([]);
   const [allSubHeads, setAllSubHeads] = useState([]);
   const [useNarrationTable, setUseNarrationTable] = useState(false);
+  const [showEditDeductions, setShowEditDeductions] = useState(false);
 
   // Load payees and heads for edit modal
   useEffect(() => {
@@ -1430,18 +1689,29 @@ const VoucherList = ({ filter }) => {
       ? JSON.parse(voucher.narration_items || '[]') 
       : (voucher.narration_items || []);
     const hasItems = narrationItems.length > 0 && narrationItems.some(item => item.description || item.amount);
+
+    const storedDeductions = typeof voucher.deductions === 'string'
+      ? JSON.parse(voucher.deductions || '[]')
+      : (voucher.deductions || []);
+    const validDeductions = storedDeductions.filter(d => d.description || d.amount);
+    const deductionTotal = validDeductions.reduce((sum, d) => sum + (parseFloat(d.amount) || 0), 0);
+    // Reconstruct gross amount: stored amount is NET, so gross = net + deductions
+    const netAmount = parseFloat(voucher.amount) || 0;
+    const grossAmount = netAmount + deductionTotal;
     
     setEditForm({
       headOfAccount: voucher.head_of_account || '',
       subHeadOfAccount: voucher.sub_head_of_account || '',
       narration: voucher.narration || '',
       narrationItems: narrationItems,
+      deductions: validDeductions,
       payeeId: voucher.payee_id || '',
       paymentMode: voucher.payment_mode || 'UPI',
-      amount: voucher.amount?.toString() || '',
+      amount: grossAmount.toFixed(2),
       invoiceReference: voucher.invoice_reference || ''
     });
     setUseNarrationTable(hasItems);
+    setShowEditDeductions(validDeductions.length > 0);
     setShowModal(false);
     setShowEditModal(true);
   };
@@ -1451,6 +1721,12 @@ const VoucherList = ({ filter }) => {
       addToast('Fill all required fields (Head of Account, Payee, Amount)', 'error');
       return;
     }
+    const editDeductionTotal = editForm.deductions.reduce((sum, d) => sum + (parseFloat(d.amount) || 0), 0);
+    const editNetAmount = Math.max(0, (parseFloat(editForm.amount) || 0) - editDeductionTotal);
+    if (editNetAmount <= 0 && !saveAsDraft) {
+      addToast('Net payable amount must be greater than zero after deductions', 'error');
+      return;
+    }
     setLoading(true);
     try {
       const result = await api.updateVoucher(selectedVoucher.id, {
@@ -1458,7 +1734,8 @@ const VoucherList = ({ filter }) => {
         subHeadOfAccount: editForm.subHeadOfAccount || null,
         narration: editForm.narration,
         narrationItems: editForm.narrationItems,
-        amount: parseFloat(editForm.amount),
+        deductions: editForm.deductions,
+        amount: editNetAmount,
         paymentMode: editForm.paymentMode,
         payeeId: editForm.payeeId,
         saveAsDraft: saveAsDraft,
@@ -1565,6 +1842,8 @@ const VoucherList = ({ filter }) => {
         ? JSON.parse(v.narration_items || '[]') 
         : (v.narration_items || []);
       const validItems = items.filter(item => item.description || item.amount);
+      const deductions = typeof v.deductions === 'string' ? JSON.parse(v.deductions || '[]') : (v.deductions || []);
+      const validDeductions = deductions.filter(d => d.description || d.amount);
       
       if (validItems.length === 0) return '';
       
@@ -1590,6 +1869,7 @@ const VoucherList = ({ filter }) => {
                 </tr>
               `).join('')}
             </tbody>
+            ${validDeductions.length === 0 ? `
             <tfoot>
               <tr style="background:#fef3c7;font-weight:700">
                 <td colspan="2" style="text-align:right;padding:10px;border-top:2px solid #f59e0b">TOTAL:</td>
@@ -1600,8 +1880,52 @@ const VoucherList = ({ filter }) => {
                   <strong>In Words:</strong> ${numToWords(itemsTotal)}
                 </td>
               </tr>
-            </tfoot>
+            </tfoot>` : ''}
           </table>
+        </div>
+      `;
+    };
+
+    // Helper to render deductions table
+    const renderDeductions = (v) => {
+      const deductions = typeof v.deductions === 'string' ? JSON.parse(v.deductions || '[]') : (v.deductions || []);
+      const validDeductions = deductions.filter(d => d.description || d.amount);
+      if (validDeductions.length === 0) return '';
+      const deductionTotal = validDeductions.reduce((sum, d) => sum + (parseFloat(d.amount) || 0), 0);
+      return `
+        <div class="particulars-section" style="margin-top:10px">
+          <div class="particulars-title" style="color:#3730a3">Less: Advance / Part Payments Deducted</div>
+          <table class="particulars-table" style="border:1px solid #c7d2fe">
+            <thead>
+              <tr style="background:#6366f1;color:white">
+                <th style="text-align:center;width:10%">S.No.</th>
+                <th style="text-align:left;width:60%">Description</th>
+                <th style="text-align:right;width:30%">Deduction (₹)</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${validDeductions.map((d, idx) => `
+                <tr style="background:${idx % 2 === 0 ? '#fff' : '#f5f3ff'}">
+                  <td style="text-align:center;font-weight:600;color:#6366f1">${idx + 1}</td>
+                  <td style="text-align:left">${d.description || '-'}</td>
+                  <td style="text-align:right;font-weight:600;font-family:monospace;color:#6366f1">- ${formatCurrency(d.amount)}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+          <div style="margin-top:8px;padding:8px 12px;background:#eef2ff;border:2px solid #6366f1;border-radius:4px">
+            <div style="display:flex;justify-content:space-between;font-size:11px;color:#6366f1;margin-bottom:4px">
+              <span>Total Deductions:</span>
+              <span style="font-family:monospace;font-weight:600">- ${formatCurrency(deductionTotal)}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;font-weight:700;font-size:13px;border-top:1px solid #6366f1;padding-top:4px">
+              <span style="color:#3730a3">NET PAYABLE:</span>
+              <span style="font-family:monospace;color:#3730a3">${formatCurrency(v.amount)}</span>
+            </div>
+            <div style="font-size:10px;font-style:italic;color:#6366f1;margin-top:4px">
+              <strong>In Words:</strong> ${numToWords(v.amount)}
+            </div>
+          </div>
         </div>
       `;
     };
@@ -1703,11 +2027,9 @@ const VoucherList = ({ filter }) => {
       </div>
       
       ${renderNarrationItems(v)}
+      ${renderDeductions(v)}
       
-      <div class="voucher-amount">AMOUNT: ${formatCurrency(v.amount)}</div>
-      <div style="font-size:11px;font-style:italic;color:#666;margin-bottom:15px;background:#fffbeb;padding:8px;border-radius:4px;border:1px solid #fcd34d">
-        <strong style="color:#92400e">In Words:</strong> ${numToWords(v.amount)}
-      </div>
+      ${(() => { const deds = typeof v.deductions === 'string' ? JSON.parse(v.deductions || '[]') : (v.deductions || []); const hasDeds = deds.filter(d => d.description || d.amount).length > 0; const items = typeof v.narration_items === 'string' ? JSON.parse(v.narration_items || '[]') : (v.narration_items || []); const hasItems = items.filter(i => i.description || i.amount).length > 0; return (!hasItems && !hasDeds) ? `<div class="voucher-amount">AMOUNT: ${formatCurrency(v.amount)}</div><div style="font-size:11px;font-style:italic;color:#666;margin-bottom:15px;background:#fffbeb;padding:8px;border-radius:4px;border:1px solid #fcd34d"><strong style="color:#92400e">In Words:</strong> ${numToWords(v.amount)}</div>` : ''; })()}
       
       <div class="voucher-signatures">
         <div class="signature-box">
@@ -2213,9 +2535,27 @@ const VoucherList = ({ filter }) => {
                 <textarea className="form-input" rows={2} placeholder="Enter payment description" value={editForm.narration} onChange={(e) => setEditForm({ ...editForm, narration: e.target.value })} />
               )}
             </div>
+
+            {/* Deductions Section */}
+            <div className="form-group">
+              <label className="form-label form-label-row">
+                Deductions / Advance Payments
+                <label style={{display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem', cursor: 'pointer', background: showEditDeductions ? '#6366f1' : '#888', color: 'white', padding: '0.35rem 0.75rem', borderRadius: '6px'}}>
+                  <input type="checkbox" checked={showEditDeductions} onChange={(e) => {
+                    setShowEditDeductions(e.target.checked);
+                    if (!e.target.checked) setEditForm({ ...editForm, deductions: [] });
+                  }} />
+                  {showEditDeductions ? '💰 Deductions Active' : '➖ Add Deductions'}
+                </label>
+              </label>
+              {showEditDeductions && (
+                <DeductionsTable items={editForm.deductions} onChange={(items) => setEditForm({ ...editForm, deductions: items })} />
+              )}
+            </div>
+
             <div className="form-group">
               <label className="form-label">
-                Amount (₹) *
+                {showEditDeductions && editForm.deductions.length > 0 ? 'Gross Amount (₹) *' : 'Amount (₹) *'}
                 {useNarrationTable && editForm.narrationItems.length > 0 && <span style={{color: '#f59e0b', fontWeight: 'normal', marginLeft: '0.5rem'}}>(auto-calculated)</span>}
               </label>
               <input 
@@ -2227,7 +2567,31 @@ const VoucherList = ({ filter }) => {
                 readOnly={useNarrationTable && editForm.narrationItems.some(i => parseFloat(i.amount) > 0)}
                 style={useNarrationTable && editForm.narrationItems.some(i => parseFloat(i.amount) > 0) ? {background: '#f5f5f5', fontWeight: 600, fontSize: '1.1rem'} : {}}
               />
-              {editForm.amount > 0 && (
+              {/* Net amount breakdown when deductions are active */}
+              {showEditDeductions && editForm.deductions.length > 0 && parseFloat(editForm.amount) > 0 && (() => {
+                const editDedTotal = editForm.deductions.reduce((s, d) => s + (parseFloat(d.amount) || 0), 0);
+                const editNet = Math.max(0, (parseFloat(editForm.amount) || 0) - editDedTotal);
+                return (
+                  <div style={{marginTop: '0.75rem', padding: '1rem', background: '#eef2ff', borderRadius: '8px', border: '2px solid #6366f1'}}>
+                    <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: '0.4rem', fontSize: '0.9rem'}}>
+                      <span style={{color: '#374151'}}>Gross Amount:</span>
+                      <span style={{fontFamily: 'monospace', fontWeight: 600}}>{formatRupees(parseFloat(editForm.amount))}</span>
+                    </div>
+                    <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: '0.4rem', fontSize: '0.9rem', color: '#6366f1'}}>
+                      <span>Less: Deductions:</span>
+                      <span style={{fontFamily: 'monospace', fontWeight: 600}}>- {formatRupees(editDedTotal)}</span>
+                    </div>
+                    <div style={{borderTop: '2px solid #6366f1', paddingTop: '0.5rem', display: 'flex', justifyContent: 'space-between', fontSize: '1rem', fontWeight: 700}}>
+                      <span style={{color: '#3730a3'}}>Net Payable:</span>
+                      <span style={{fontFamily: 'monospace', color: '#3730a3'}}>{formatRupees(editNet)}</span>
+                    </div>
+                    <div style={{marginTop: '0.5rem', fontSize: '0.8rem', color: '#6366f1', fontStyle: 'italic'}}>
+                      <strong>Net in Words:</strong> {numberToWordsIndian(editNet)}
+                    </div>
+                  </div>
+                );
+              })()}
+              {(!showEditDeductions || editForm.deductions.length === 0) && editForm.amount > 0 && (
                 <div style={{marginTop: '0.5rem', fontSize: '0.85rem', color: '#666', fontStyle: 'italic', background: '#fffbeb', padding: '0.75rem', borderRadius: '6px', border: '1px solid #fcd34d'}}>
                   <strong style={{color: '#92400e'}}>In Words:</strong> {numberToWordsIndian(parseFloat(editForm.amount))}
                 </div>

@@ -902,7 +902,7 @@ const getNextVoucherNumber = async (companyId) => {
 
 // Create voucher (submit for approval) or save as draft
 app.post('/api/vouchers', async (req, res) => {
-  const { companyId, headOfAccount, subHeadOfAccount, narration, narrationItems, amount, paymentMode, payeeId, preparedBy, saveAsDraft, invoiceReference } = req.body;
+  const { companyId, headOfAccount, subHeadOfAccount, narration, narrationItems, deductions, amount, paymentMode, payeeId, preparedBy, saveAsDraft, invoiceReference } = req.body;
   
   if (!companyId || !headOfAccount || !amount || !paymentMode || !payeeId || !preparedBy) {
     return res.status(400).json({ error: 'Missing required fields' });
@@ -924,6 +924,7 @@ app.post('/api/vouchers', async (req, res) => {
       sub_head_of_account: subHeadOfAccount || null,
       narration: narration || '',
       narration_items: narrationItems || [],
+      deductions: deductions || [],
       amount,
       payment_mode: paymentMode,
       payee_id: payeeId,
@@ -985,7 +986,7 @@ app.post('/api/vouchers', async (req, res) => {
 
 // Update draft voucher
 app.put('/api/vouchers/:voucherId', async (req, res) => {
-  const { headOfAccount, subHeadOfAccount, narration, narrationItems, amount, paymentMode, payeeId, invoiceReference } = req.body;
+  const { headOfAccount, subHeadOfAccount, narration, narrationItems, deductions, amount, paymentMode, payeeId, invoiceReference } = req.body;
   
   try {
     // First check if voucher exists and is a draft
@@ -1005,6 +1006,7 @@ app.put('/api/vouchers/:voucherId', async (req, res) => {
     if (subHeadOfAccount !== undefined) updateData.sub_head_of_account = subHeadOfAccount;
     if (narration !== undefined) updateData.narration = narration;
     if (narrationItems !== undefined) updateData.narration_items = narrationItems;
+    if (deductions !== undefined) updateData.deductions = deductions;
     if (amount !== undefined) updateData.amount = amount;
     if (paymentMode !== undefined) updateData.payment_mode = paymentMode;
     if (payeeId !== undefined) updateData.payee_id = payeeId;
