@@ -243,6 +243,247 @@ const PWAInstallPrompt = () => {
   );
 };
 
+// ─── Mobile device detection ─────────────────────────────────────────────────
+const isMobileDevice = () => {
+  const ua = navigator.userAgent;
+  const isMobileUA = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(ua);
+  const isStandalone = window.matchMedia('(display-mode: standalone)').matches || !!window.navigator.standalone;
+  return isMobileUA || isStandalone;
+};
+
+// ─── Simple PIN hash (salted, non-reversible) ────────────────────────────────
+const hashPin = (pin) => {
+  let hash = 0;
+  const str = 'relish_salt_' + pin + '_2026';
+  for (let i = 0; i < str.length; i++) {
+    hash = ((hash << 5) - hash) + str.charCodeAt(i);
+    hash |= 0;
+  }
+  return 'p_' + Math.abs(hash).toString(36);
+};
+
+// ─── Shared numpad used by both SetPinModal and MobileLockScreen ─────────────
+const PinNumpad = ({ value, onChange, disabled }) => {
+  const handle = (key) => {
+    if (disabled) return;
+    if (key === '⌫') { onChange(value.slice(0, -1)); return; }
+    if (value.length < 4) onChange(value + key);
+  };
+  return (
+    <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'10px',maxWidth:'252px',margin:'0 auto'}}>
+      {[1,2,3,4,5,6,7,8,9,'',0,'⌫'].map((k,i) => (
+        <button key={i} type="button" disabled={k===''||disabled}
+          onPointerDown={(e) => { e.preventDefault(); handle(String(k)); }}
+          style={{height:'54px',border:k===''?'none':'1.5px solid #ddd',borderRadius:'14px',
+            background:k===''?'transparent':'#fafafa',fontSize:k==='⌫'?'1.2rem':'1.4rem',
+            fontWeight:600,cursor:k===''?'default':'pointer',fontFamily:'inherit',color:'#222',
+            WebkitTapHighlightColor:'transparent',touchAction:'manipulation'}}>
+          {k}
+        </button>
+      ))}
+    </div>
+  );
+};
+
+// ─── PIN dots display ────────────────────────────────────────────────────────
+const PinDots = ({ length, filled, shake }) => (
+  <div className={`pin-dots${shake?' pin-shake':''}`}>
+    {Array.from({length},(_,i)=>(
+      <div key={i} className={`pin-dot${i<filled?' filled':''}`}/>
+    ))}
+  </div>
+);
+
+// ─── Set PIN modal (shown once after first mobile login) ─────────────────────
+const SetPinModal = ({ onPinSet, onSkip }) => {
+  const [step, setStep] = useState(1);
+  const [pin, setPin] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [error, setError] = useState('');
+  const [shake, setShake] = useState(false);
+
+  const handlePin = (v) => {
+    setPin(v); setError('');
+    if (v.length === 4) setTimeout(() => setStep(2), 280);
+  };
+  const handleConfirm = (v) => {
+    setConfirm(v); setError('');
+    if (v.length === 4) {
+      if (v === pin) { onPinSet(v); }
+      else {
+        setError('PINs do not match — try again');
+        setShake(true); setTimeout(() => setShake(false), 500);
+        setConfirm(''); setStep(1); setPin('');
+      }
+    }
+  };
+
+  const cur = step === 1 ? pin : confirm;
+  return (
+    <div className="modal-overlay">
+      <div className="modal" style={{maxWidth:'360px'}}>
+        <div className="modal-header"><h3 className="modal-title">🔒 Set App PIN</h3></div>
+        <div className="modal-body" style={{textAlign:'center',padding:'1.5rem'}}>
+          <p style={{fontSize:'0.88rem',color:'#555',marginBottom:'1.25rem'}}>
+            {step===1 ? 'Enter a 4-digit PIN to lock this app when not in use.' : 'Re-enter your PIN to confirm.'}
+          </p>
+          {error && <div className="alert alert-error" style={{marginBottom:'1rem',fontSize:'0.82rem'}}>{error}</div>}
+          <PinDots length={4} filled={cur.length} shake={shake}/>
+          <div style={{marginTop:'1.25rem'}}>
+            <PinNumpad value={cur} onChange={step===1?handlePin:handleConfirm}/>
+          </div>
+          <p style={{fontSize:'0.75rem',color:'#aaa',marginTop:'1rem'}}>Step {step} of 2</p>
+        </div>
+        <div className="modal-footer" style={{justifyContent:'center'}}>
+          <button className="btn btn-secondary" style={{fontSize:'0.82rem'}} onClick={onSkip}>Skip for now</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ─── Mobile Lock Screen (biometric first → PIN fallback) ─────────────────────
+const MobileLockScreen = ({ savedUser, onUnlock, onSignOut }) => {
+  const hasPin   = !!localStorage.getItem('relish_mobile_pin');
+  const hasBio   = !!localStorage.getItem('relish_mobile_bio_id');
+  const [mode, setMode]     = useState(hasBio ? 'bio' : 'pin');
+  const [pin, setPin]       = useState('');
+  const [error, setError]   = useState('');
+  const [attempts, setAttempts] = useState(0);
+  const [shake, setShake]   = useState(false);
+  const [bioLoading, setBioLoading] = useState(false);
+
+  // Auto-trigger biometric on mount
+  useEffect(() => { if (mode === 'bio') attemptBio(); }, []);
+
+  const attemptBio = async () => {
+    setBioLoading(true); setError('');
+    try {
+      const credIdB64 = localStorage.getItem('relish_mobile_bio_id');
+      const challenge = crypto.getRandomValues(new Uint8Array(32));
+      const credIdBytes = Uint8Array.from(atob(credIdB64), c => c.charCodeAt(0));
+      await navigator.credentials.get({
+        publicKey: {
+          challenge,
+          allowCredentials: [{ id: credIdBytes, type: 'public-key', transports: ['internal'] }],
+          userVerification: 'required',
+          timeout: 60000
+        }
+      });
+      onUnlock(savedUser);
+    } catch (e) {
+      setBioLoading(false);
+      if (e.name === 'NotAllowedError') setError('Biometric cancelled. Try again or use PIN.');
+      else { setError('Biometric unavailable. Use PIN.'); setMode('pin'); }
+    }
+  };
+
+  const handlePinChange = (v) => {
+    setPin(v); setError('');
+    if (v.length === 4) {
+      const stored = localStorage.getItem('relish_mobile_pin');
+      if (stored && hashPin(v) === stored) {
+        onUnlock(savedUser);
+      } else {
+        const att = attempts + 1;
+        setAttempts(att);
+        setShake(true); setTimeout(() => setShake(false), 500);
+        setPin('');
+        if (att >= 5) {
+          setError('Too many attempts — please sign in again.');
+          setTimeout(() => { localStorage.removeItem('relish_session'); localStorage.removeItem('relish_mobile_pin'); localStorage.removeItem('relish_mobile_bio_id'); localStorage.removeItem('relish_page'); onSignOut(); }, 2000);
+        } else {
+          setError(`Incorrect PIN — ${5-att} attempt${5-att===1?'':'s'} left`);
+        }
+      }
+    }
+  };
+
+  return (
+    <div className="lock-screen-container">
+      <div className="lock-screen-card">
+        <div className="lock-screen-avatar">{savedUser.name ? savedUser.name[0].toUpperCase() : '?'}</div>
+        <h2 className="lock-screen-name">{savedUser.name}</h2>
+        <p className="lock-screen-company">{savedUser.company?.name || ''}</p>
+
+        {mode === 'bio' ? (
+          <div style={{textAlign:'center'}}>
+            <button
+              onClick={attemptBio} disabled={bioLoading}
+              style={{background:'var(--relish-orange)',border:'none',borderRadius:'50%',
+                width:'80px',height:'80px',fontSize:'2.2rem',cursor:'pointer',margin:'1.5rem auto',
+                display:'flex',alignItems:'center',justifyContent:'center',
+                boxShadow:'0 0 0 8px rgba(245,132,31,0.18)',transition:'transform 0.1s'}}
+              title="Unlock with Face / Fingerprint">
+              {bioLoading ? '⏳' : '🔐'}
+            </button>
+            <p style={{fontSize:'0.85rem',color:'#888',marginBottom:'0.5rem'}}>
+              {bioLoading ? 'Waiting for biometric…' : 'Tap to unlock with Face / Fingerprint'}
+            </p>
+            {error && <div className="alert alert-error" style={{fontSize:'0.82rem',marginBottom:'0.75rem'}}>{error}</div>}
+            {hasPin && (
+              <button className="lock-screen-signout" style={{color:'var(--relish-orange)'}} onClick={() => { setMode('pin'); setError(''); }}>
+                Use PIN instead
+              </button>
+            )}
+          </div>
+        ) : (
+          <div style={{width:'100%'}}>
+            <p className="lock-screen-subtitle">Enter your 4-digit PIN</p>
+            {error && <div className="alert alert-error" style={{fontSize:'0.82rem',marginBottom:'0.75rem'}}>{error}</div>}
+            <PinDots length={4} filled={pin.length} shake={shake}/>
+            <div style={{marginTop:'1.25rem'}}><PinNumpad value={pin} onChange={handlePinChange} disabled={attempts>=5}/></div>
+            {hasBio && (
+              <button className="lock-screen-signout" style={{color:'var(--relish-orange)',marginTop:'0.75rem'}} onClick={() => { setMode('bio'); setError(''); setPin(''); attemptBio(); }}>
+                Use Face / Fingerprint instead
+              </button>
+            )}
+          </div>
+        )}
+
+        <button className="lock-screen-signout" onClick={onSignOut}>{Icons.logOut} Sign in with a different account</button>
+      </div>
+    </div>
+  );
+};
+
+// ─── Register mobile biometric (called once after login on mobile) ────────────
+const registerMobileBiometric = async (userData) => {
+  if (!window.PublicKeyCredential) return false;
+  try {
+    const available = await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
+    if (!available) return false;
+    const challenge = crypto.getRandomValues(new Uint8Array(32));
+    const credential = await navigator.credentials.create({
+      publicKey: {
+        challenge,
+        rp: { name: 'Relish Approvals', id: location.hostname },
+        user: {
+          id: new TextEncoder().encode(String(userData.id)),
+          name: userData.username || userData.name,
+          displayName: userData.name || userData.username
+        },
+        pubKeyCredParams: [{ alg: -7, type: 'public-key' }, { alg: -257, type: 'public-key' }],
+        authenticatorSelection: {
+          authenticatorAttachment: 'platform',
+          userVerification: 'required',
+          residentKey: 'discouraged'
+        },
+        timeout: 60000,
+        attestation: 'none'
+      }
+    });
+    if (credential) {
+      const credId = btoa(String.fromCharCode(...new Uint8Array(credential.rawId)));
+      localStorage.setItem('relish_mobile_bio_id', credId);
+      return true;
+    }
+  } catch (e) {
+    console.log('Mobile biometric setup skipped:', e.name);
+  }
+  return false;
+};
+
 // OTP Input
 const OTPInput = ({ length = 6, value = '', onChange }) => {
   const handleChange = (index, digit) => {
@@ -4808,18 +5049,56 @@ const AccountsManagement = () => {
 const App = () => {
   const [user, setUser] = useState(() => {
     try {
+      // On mobile with lock active, start as null — lock screen will re-hydrate
+      if (isMobileDevice()) {
+        const hasLock = !!localStorage.getItem('relish_mobile_pin') || !!localStorage.getItem('relish_mobile_bio_id');
+        if (hasLock && localStorage.getItem('relish_session')) return null;
+      }
       const s = localStorage.getItem('relish_session');
       return s ? JSON.parse(s) : null;
     } catch { return null; }
   });
-  // biometricLocked: true when session exists but device biometric hasn't unlocked yet
-  const [biometricLocked, setBiometricLocked] = useState(() => {
+
+  // Mobile-only lock state
+  const [mobileLocked, setMobileLocked] = useState(() => {
     try {
-      const hasSession = !!localStorage.getItem('relish_session');
-      const hasCredential = !!localStorage.getItem('relish_biometric_id');
-      return hasSession && hasCredential;
+      if (!isMobileDevice()) return false;
+      const hasLock = !!localStorage.getItem('relish_mobile_pin') || !!localStorage.getItem('relish_mobile_bio_id');
+      return hasLock && !!localStorage.getItem('relish_session');
     } catch { return false; }
   });
+  const [mobileSavedUser, setMobileSavedUser] = useState(() => {
+    try {
+      if (!isMobileDevice()) return null;
+      const hasLock = !!localStorage.getItem('relish_mobile_pin') || !!localStorage.getItem('relish_mobile_bio_id');
+      if (hasLock) { const s = localStorage.getItem('relish_session'); return s ? JSON.parse(s) : null; }
+    } catch {}
+    return null;
+  });
+  const [showPinSetup, setShowPinSetup] = useState(false);
+  const bgTimestamp = React.useRef(null);
+
+  // Re-lock on return from background (mobile only, >10 s)
+  useEffect(() => {
+    if (!isMobileDevice()) return;
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') {
+        bgTimestamp.current = Date.now();
+      } else if (document.visibilityState === 'visible') {
+        const elapsed = bgTimestamp.current ? Date.now() - bgTimestamp.current : 0;
+        bgTimestamp.current = null;
+        const hasLock = !!localStorage.getItem('relish_mobile_pin') || !!localStorage.getItem('relish_mobile_bio_id');
+        if (elapsed > 10000 && hasLock && user) {
+          setMobileSavedUser(user);
+          setMobileLocked(true);
+          setUser(null);
+        }
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
+  }, [user]);
+
   const [vouchers, setVouchers] = useState([]);
   const [notifications, setNotifications] = useState([]);
   const [currentPage, setCurrentPage] = useState(() => {
@@ -5056,104 +5335,57 @@ const App = () => {
 
   useEffect(() => { if (user) { refreshVouchers(); refreshNotifications(); const interval = setInterval(() => { refreshVouchers(); refreshNotifications(); }, 30000); return () => clearInterval(interval); } }, [user, refreshVouchers, refreshNotifications]);
 
-  // ── Biometric helpers ────────────────────────────────────────────────────
-  const isBiometricSupported = () =>
-    window.PublicKeyCredential &&
-    typeof PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable === 'function';
-
-  const registerBiometric = async (userData) => {
-    if (!isBiometricSupported()) return;
-    try {
-      const available = await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
-      if (!available) return;
-      const challenge = crypto.getRandomValues(new Uint8Array(32));
-      const userId = new TextEncoder().encode(userData.id);
-      const credential = await navigator.credentials.create({
-        publicKey: {
-          challenge,
-          rp: { name: 'Relish Approvals', id: location.hostname },
-          user: { id: userId, name: userData.username, displayName: userData.name },
-          pubKeyCredParams: [{ alg: -7, type: 'public-key' }, { alg: -257, type: 'public-key' }],
-          authenticatorSelection: { authenticatorAttachment: 'platform', userVerification: 'required' },
-          timeout: 60000
-        }
-      });
-      if (credential) {
-        const credId = btoa(String.fromCharCode(...new Uint8Array(credential.rawId)));
-        localStorage.setItem('relish_biometric_id', credId);
-        return true;
-      }
-    } catch (e) {
-      console.log('Biometric registration cancelled or failed:', e.message);
-    }
-    return false;
-  };
-
-  const verifyBiometric = async () => {
-    if (!isBiometricSupported()) return false;
-    try {
-      const credIdB64 = localStorage.getItem('relish_biometric_id');
-      if (!credIdB64) return false;
-      const credIdBytes = Uint8Array.from(atob(credIdB64), c => c.charCodeAt(0));
-      const challenge = crypto.getRandomValues(new Uint8Array(32));
-      const assertion = await navigator.credentials.get({
-        publicKey: {
-          challenge,
-          allowCredentials: [{ id: credIdBytes, type: 'public-key', transports: ['internal'] }],
-          userVerification: 'required',
-          timeout: 60000
-        }
-      });
-      return !!assertion;
-    } catch (e) {
-      console.log('Biometric verify failed:', e.message);
-      return false;
-    }
-  };
-
-  const handleBiometricUnlock = async () => {
-    const ok = await verifyBiometric();
-    if (ok) {
-      setBiometricLocked(false);
-    } else {
-      addToast('Biometric verification failed. Use username to log in.', 'error');
-    }
-  };
-
-  const handleBiometricFallback = () => {
-    // Clear stored session + biometric, go to login
-    try { localStorage.removeItem('relish_session'); localStorage.removeItem('relish_biometric_id'); localStorage.removeItem('relish_page'); } catch {}
-    setBiometricLocked(false);
-    setUser(null);
-  };
-  // ────────────────────────────────────────────────────────────────────────
-
   const handleLogin = async (userData) => {
     try { localStorage.setItem('relish_session', JSON.stringify(userData)); } catch {}
     try { localStorage.setItem('relish_page', 'dashboard'); } catch {}
+    // Clean up legacy keys
+    try { localStorage.removeItem('relish_biometric_id'); } catch {}
     setUser(userData);
     setCurrentPage('dashboard');
-    // Offer biometric registration if not yet registered and platform supports it
-    if (isBiometricSupported() && !localStorage.getItem('relish_biometric_id')) {
-      try {
-        const available = await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
-        if (available) {
-          // Small delay so dashboard renders first
-          setTimeout(async () => {
-            const consent = window.confirm('Enable fingerprint / face login for faster sign-in?\n\nYou can disable this in Settings anytime.');
-            if (consent) {
-              const ok = await registerBiometric(userData);
-              if (ok) addToast('Biometric login enabled! Use your fingerprint/face next time.', 'success');
-            }
-          }, 800);
+    // Mobile only: offer biometric or PIN setup if not yet configured
+    if (isMobileDevice()) {
+      const alreadySetup = !!localStorage.getItem('relish_mobile_pin') || !!localStorage.getItem('relish_mobile_bio_id');
+      if (!alreadySetup) {
+        // Try to register native biometric (Face/Fingerprint) silently
+        const bioRegistered = await registerMobileBiometric(userData);
+        if (!bioRegistered) {
+          // Biometric not available — offer PIN setup
+          setShowPinSetup(true);
         }
-      } catch {}
+      }
     }
   };
   const handleLogout = () => {
-    try { localStorage.removeItem('relish_session'); localStorage.removeItem('relish_page'); localStorage.removeItem('relish_biometric_id'); } catch {}
-    setBiometricLocked(false);
+    try {
+      localStorage.removeItem('relish_session');
+      localStorage.removeItem('relish_page');
+      localStorage.removeItem('relish_biometric_id');
+      localStorage.removeItem('relish_mobile_pin');
+      localStorage.removeItem('relish_mobile_bio_id');
+    } catch {}
+    setMobileLocked(false); setMobileSavedUser(null); setShowPinSetup(false);
     setUser(null); setVouchers([]); setNotifications([]); setCurrentPage('dashboard');
+  };
+  const handleMobileUnlock = (savedUser) => {
+    setUser(savedUser);
+    setMobileLocked(false); setMobileSavedUser(null);
+    setCurrentPage(localStorage.getItem('relish_page') || 'dashboard');
+    // Refresh session timestamp
+    try { localStorage.setItem('relish_session', JSON.stringify(savedUser)); } catch {}
+  };
+  const handleMobileLockSignOut = () => {
+    try {
+      localStorage.removeItem('relish_session');
+      localStorage.removeItem('relish_page');
+      localStorage.removeItem('relish_mobile_pin');
+      localStorage.removeItem('relish_mobile_bio_id');
+    } catch {}
+    setMobileLocked(false); setMobileSavedUser(null);
+  };
+  const handlePinSet = (pin) => {
+    localStorage.setItem('relish_mobile_pin', hashPin(pin));
+    setShowPinSetup(false);
+    addToast('PIN set! App will lock when you leave.', 'success');
   };
   const handleSwitchCompany = async (companyId) => {
     setSwitchingCompany(true);
@@ -5179,29 +5411,12 @@ const App = () => {
   const markAllRead = async () => { await api.markAllNotificationsRead(user.id); refreshNotifications(); };
   const hasMultipleCompanies = user?.companies?.length > 1;
 
-  if (!user) return <LoginPage onLogin={handleLogin} />;
+  // Mobile lock screen
+  if (mobileLocked && mobileSavedUser) {
+    return <MobileLockScreen savedUser={mobileSavedUser} onUnlock={handleMobileUnlock} onSignOut={handleMobileLockSignOut} />;
+  }
 
-  // Biometric lock screen — session exists but device hasn't verified yet
-  if (biometricLocked) return (
-    <div style={{minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--relish-dark)', flexDirection: 'column', gap: '2rem', padding: '2rem'}}>
-      <img src="logo.png" alt="Relish" style={{width: '90px', borderRadius: '18px'}} />
-      <div style={{textAlign: 'center'}}>
-        <div style={{fontSize: '1.4rem', fontWeight: 700, color: 'white', marginBottom: '0.5rem'}}>{user.name}</div>
-        <div style={{fontSize: '0.9rem', color: '#aaa'}}>{user.company.name}</div>
-      </div>
-      <button
-        onClick={handleBiometricUnlock}
-        style={{background: 'var(--relish-orange)', border: 'none', borderRadius: '50%', width: '88px', height: '88px', cursor: 'pointer', fontSize: '2.4rem', boxShadow: '0 0 0 6px rgba(245,132,31,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center'}}
-        title="Unlock with biometric"
-      >
-        🔐
-      </button>
-      <div style={{color: '#ddd', fontSize: '1rem', fontWeight: 500}}>Tap to unlock with Face / Fingerprint</div>
-      <button onClick={handleBiometricFallback} style={{background: 'transparent', border: '1px solid #555', color: '#aaa', borderRadius: '8px', padding: '0.5rem 1.5rem', cursor: 'pointer', fontSize: '0.85rem', marginTop: '1rem'}}>
-        Use username instead
-      </button>
-    </div>
-  );
+  if (!user) return <LoginPage onLogin={handleLogin} />;
 
   const contextValue = { user, vouchers, notifications, addToast, refreshVouchers, refreshNotifications };
   const renderPage = () => { switch(currentPage) { case 'dashboard': return <Dashboard />; case 'create': return (user.role === 'accounts' || user.isSuperAdmin) ? <CreateVoucher /> : <Dashboard />; case 'drafts': return (user.role === 'accounts' || user.isSuperAdmin) ? <VoucherList filter="draft" /> : <Dashboard />; case 'pending': return <VoucherList filter="pending" />; case 'approved': return <VoucherList filter="approved" />; case 'completed': return <VoucherList filter="completed" />; case 'all': return <VoucherList filter="all" />; case 'users': return user.isSuperAdmin ? <UsersManagement /> : <Dashboard />; case 'payees': return (user.role === 'accounts' || user.isSuperAdmin) ? <PayeesManagement /> : <Dashboard />; case 'accounts': return (user.role === 'accounts' || user.isSuperAdmin) ? <AccountsManagement /> : <Dashboard />; default: return <Dashboard />; } };
@@ -5215,6 +5430,7 @@ const App = () => {
   return (
     <AppContext.Provider value={contextValue}>
       <PWAInstallPrompt />
+      {showPinSetup && <SetPinModal onPinSet={handlePinSet} onSkip={() => setShowPinSetup(false)} />}
       <div className="app-container">
         <header className="header">
           <div className="header-left">
@@ -5283,26 +5499,6 @@ const App = () => {
           <div className="header-right">
             <div className="user-badge">{user.isSuperAdmin ? '👑' : user.role === 'admin' ? Icons.shield : Icons.user} {user.username}</div>
             <button className="notification-btn" onClick={() => setShowNotifications(!showNotifications)}>{Icons.bell}{unreadCount > 0 && <span className="notification-badge">{unreadCount}</span>}</button>
-            {/* Biometric toggle button */}
-            {isBiometricSupported() && (
-              <button
-                className="btn btn-sm btn-secondary"
-                title={localStorage.getItem('relish_biometric_id') ? 'Biometric login ON — click to disable' : 'Enable fingerprint/face login'}
-                style={{padding: '6px 10px', fontSize: '1.1rem', lineHeight: 1}}
-                onClick={async () => {
-                  if (localStorage.getItem('relish_biometric_id')) {
-                    if (window.confirm('Disable fingerprint/face login?')) {
-                      localStorage.removeItem('relish_biometric_id');
-                      addToast('Biometric login disabled', 'info');
-                    }
-                  } else {
-                    const ok = await registerBiometric(user);
-                    if (ok) addToast('Biometric login enabled!', 'success');
-                    else addToast('Biometric setup cancelled or not available', 'error');
-                  }
-                }}
-              >{localStorage.getItem('relish_biometric_id') ? '🔐' : '🔓'}</button>
-            )}
             <button className="logout-btn" onClick={handleLogout}>{Icons.logOut} Sign Out</button>
           </div>
         </header>

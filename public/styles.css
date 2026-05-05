@@ -1235,3 +1235,78 @@ body {
     padding: 4px 6px !important;
   }
 }
+
+/* ===== Mobile Lock Screen ===== */
+.lock-screen-container {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(145deg, #1a1a2e 0%, #16213e 55%, #3a1c5e 100%);
+  padding: 1.5rem;
+}
+.lock-screen-card {
+  background: white;
+  border-radius: 28px;
+  padding: 2.5rem 1.75rem 2rem;
+  width: 100%;
+  max-width: 360px;
+  text-align: center;
+  box-shadow: 0 24px 64px rgba(0,0,0,0.4);
+  animation: lockSlideUp 0.35s ease-out;
+}
+@keyframes lockSlideUp {
+  from { opacity: 0; transform: translateY(28px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.lock-screen-avatar {
+  width: 68px; height: 68px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--relish-orange), var(--relish-red));
+  color: white;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1.9rem; font-weight: 700;
+  margin: 0 auto 1rem;
+  box-shadow: 0 4px 18px rgba(245,132,31,0.3);
+}
+.lock-screen-name {
+  font-size: 1.25rem; font-weight: 700; color: #1a1a2e; margin: 0 0 0.2rem;
+}
+.lock-screen-company {
+  font-size: 0.82rem; color: #999; margin: 0 0 0.75rem;
+}
+.lock-screen-subtitle {
+  font-size: 0.88rem; color: #666; margin: 0 0 1.25rem;
+}
+.lock-screen-signout {
+  background: none; border: none; color: #aaa;
+  font-size: 0.78rem; cursor: pointer; margin-top: 1rem;
+  display: flex; align-items: center; justify-content: center;
+  gap: 5px; font-family: inherit; transition: color 0.2s; width: 100%;
+}
+.lock-screen-signout:hover { color: var(--relish-red); }
+
+/* PIN dots */
+.pin-dots {
+  display: flex; justify-content: center; gap: 14px; margin: 0 auto 1.25rem;
+}
+.pin-dot {
+  width: 16px; height: 16px; border-radius: 50%;
+  border: 2px solid #ccc; background: transparent;
+  transition: all 0.18s ease;
+}
+.pin-dot.filled {
+  background: var(--relish-orange); border-color: var(--relish-orange);
+  transform: scale(1.15);
+}
+@keyframes pinShake {
+  0%,100%  { transform: translateX(0); }
+  20%,60%  { transform: translateX(-8px); }
+  40%,80%  { transform: translateX(8px); }
+}
+.pin-shake { animation: pinShake 0.45s ease-in-out; }
+.pin-shake .pin-dot.filled { background: var(--relish-red); border-color: var(--relish-red); }
+
+@media (max-width: 400px) {
+  .lock-screen-card { padding: 2rem 1.25rem 1.75rem; border-radius: 22px; }
+}
