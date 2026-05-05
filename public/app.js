@@ -246,9 +246,8 @@ const PWAInstallPrompt = () => {
 // ─── Mobile device detection ─────────────────────────────────────────────────
 const isMobileDevice = () => {
   const ua = navigator.userAgent;
-  const isMobileUA = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(ua);
-  const isStandalone = window.matchMedia('(display-mode: standalone)').matches || !!window.navigator.standalone;
-  return isMobileUA || isStandalone;
+  // Only match genuine mobile user agents — desktop PWA installs have desktop UA strings
+  return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(ua);
 };
 
 // ─── Simple PIN hash (salted, non-reversible) ────────────────────────────────
