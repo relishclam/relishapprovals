@@ -268,6 +268,18 @@ const PinNumpad = ({ value, onChange, disabled }) => {
     if (key === '⌫') { onChange(value.slice(0, -1)); return; }
     if (value.length < 4) onChange(value + key);
   };
+
+  // Accept keyboard input (digits + Backspace)
+  useEffect(() => {
+    const onKey = (e) => {
+      if (disabled) return;
+      if (e.key === 'Backspace') { e.preventDefault(); handle('⌫'); }
+      else if (/^[0-9]$/.test(e.key)) { e.preventDefault(); handle(e.key); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [value, disabled]);
+
   return (
     <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'10px',maxWidth:'252px',margin:'0 auto'}}>
       {[1,2,3,4,5,6,7,8,9,'',0,'⌫'].map((k,i) => (
