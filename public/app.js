@@ -5224,6 +5224,7 @@ const BillAttachmentPanel = ({ voucherId, voucherType = 'regular', suspenseId, s
   const videoRef = React.useRef(null);
   const canvasRef = React.useRef(null);
   const pollIntervalRef = React.useRef(null);
+  const [confirmDeleteId, setConfirmDeleteId] = React.useState(null);
 
   const loadAttachments = async () => {
     setLoading(true);
@@ -5278,8 +5279,8 @@ const BillAttachmentPanel = ({ voucherId, voucherType = 'regular', suspenseId, s
   };
 
   const handleDelete = async (attId) => {
-    if (!confirm('Delete this attachment?')) return;
     const result = await api.deleteAttachment(attId, user.id);
+    setConfirmDeleteId(null);
     if (result.success) { addToast('Attachment deleted', 'success'); loadAttachments(); }
     else addToast(result.error || 'Delete failed', 'error');
   };
@@ -5410,9 +5411,19 @@ const BillAttachmentPanel = ({ voucherId, voucherType = 'regular', suspenseId, s
                 <div style={{ fontWeight: 500, fontSize: '0.85rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{att.file_name}</div>
                 <div style={{ fontSize: '0.75rem', color: '#888' }}>by {att.uploader?.name || 'Unknown'} · {new Date(att.uploaded_at).toLocaleDateString('en-IN')}</div>
               </div>
-              <a href={att.public_url} target="_blank" rel="noopener noreferrer" className="btn btn-sm btn-secondary" style={{ padding: '4px 8px', fontSize: '0.75rem' }}>{Icons.eye}</a>
+              {confirmDeleteId !== att.id && (
+                <a href={att.public_url} target="_blank" rel="noopener noreferrer" className="btn btn-sm btn-secondary" style={{ padding: '4px 8px', fontSize: '0.75rem' }}>{Icons.eye}</a>
+              )}
               {(att.uploaded_by === user.id || user.role === 'admin' || user.isSuperAdmin) && (
-                <button className="btn btn-sm btn-danger" style={{ padding: '4px 8px', fontSize: '0.75rem' }} onClick={() => handleDelete(att.id)}>{Icons.x}</button>
+                confirmDeleteId === att.id ? (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    <span style={{ fontSize: '0.75rem', color: '#dc2626', fontWeight: 600, whiteSpace: 'nowrap' }}>Delete?</span>
+                    <button className="btn btn-sm btn-danger" style={{ padding: '3px 8px', fontSize: '0.75rem' }} onClick={() => handleDelete(att.id)}>Yes</button>
+                    <button className="btn btn-sm btn-secondary" style={{ padding: '3px 8px', fontSize: '0.75rem' }} onClick={() => setConfirmDeleteId(null)}>No</button>
+                  </div>
+                ) : (
+                  <button className="btn btn-sm btn-danger" style={{ padding: '4px 8px', fontSize: '0.75rem' }} onClick={() => setConfirmDeleteId(att.id)}>{Icons.x}</button>
+                )
               )}
             </div>
           ))}
@@ -5468,27 +5479,6 @@ const BillAttachmentPanel = ({ voucherId, voucherType = 'regular', suspenseId, s
         </div>
       )}
 
-      {/* ── SCANNER HELP MODE (desktop only) ── */}
-      {mode === 'scanner' && (
-        <div style={{ background: 'white', borderRadius: '8px', border: '2px solid #6366f1', padding: '1rem', marginBottom: '0.75rem' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
-            <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>🖨️ Scan Document</span>
-            <button className="btn btn-sm btn-secondary" onClick={() => setMode(null)}>{Icons.x} Cancel</button>
-          </div>
-          <ol style={{ fontSize: '0.85rem', color: '#555', paddingLeft: '1.25rem', marginBottom: '1rem', lineHeight: 1.9 }}>
-            <li>Open <strong>Windows Fax and Scan</strong> (search it in the Start menu)</li>
-            <li>Place the bill face-down on the scanner glass</li>
-            <li>Click <strong>New Scan</strong> in Windows Fax and Scan → choose your scanner → scan</li>
-            <li>Save / export the scanned file as <strong>JPG or PDF</strong> to your computer</li>
-            <li>Click <strong>Select Scanned File</strong> below to upload it here</li>
-          </ol>
-          <label className="btn btn-primary" style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
-            {uploading ? Icons.loader : Icons.upload} {uploading ? 'Uploading...' : 'Select Scanned File'}
-            <input type="file" accept="image/*,.pdf" style={{ display: 'none' }} onChange={(e) => { setMode(null); handleFileUpload(e); }} disabled={uploading} />
-          </label>
-        </div>
-      )}
-
       {/* ── ACTION BUTTONS (shown when no mode active) ── */}
       {!mode && (
         <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
@@ -5496,13 +5486,9 @@ const BillAttachmentPanel = ({ voucherId, voucherType = 'regular', suspenseId, s
             {uploading ? Icons.loader : Icons.upload} {uploading ? 'Uploading...' : 'Upload File'}
             <input type="file" accept="image/*,.pdf" style={{ display: 'none' }} onChange={handleFileUpload} disabled={uploading} />
           </label>
-          {isMobile ? (
+          {isMobile && (
             <button className="btn btn-sm btn-secondary" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }} onClick={startCamera}>
               {Icons.camera} Use Camera
-            </button>
-          ) : (
-            <button className="btn btn-sm btn-secondary" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }} onClick={() => setMode('scanner')}>
-              🖨️ Scan Document
             </button>
           )}
           <button className="btn btn-sm btn-secondary" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }} onClick={startQRCapture}>
