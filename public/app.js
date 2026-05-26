@@ -5092,12 +5092,16 @@ const BillAttachmentPanel = ({ voucherId, voucherType = 'regular', suspenseId, s
   const [attachments, setAttachments] = useState([]);
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
-  const [showQR, setShowQR] = useState(false);
+  // mode: null | 'camera' | 'qr'
+  const [mode, setMode] = useState(null);
+  const [cameraStream, setCameraStream] = useState(null);
+  const [cameraError, setCameraError] = useState('');
   const [captureSession, setCaptureSession] = useState(null);
-  const [qrDataUrl, setQrDataUrl] = useState(null);
+  const [qrImageUrl, setQrImageUrl] = useState(null);
   const [polling, setPolling] = useState(false);
   const [pollExpiry, setPollExpiry] = useState(null);
-  const qrCanvasRef = React.useRef(null);
+  const videoRef = React.useRef(null);
+  const canvasRef = React.useRef(null);
   const pollIntervalRef = React.useRef(null);
 
   const loadAttachments = async () => {
@@ -5114,6 +5118,13 @@ const BillAttachmentPanel = ({ voucherId, voucherType = 'regular', suspenseId, s
   };
 
   useEffect(() => { loadAttachments(); }, [voucherId, suspenseId, settlementId]);
+
+  // Attach camera stream to video element after render
+  useEffect(() => {
+    if (mode === 'camera' && cameraStream && videoRef.current) {
+      videoRef.current.srcObject = cameraStream;
+    }
+  }, [mode, cameraStream]);
 
   const compressAndEncode = async (file) => {
     let processedFile = file;
@@ -5152,22 +5163,65 @@ const BillAttachmentPanel = ({ voucherId, voucherType = 'regular', suspenseId, s
     else addToast(result.error || 'Delete failed', 'error');
   };
 
+  // ── CAMERA / WEBCAM / SCANNER ─────────────────────────────────────────────
+  const startCamera = async () => {
+    setCameraError('');
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 1280 }, height: { ideal: 720 } }
+      });
+      setCameraStream(stream);
+      setMode('camera');
+    } catch {
+      setCameraError('No camera or webcam detected. Please use "Upload File" to attach a scanned document.');
+    }
+  };
+
+  const stopCamera = () => {
+    if (cameraStream) cameraStream.getTracks().forEach(t => t.stop());
+    setCameraStream(null);
+    setMode(null);
+    setCameraError('');
+  };
+
+  const capturePhoto = () => {
+    if (!videoRef.current || !canvasRef.current) return;
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext('2d').drawImage(video, 0, 0);
+    if (cameraStream) cameraStream.getTracks().forEach(t => t.stop());
+    setCameraStream(null);
+    setMode(null);
+    canvas.toBlob(async (blob) => {
+      if (!blob) { addToast('Failed to capture photo', 'error'); return; }
+      setUploading(true);
+      try {
+        const file = new File([blob], `scan_${Date.now()}.jpg`, { type: 'image/jpeg' });
+        const { data, mimeType, name } = await compressAndEncode(file);
+        const result = await api.uploadAttachment({ fileData: data, mimeType, fileName: name, voucherId, voucherType, suspenseId, settlementId, uploadedBy: user.id, companyId });
+        if (result.success) { addToast('Photo captured and uploaded', 'success'); loadAttachments(); }
+        else addToast(result.error || 'Upload failed', 'error');
+      } catch { addToast('Upload failed', 'error'); }
+      setUploading(false);
+    }, 'image/jpeg', 0.88);
+  };
+
+  // ── SEND TO PHONE (QR relay) ──────────────────────────────────────────────
   const startQRCapture = async () => {
     try {
       const result = await api.createCaptureSession({ companyId, createdBy: user.id, voucherId, suspenseId, settlementId, contextType: voucherType });
-      if (!result.success) { addToast('Failed to create capture session', 'error'); return; }
+      if (!result.success) { addToast('Failed to create session', 'error'); return; }
       const session = result.session;
       setCaptureSession(session);
       const url = `${window.location.origin}/capture/${session.id}`;
-      if (typeof QRCode !== 'undefined') {
-        QRCode.toDataURL(url, { width: 240, margin: 2 }, (err, dataUrl) => {
-          if (!err) setQrDataUrl(dataUrl);
-        });
-      }
-      setShowQR(true);
+      // Use QR Server API — no JS library needed
+      setQrImageUrl(`https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(url)}&bgcolor=ffffff&color=1a1a1a&margin=10`);
+      setMode('qr');
       setPollExpiry(new Date(session.expires_at));
       setPolling(true);
-    } catch { addToast('Failed to start camera capture', 'error'); }
+    } catch { addToast('Failed to start phone capture', 'error'); }
   };
 
   useEffect(() => {
@@ -5178,13 +5232,13 @@ const BillAttachmentPanel = ({ voucherId, voucherType = 'regular', suspenseId, s
         const s = data.session;
         if (s.status === 'used') {
           clearInterval(pollIntervalRef.current);
-          setPolling(false); setShowQR(false); setCaptureSession(null); setQrDataUrl(null);
-          addToast('Photo received from mobile!', 'success');
+          setPolling(false); setMode(null); setCaptureSession(null); setQrImageUrl(null);
+          addToast('Photo received from phone!', 'success');
           loadAttachments();
         } else if (s.status === 'expired') {
           clearInterval(pollIntervalRef.current);
-          setPolling(false); setShowQR(false); setCaptureSession(null); setQrDataUrl(null);
-          addToast('QR code expired', 'error');
+          setPolling(false); setMode(null); setCaptureSession(null); setQrImageUrl(null);
+          addToast('Session expired', 'error');
         }
       } catch {}
     };
@@ -5194,9 +5248,10 @@ const BillAttachmentPanel = ({ voucherId, voucherType = 'regular', suspenseId, s
 
   const cancelQR = () => {
     clearInterval(pollIntervalRef.current);
-    setShowQR(false); setCaptureSession(null); setQrDataUrl(null); setPolling(false);
+    setMode(null); setCaptureSession(null); setQrImageUrl(null); setPolling(false);
   };
 
+  const phoneUrl = captureSession ? `${window.location.origin}/capture/${captureSession.id}` : '';
   const expiryMinutes = pollExpiry ? Math.max(0, Math.ceil((pollExpiry - Date.now()) / 60000)) : 0;
 
   return (
@@ -5207,6 +5262,7 @@ const BillAttachmentPanel = ({ voucherId, voucherType = 'regular', suspenseId, s
         <span style={{ marginLeft: 'auto', fontSize: '0.8rem', color: '#666' }}>{attachments.length} file{attachments.length !== 1 ? 's' : ''}</span>
       </div>
 
+      {/* Attachment list */}
       {loading ? (
         <div style={{ textAlign: 'center', padding: '1rem', color: '#666' }}>{Icons.loader} Loading...</div>
       ) : attachments.length > 0 ? (
@@ -5229,23 +5285,65 @@ const BillAttachmentPanel = ({ voucherId, voucherType = 'regular', suspenseId, s
         <div style={{ textAlign: 'center', padding: '1rem', color: '#999', fontSize: '0.85rem', marginBottom: '0.75rem' }}>No attachments yet</div>
       )}
 
-      {showQR ? (
-        <div style={{ textAlign: 'center', padding: '1rem', background: 'white', borderRadius: '8px', border: '2px dashed #f5841f' }}>
-          <p style={{ fontWeight: 600, marginBottom: '0.5rem' }}>Scan with your phone to take a photo</p>
-          {qrDataUrl ? <img src={qrDataUrl} alt="QR Code" style={{ width: 200, height: 200 }} /> : <div style={{ width: 200, height: 200, background: '#eee', margin: '0 auto', borderRadius: '4px' }} />}
-          <p style={{ fontSize: '0.8rem', color: '#666', marginTop: '0.5rem' }}>Waiting for photo... (expires in {expiryMinutes}m)</p>
-          <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'center', marginTop: '0.75rem' }}>
-            <button className="btn btn-sm btn-secondary" onClick={cancelQR}>{Icons.x} Cancel</button>
+      {/* ── CAMERA / WEBCAM MODE ── */}
+      {mode === 'camera' && (
+        <div style={{ background: 'white', borderRadius: '8px', border: '2px solid #3b82f6', padding: '1rem', marginBottom: '0.75rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+            <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>📷 Position the bill in view, then click Capture</span>
+            <button className="btn btn-sm btn-secondary" onClick={stopCamera}>{Icons.x} Cancel</button>
           </div>
+          <video ref={videoRef} autoPlay playsInline muted style={{ width: '100%', borderRadius: '6px', background: '#000', maxHeight: 300, objectFit: 'cover', display: 'block' }} />
+          <canvas ref={canvasRef} style={{ display: 'none' }} />
+          <button className="btn btn-primary" style={{ width: '100%', marginTop: '0.75rem' }} onClick={capturePhoto}>
+            📷 Capture Photo
+          </button>
         </div>
-      ) : (
+      )}
+
+      {cameraError && (
+        <div style={{ background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: '6px', padding: '0.5rem 0.75rem', fontSize: '0.8rem', color: '#dc2626', marginBottom: '0.75rem' }}>
+          ⚠️ {cameraError}
+        </div>
+      )}
+
+      {/* ── SEND TO PHONE (QR relay) MODE ── */}
+      {mode === 'qr' && (
+        <div style={{ background: 'white', borderRadius: '8px', border: '2px dashed #f5841f', padding: '1rem', marginBottom: '0.75rem' }}>
+          <p style={{ fontWeight: 700, fontSize: '0.95rem', marginBottom: '0.25rem', textAlign: 'center' }}>📱 How to connect your phone:</p>
+          <ol style={{ fontSize: '0.82rem', color: '#555', paddingLeft: '1.25rem', marginBottom: '0.75rem', lineHeight: 1.8 }}>
+            <li>Open your phone's camera app and scan the QR code below</li>
+            <li>A link will open in your phone's browser</li>
+            <li>Take a photo of the bill — it will appear here automatically</li>
+          </ol>
+          <div style={{ textAlign: 'center' }}>
+            {qrImageUrl
+              ? <img src={qrImageUrl} alt="QR Code" style={{ width: 200, height: 200, border: '1px solid #eee', borderRadius: 4 }} />
+              : <div style={{ width: 200, height: 200, background: '#f3f4f6', margin: '0 auto', borderRadius: 4, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#999', fontSize: '0.8rem' }}>{Icons.loader} Loading...</div>
+            }
+          </div>
+          <p style={{ fontSize: '0.75rem', color: '#888', textAlign: 'center', margin: '0.5rem 0 0.25rem' }}>Or copy this link and open it on your phone:</p>
+          <div style={{ background: '#f3f4f6', borderRadius: 6, padding: '6px 10px', fontSize: '0.72rem', color: '#444', wordBreak: 'break-all', fontFamily: 'monospace', marginBottom: '0.5rem' }}>
+            {phoneUrl}
+          </div>
+          <p style={{ fontSize: '0.75rem', color: '#aaa', textAlign: 'center', marginBottom: '0.75rem' }}>
+            {Icons.clock} Waiting for photo... (expires in {expiryMinutes}m)
+          </p>
+          <button className="btn btn-sm btn-secondary" style={{ display: 'block', margin: '0 auto' }} onClick={cancelQR}>{Icons.x} Cancel</button>
+        </div>
+      )}
+
+      {/* ── ACTION BUTTONS (shown when no mode active) ── */}
+      {!mode && (
         <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
           <label className="btn btn-sm btn-secondary" style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
             {uploading ? Icons.loader : Icons.upload} {uploading ? 'Uploading...' : 'Upload File'}
             <input type="file" accept="image/*,.pdf" style={{ display: 'none' }} onChange={handleFileUpload} disabled={uploading} />
           </label>
+          <button className="btn btn-sm btn-secondary" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }} onClick={startCamera}>
+            {Icons.camera} Use Camera / Scanner
+          </button>
           <button className="btn btn-sm btn-secondary" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }} onClick={startQRCapture}>
-            {Icons.qrCode} Mobile Camera
+            {Icons.qrCode} Send to Phone
           </button>
         </div>
       )}
