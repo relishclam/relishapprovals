@@ -41,6 +41,9 @@ const Icons = {
   lock: <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>,
   fingerprint: <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M2 12C2 6.5 6.5 2 12 2a10 10 0 0 1 8 4"/><path d="M5 19.5C5.5 18 6 15 6 12c0-.7.12-1.37.34-2"/><path d="M17.29 21.02c.12-.6.43-2.3.5-3.02"/><path d="M12 10a2 2 0 0 0-2 2c0 1.02-.1 2.51-.26 4"/><path d="M8.65 22c.21-.66.45-1.32.57-2"/><path d="M14 13.12c0 2.38 0 6.38-1 8.88"/><path d="M2 16h.01"/><path d="M21.8 16c.2-2 .131-5.354 0-6"/><path d="M9 6.8a6 6 0 0 1 9 5.2c0 .47 0 1.17-.02 2"/></svg>,
   unlock: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg>,
+  wallet: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><path d="M18 12a2 2 0 0 0 0 4h4v-4Z"/></svg>,
+  paperclip: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>,
+  qrCode: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect width="5" height="5" x="3" y="3" rx="1"/><rect width="5" height="5" x="16" y="3" rx="1"/><rect width="5" height="5" x="3" y="16" rx="1"/><path d="M21 16h-3a2 2 0 0 0-2 2v3"/><path d="M21 21v.01"/><path d="M12 7v3a2 2 0 0 1-2 2H7"/><path d="M3 12h.01"/><path d="M12 3h.01"/><path d="M12 16v.01"/><path d="M16 12h1"/><path d="M21 12v.01"/><path d="M12 21v-1"/></svg>,
 };
 
 // Number to Words Converter for Indian Rupees
@@ -147,6 +150,22 @@ const api = {
   addSubHeadOfAccount: (headId, companyId, name) => fetch(`${API_BASE}/sub-heads-of-account`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ headId, companyId, name }) }).then(r => r.json()),
   updateSubHeadOfAccount: (id, name) => fetch(`${API_BASE}/sub-heads-of-account/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) }).then(r => r.json()),
   deleteSubHeadOfAccount: (id) => fetch(`${API_BASE}/sub-heads-of-account/${id}`, { method: 'DELETE' }).then(r => r.json()),
+  // Suspense vouchers
+  getSuspenseVouchers: (companyId, params) => { const q = new URLSearchParams(params || {}).toString(); return fetch(`${API_BASE}/companies/${companyId}/suspense-vouchers${q ? '?' + q : ''}`).then(r => r.json()); },
+  createSuspenseVoucher: (data) => fetch(`${API_BASE}/suspense-vouchers`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
+  getSuspenseVoucher: (id) => fetch(`${API_BASE}/suspense-vouchers/${id}`).then(r => r.json()),
+  approveSuspenseVoucher: (id, approvedBy) => fetch(`${API_BASE}/suspense-vouchers/${id}/approve`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ approvedBy }) }).then(r => r.json()),
+  rejectSuspenseVoucher: (id, rejectedBy, reason) => fetch(`${API_BASE}/suspense-vouchers/${id}/reject`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rejectedBy, reason }) }).then(r => r.json()),
+  addSuspenseSettlement: (suspenseId, data) => fetch(`${API_BASE}/suspense-vouchers/${suspenseId}/settlements`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
+  getSuspenseSettlements: (suspenseId) => fetch(`${API_BASE}/suspense-vouchers/${suspenseId}/settlements`).then(r => r.json()),
+  // Attachments
+  uploadAttachment: (data) => fetch(`${API_BASE}/attachments/upload`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
+  getAttachments: (params) => fetch(`${API_BASE}/attachments?${new URLSearchParams(params)}`).then(r => r.json()),
+  deleteAttachment: (id, deletedBy) => fetch(`${API_BASE}/attachments/${id}`, { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ deletedBy }) }).then(r => r.json()),
+  // Capture sessions
+  createCaptureSession: (data) => fetch(`${API_BASE}/capture-sessions`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
+  getCaptureSession: (id) => fetch(`${API_BASE}/capture-sessions/${id}`).then(r => r.json()),
+  uploadToCapture: (id, data) => fetch(`${API_BASE}/capture-sessions/${id}/upload`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
 };
 
 // Format number in Indian style with commas (without Unicode NBSP gaps)
@@ -2565,6 +2584,14 @@ const VoucherList = ({ filter }) => {
           </div>
           <div className="modal-body">
             <VoucherPreview voucher={selectedVoucher} />
+            {/* Bill Attachments */}
+            {(selectedVoucher.status === 'completed' || selectedVoucher.status === 'awaiting_document' || user.role === 'admin' || user.isSuperAdmin) && (
+              <BillAttachmentPanel
+                voucherId={selectedVoucher.id}
+                voucherType="regular"
+                companyId={user.company.id}
+              />
+            )}
             {/* Document Upload Section - for awaiting_document status */}
             {selectedVoucher.status === 'awaiting_document' && (selectedVoucher.prepared_by === user.id || user.role === 'admin' || user.isSuperAdmin) && !selectedVoucher.document_url && (
               <div className="document-upload-section" style={{background: '#fef3c7', padding: '1.5rem', borderRadius: '8px', marginTop: '1rem', textAlign: 'center'}}>
@@ -5056,6 +5083,636 @@ const AccountsManagement = () => {
   );
 };
 
+  );
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BILL ATTACHMENT PANEL
+// ─────────────────────────────────────────────────────────────────────────────
+const BillAttachmentPanel = ({ voucherId, voucherType = 'regular', suspenseId, settlementId, companyId: companyIdProp }) => {
+  const { user, addToast } = useApp();
+  const companyId = companyIdProp || user.company.id;
+  const [attachments, setAttachments] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [showQR, setShowQR] = useState(false);
+  const [captureSession, setCaptureSession] = useState(null);
+  const [qrDataUrl, setQrDataUrl] = useState(null);
+  const [polling, setPolling] = useState(false);
+  const [pollExpiry, setPollExpiry] = useState(null);
+  const qrCanvasRef = React.useRef(null);
+  const pollIntervalRef = React.useRef(null);
+
+  const loadAttachments = async () => {
+    setLoading(true);
+    try {
+      const params = {};
+      if (voucherId)    params.voucherId    = voucherId;
+      if (suspenseId)   params.suspenseId   = suspenseId;
+      if (settlementId) params.settlementId = settlementId;
+      const data = await api.getAttachments(params);
+      setAttachments(data.attachments || []);
+    } catch {}
+    setLoading(false);
+  };
+
+  useEffect(() => { loadAttachments(); }, [voucherId, suspenseId, settlementId]);
+
+  const compressAndEncode = async (file) => {
+    let processedFile = file;
+    if (file.type.startsWith('image/') && typeof imageCompression !== 'undefined') {
+      try {
+        processedFile = await imageCompression(file, { maxSizeMB: 1, maxWidthOrHeight: 1600, useWebWorker: true });
+      } catch {}
+    }
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve({ data: reader.result, mimeType: processedFile.type, name: file.name });
+      reader.onerror = reject;
+      reader.readAsDataURL(processedFile);
+    });
+  };
+
+  const handleFileUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 10 * 1024 * 1024) { addToast('File too large (max 10 MB)', 'error'); return; }
+    setUploading(true);
+    try {
+      const { data, mimeType, name } = await compressAndEncode(file);
+      const result = await api.uploadAttachment({ fileData: data, mimeType, fileName: name, voucherId, voucherType, suspenseId, settlementId, uploadedBy: user.id, companyId });
+      if (result.success) { addToast('Attachment uploaded', 'success'); loadAttachments(); }
+      else addToast(result.error || 'Upload failed', 'error');
+    } catch { addToast('Upload failed', 'error'); }
+    setUploading(false);
+    e.target.value = '';
+  };
+
+  const handleDelete = async (attId) => {
+    if (!confirm('Delete this attachment?')) return;
+    const result = await api.deleteAttachment(attId, user.id);
+    if (result.success) { addToast('Attachment deleted', 'success'); loadAttachments(); }
+    else addToast(result.error || 'Delete failed', 'error');
+  };
+
+  const startQRCapture = async () => {
+    try {
+      const result = await api.createCaptureSession({ companyId, createdBy: user.id, voucherId, suspenseId, settlementId, contextType: voucherType });
+      if (!result.success) { addToast('Failed to create capture session', 'error'); return; }
+      const session = result.session;
+      setCaptureSession(session);
+      const url = `${window.location.origin}/capture/${session.id}`;
+      if (typeof QRCode !== 'undefined') {
+        QRCode.toDataURL(url, { width: 240, margin: 2 }, (err, dataUrl) => {
+          if (!err) setQrDataUrl(dataUrl);
+        });
+      }
+      setShowQR(true);
+      setPollExpiry(new Date(session.expires_at));
+      setPolling(true);
+    } catch { addToast('Failed to start camera capture', 'error'); }
+  };
+
+  useEffect(() => {
+    if (!polling || !captureSession) return;
+    const poll = async () => {
+      try {
+        const data = await api.getCaptureSession(captureSession.id);
+        const s = data.session;
+        if (s.status === 'used') {
+          clearInterval(pollIntervalRef.current);
+          setPolling(false); setShowQR(false); setCaptureSession(null); setQrDataUrl(null);
+          addToast('Photo received from mobile!', 'success');
+          loadAttachments();
+        } else if (s.status === 'expired') {
+          clearInterval(pollIntervalRef.current);
+          setPolling(false); setShowQR(false); setCaptureSession(null); setQrDataUrl(null);
+          addToast('QR code expired', 'error');
+        }
+      } catch {}
+    };
+    pollIntervalRef.current = setInterval(poll, 4000);
+    return () => clearInterval(pollIntervalRef.current);
+  }, [polling, captureSession]);
+
+  const cancelQR = () => {
+    clearInterval(pollIntervalRef.current);
+    setShowQR(false); setCaptureSession(null); setQrDataUrl(null); setPolling(false);
+  };
+
+  const expiryMinutes = pollExpiry ? Math.max(0, Math.ceil((pollExpiry - Date.now()) / 60000)) : 0;
+
+  return (
+    <div style={{ marginTop: '1.5rem', padding: '1rem', background: '#f8f9fa', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
+        {Icons.paperclip}
+        <span style={{ fontWeight: 600, fontSize: '0.95rem' }}>Bill Attachments</span>
+        <span style={{ marginLeft: 'auto', fontSize: '0.8rem', color: '#666' }}>{attachments.length} file{attachments.length !== 1 ? 's' : ''}</span>
+      </div>
+
+      {loading ? (
+        <div style={{ textAlign: 'center', padding: '1rem', color: '#666' }}>{Icons.loader} Loading...</div>
+      ) : attachments.length > 0 ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '1rem' }}>
+          {attachments.map(att => (
+            <div key={att.id} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.5rem 0.75rem', background: 'white', borderRadius: '6px', border: '1px solid #e2e8f0' }}>
+              <span style={{ fontSize: '1.2rem' }}>{att.mime_type?.includes('pdf') ? '📄' : '🖼️'}</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 500, fontSize: '0.85rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{att.file_name}</div>
+                <div style={{ fontSize: '0.75rem', color: '#888' }}>by {att.uploader?.name || 'Unknown'} · {new Date(att.uploaded_at).toLocaleDateString('en-IN')}</div>
+              </div>
+              <a href={att.public_url} target="_blank" rel="noopener noreferrer" className="btn btn-sm btn-secondary" style={{ padding: '4px 8px', fontSize: '0.75rem' }}>{Icons.eye}</a>
+              {(att.uploaded_by === user.id || user.role === 'admin' || user.isSuperAdmin) && (
+                <button className="btn btn-sm btn-danger" style={{ padding: '4px 8px', fontSize: '0.75rem' }} onClick={() => handleDelete(att.id)}>{Icons.x}</button>
+              )}
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div style={{ textAlign: 'center', padding: '1rem', color: '#999', fontSize: '0.85rem', marginBottom: '0.75rem' }}>No attachments yet</div>
+      )}
+
+      {showQR ? (
+        <div style={{ textAlign: 'center', padding: '1rem', background: 'white', borderRadius: '8px', border: '2px dashed #f5841f' }}>
+          <p style={{ fontWeight: 600, marginBottom: '0.5rem' }}>Scan with your phone to take a photo</p>
+          {qrDataUrl ? <img src={qrDataUrl} alt="QR Code" style={{ width: 200, height: 200 }} /> : <div style={{ width: 200, height: 200, background: '#eee', margin: '0 auto', borderRadius: '4px' }} />}
+          <p style={{ fontSize: '0.8rem', color: '#666', marginTop: '0.5rem' }}>Waiting for photo... (expires in {expiryMinutes}m)</p>
+          <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'center', marginTop: '0.75rem' }}>
+            <button className="btn btn-sm btn-secondary" onClick={cancelQR}>{Icons.x} Cancel</button>
+          </div>
+        </div>
+      ) : (
+        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+          <label className="btn btn-sm btn-secondary" style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+            {uploading ? Icons.loader : Icons.upload} {uploading ? 'Uploading...' : 'Upload File'}
+            <input type="file" accept="image/*,.pdf" style={{ display: 'none' }} onChange={handleFileUpload} disabled={uploading} />
+          </label>
+          <button className="btn btn-sm btn-secondary" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }} onClick={startQRCapture}>
+            {Icons.qrCode} Mobile Camera
+          </button>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SUSPENSE VOUCHER FORM
+// ─────────────────────────────────────────────────────────────────────────────
+const SuspenseVoucherForm = ({ onCreated }) => {
+  const { user, addToast } = useApp();
+  const [staffUsers, setStaffUsers] = useState([]);
+  const [form, setForm] = useState({ staffUserId: '', purpose: '', advanceAmount: '', paymentMode: 'Cash', narration: '' });
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    api.getCompanyUsers(user.company.id).then(data => {
+      if (Array.isArray(data)) setStaffUsers(data);
+    });
+  }, [user.company.id]);
+
+  const handleSubmit = async () => {
+    if (!form.staffUserId || !form.purpose || !form.advanceAmount) {
+      addToast('Staff member, purpose and advance amount are required', 'error');
+      return;
+    }
+    if (isNaN(parseFloat(form.advanceAmount)) || parseFloat(form.advanceAmount) <= 0) {
+      addToast('Enter a valid advance amount', 'error');
+      return;
+    }
+    setLoading(true);
+    try {
+      const result = await api.createSuspenseVoucher({
+        companyId: user.company.id,
+        staffUserId: form.staffUserId,
+        advanceAmount: parseFloat(form.advanceAmount),
+        purpose: form.purpose,
+        narration: form.narration || null,
+        paymentMode: form.paymentMode || null,
+        createdBy: user.id
+      });
+      if (result.success) {
+        addToast(`Suspense voucher ${result.suspenseVoucher.serial_number} created`, 'success');
+        onCreated && onCreated();
+      } else {
+        addToast(result.error || 'Failed to create suspense voucher', 'error');
+      }
+    } catch { addToast('Failed to create suspense voucher', 'error'); }
+    setLoading(false);
+  };
+
+  return (
+    <div className="page-container">
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.5rem' }}>
+        {Icons.wallet}
+        <h1 style={{ fontSize: '1.5rem', fontWeight: 700 }}>New Suspense Voucher</h1>
+      </div>
+      <div className="card" style={{ maxWidth: 600 }}>
+        <div className="form-group">
+          <label className="form-label">Staff Member *</label>
+          <select className="form-input" value={form.staffUserId} onChange={e => setForm(f => ({ ...f, staffUserId: e.target.value }))}>
+            <option value="">Select staff member</option>
+            {staffUsers.map(u => <option key={u.id} value={u.id}>{u.name} ({u.role})</option>)}
+          </select>
+        </div>
+        <div className="form-group">
+          <label className="form-label">Purpose *</label>
+          <input className="form-input" type="text" placeholder="e.g. Field trip expenses" value={form.purpose} onChange={e => setForm(f => ({ ...f, purpose: e.target.value }))} />
+        </div>
+        <div className="form-group">
+          <label className="form-label">Advance Amount (₹) *</label>
+          <input className="form-input" type="number" min="0" step="0.01" placeholder="0.00" value={form.advanceAmount} onChange={e => setForm(f => ({ ...f, advanceAmount: e.target.value }))} />
+        </div>
+        <div className="form-group">
+          <label className="form-label">Payment Mode</label>
+          <select className="form-input" value={form.paymentMode} onChange={e => setForm(f => ({ ...f, paymentMode: e.target.value }))}>
+            <option value="Cash">Cash</option>
+            <option value="UPI">UPI</option>
+            <option value="Account Transfer">Account Transfer</option>
+          </select>
+        </div>
+        <div className="form-group">
+          <label className="form-label">Narration (optional)</label>
+          <textarea className="form-input" rows={3} placeholder="Additional notes..." value={form.narration} onChange={e => setForm(f => ({ ...f, narration: e.target.value }))} />
+        </div>
+        <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end', marginTop: '1rem' }}>
+          <button className="btn btn-secondary" onClick={() => onCreated && onCreated()}>Cancel</button>
+          <button className="btn btn-primary" onClick={handleSubmit} disabled={loading}>{loading && Icons.loader}{Icons.send} Submit for Approval</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SUSPENSE VOUCHER LIST
+// ─────────────────────────────────────────────────────────────────────────────
+const SuspenseVoucherList = ({ onViewDetail }) => {
+  const { user, addToast } = useApp();
+  const [vouchers, setVouchers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [statusFilter, setStatusFilter] = useState('');
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const params = statusFilter ? { status: statusFilter } : {};
+      const data = await api.getSuspenseVouchers(user.company.id, params);
+      setVouchers(data.suspenseVouchers || []);
+    } catch { addToast('Failed to load suspense vouchers', 'error'); }
+    setLoading(false);
+  };
+
+  useEffect(() => { load(); }, [user.company.id, statusFilter]);
+
+  const statusBadge = (status) => {
+    const map = { pending_approval: ['Pending Approval', '#f59e0b', '#fffbeb'], open: ['Open', '#10b981', '#ecfdf5'], partial: ['Partial', '#3b82f6', '#eff6ff'], closed: ['Closed', '#6b7280', '#f3f4f6'], rejected: ['Rejected', '#ef4444', '#fef2f2'] };
+    const [label, color, bg] = map[status] || [status, '#666', '#eee'];
+    return <span style={{ background: bg, color, padding: '2px 8px', borderRadius: '4px', fontSize: '0.75rem', fontWeight: 600 }}>{label}</span>;
+  };
+
+  return (
+    <div className="page-container">
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.5rem', flexWrap: 'wrap' }}>
+        {Icons.wallet}
+        <h1 style={{ fontSize: '1.5rem', fontWeight: 700 }}>Suspense Vouchers</h1>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+          <select className="form-input" style={{ width: 'auto', padding: '6px 10px', fontSize: '0.85rem' }} value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
+            <option value="">All Status</option>
+            <option value="pending_approval">Pending Approval</option>
+            <option value="open">Open</option>
+            <option value="partial">Partial</option>
+            <option value="closed">Closed</option>
+            <option value="rejected">Rejected</option>
+          </select>
+          <button className="btn btn-sm btn-secondary" onClick={load}>{Icons.refresh}</button>
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="loading-state">{Icons.loader} Loading...</div>
+      ) : vouchers.length === 0 ? (
+        <div className="empty-state">{Icons.wallet}<p>No suspense vouchers found</p></div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+          {vouchers.map(sv => (
+            <div key={sv.id} className="card" style={{ cursor: 'pointer', transition: 'box-shadow 0.15s' }} onClick={() => onViewDetail && onViewDetail(sv.id)}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '0.5rem' }}>
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: '1rem', color: '#f5841f' }}>{sv.serial_number}</div>
+                  <div style={{ fontSize: '0.9rem', fontWeight: 500, marginTop: '2px' }}>{sv.purpose}</div>
+                  <div style={{ fontSize: '0.8rem', color: '#666', marginTop: '2px' }}>
+                    Staff: {sv.staff?.name || 'Unknown'} · Created by: {sv.creator?.name || 'Unknown'}
+                  </div>
+                  <div style={{ fontSize: '0.75rem', color: '#999', marginTop: '2px' }}>{new Date(sv.created_at).toLocaleDateString('en-IN')}</div>
+                </div>
+                <div style={{ textAlign: 'right' }}>
+                  {statusBadge(sv.status)}
+                  <div style={{ fontWeight: 700, fontSize: '1.1rem', marginTop: '0.5rem' }}>{formatRupees(sv.advance_amount)}</div>
+                  {sv.status !== 'closed' && sv.balance_amount != null && (
+                    <div style={{ fontSize: '0.8rem', color: '#3b82f6' }}>Balance: {formatRupees(sv.balance_amount)}</div>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SETTLEMENT ENTRY FORM (modal)
+// ─────────────────────────────────────────────────────────────────────────────
+const SettlementEntryForm = ({ suspenseId, onDone, onClose }) => {
+  const { user, addToast } = useApp();
+  const [form, setForm] = useState({ entryType: 'expense', amount: '', description: '', headOfAccount: '', referenceNumber: '' });
+  const [loading, setLoading] = useState(false);
+
+  const handleSubmit = async () => {
+    if (!form.amount || !form.description) { addToast('Amount and description are required', 'error'); return; }
+    if (isNaN(parseFloat(form.amount)) || parseFloat(form.amount) <= 0) { addToast('Enter a valid amount', 'error'); return; }
+    setLoading(true);
+    try {
+      const result = await api.addSuspenseSettlement(suspenseId, {
+        entryType: form.entryType,
+        amount: parseFloat(form.amount),
+        description: form.description,
+        headOfAccount: form.headOfAccount || null,
+        referenceNumber: form.referenceNumber || null,
+        submittedBy: user.id
+      });
+      if (result.success) {
+        addToast('Settlement entry added', 'success');
+        onDone && onDone(result);
+      } else {
+        addToast(result.error || 'Failed to add settlement', 'error');
+      }
+    } catch { addToast('Failed to add settlement', 'error'); }
+    setLoading(false);
+  };
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" onClick={e => e.stopPropagation()}>
+        <div className="modal-header" style={{ background: '#3b82f6', color: 'white' }}>
+          <h3 className="modal-title" style={{ color: 'white' }}>Add Settlement Entry</h3>
+          <button className="modal-close" style={{ color: 'white' }} onClick={onClose}>×</button>
+        </div>
+        <div className="modal-body">
+          <div className="form-group">
+            <label className="form-label">Entry Type *</label>
+            <select className="form-input" value={form.entryType} onChange={e => setForm(f => ({ ...f, entryType: e.target.value }))}>
+              <option value="expense">Expense (deducted from balance)</option>
+              <option value="refund">Refund (added back to balance)</option>
+              <option value="topup">Top-up (additional advance)</option>
+            </select>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Amount (₹) *</label>
+            <input className="form-input" type="number" min="0" step="0.01" placeholder="0.00" value={form.amount} onChange={e => setForm(f => ({ ...f, amount: e.target.value }))} />
+          </div>
+          <div className="form-group">
+            <label className="form-label">Description *</label>
+            <input className="form-input" type="text" placeholder="What was this for?" value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} />
+          </div>
+          <div className="form-group">
+            <label className="form-label">Head of Account</label>
+            <input className="form-input" type="text" placeholder="e.g. Travel" value={form.headOfAccount} onChange={e => setForm(f => ({ ...f, headOfAccount: e.target.value }))} />
+          </div>
+          <div className="form-group">
+            <label className="form-label">Reference / Receipt No.</label>
+            <input className="form-input" type="text" placeholder="Optional" value={form.referenceNumber} onChange={e => setForm(f => ({ ...f, referenceNumber: e.target.value }))} />
+          </div>
+        </div>
+        <div className="modal-footer">
+          <button className="btn btn-secondary" onClick={onClose}>Cancel</button>
+          <button className="btn btn-primary" onClick={handleSubmit} disabled={loading}>{loading && Icons.loader}Add Entry</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SUSPENSE VOUCHER DETAIL
+// ─────────────────────────────────────────────────────────────────────────────
+const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
+  const { user, addToast } = useApp();
+  const [sv, setSv] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [showSettlement, setShowSettlement] = useState(false);
+  const [actionLoading, setActionLoading] = useState(false);
+  const [showRejectModal, setShowRejectModal] = useState(false);
+  const [rejectReason, setRejectReason] = useState('');
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const data = await api.getSuspenseVoucher(suspenseId);
+      setSv(data.suspenseVoucher);
+    } catch { addToast('Failed to load suspense voucher', 'error'); }
+    setLoading(false);
+  };
+
+  useEffect(() => { load(); }, [suspenseId]);
+
+  const handleApprove = async () => {
+    setActionLoading(true);
+    const result = await api.approveSuspenseVoucher(suspenseId, user.id);
+    if (result.success) { addToast('Suspense voucher approved', 'success'); load(); }
+    else addToast(result.error || 'Approval failed', 'error');
+    setActionLoading(false);
+  };
+
+  const handleReject = async () => {
+    setActionLoading(true);
+    const result = await api.rejectSuspenseVoucher(suspenseId, user.id, rejectReason);
+    if (result.success) { addToast('Suspense voucher rejected', 'success'); setShowRejectModal(false); load(); }
+    else addToast(result.error || 'Rejection failed', 'error');
+    setActionLoading(false);
+  };
+
+  const statusBadge = (status) => {
+    const map = { pending_approval: ['Pending Approval', '#f59e0b', '#fffbeb'], open: ['Open', '#10b981', '#ecfdf5'], partial: ['Partial', '#3b82f6', '#eff6ff'], closed: ['Closed', '#6b7280', '#f3f4f6'], rejected: ['Rejected', '#ef4444', '#fef2f2'] };
+    const [label, color, bg] = map[status] || [status, '#666', '#eee'];
+    return <span style={{ background: bg, color, padding: '3px 10px', borderRadius: '4px', fontSize: '0.8rem', fontWeight: 600 }}>{label}</span>;
+  };
+
+  const entryTypeColor = (t) => t === 'expense' ? '#ef4444' : t === 'refund' ? '#10b981' : '#3b82f6';
+  const entryTypeLabel = (t) => t === 'expense' ? '↓ Expense' : t === 'refund' ? '↑ Refund' : '↑ Top-up';
+
+  if (loading) return <div className="loading-state">{Icons.loader} Loading...</div>;
+  if (!sv) return <div className="empty-state"><p>Suspense voucher not found</p></div>;
+
+  const isAdmin = user.role === 'admin' || user.isSuperAdmin;
+  const canSettle = (sv.status === 'open' || sv.status === 'partial');
+
+  return (
+    <div className="page-container">
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.5rem', flexWrap: 'wrap' }}>
+        <button className="btn btn-sm btn-secondary" onClick={onBack}>← Back</button>
+        {Icons.wallet}
+        <h1 style={{ fontSize: '1.3rem', fontWeight: 700 }}>{sv.serial_number}</h1>
+        {statusBadge(sv.status)}
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.5rem' }}>
+          {isAdmin && sv.status === 'pending_approval' && (
+            <>
+              <button className="btn btn-sm btn-danger" onClick={() => setShowRejectModal(true)} disabled={actionLoading}>{Icons.x} Reject</button>
+              <button className="btn btn-sm btn-success" onClick={handleApprove} disabled={actionLoading}>{actionLoading ? Icons.loader : Icons.check} Approve</button>
+            </>
+          )}
+          {canSettle && <button className="btn btn-sm btn-primary" onClick={() => setShowSettlement(true)}>{Icons.plus} Add Settlement</button>}
+        </div>
+      </div>
+
+      <div className="card" style={{ marginBottom: '1rem' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem' }}>
+          <div><div style={{ fontSize: '0.75rem', color: '#999', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Staff Member</div><div style={{ fontWeight: 600, marginTop: '2px' }}>{sv.staff?.name || 'Unknown'}</div></div>
+          <div><div style={{ fontSize: '0.75rem', color: '#999', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Purpose</div><div style={{ fontWeight: 600, marginTop: '2px' }}>{sv.purpose}</div></div>
+          <div><div style={{ fontSize: '0.75rem', color: '#999', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Advance Amount</div><div style={{ fontWeight: 700, fontSize: '1.1rem', color: '#f5841f', marginTop: '2px' }}>{formatRupees(sv.advance_amount)}</div></div>
+          <div><div style={{ fontSize: '0.75rem', color: '#999', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Balance</div><div style={{ fontWeight: 700, fontSize: '1.1rem', color: '#3b82f6', marginTop: '2px' }}>{formatRupees(sv.balance_amount ?? sv.advance_amount)}</div></div>
+          {sv.payment_mode && <div><div style={{ fontSize: '0.75rem', color: '#999', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Payment Mode</div><div style={{ marginTop: '2px' }}>{sv.payment_mode}</div></div>}
+          <div><div style={{ fontSize: '0.75rem', color: '#999', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Created By</div><div style={{ marginTop: '2px' }}>{sv.creator?.name || 'Unknown'} · {new Date(sv.created_at).toLocaleDateString('en-IN')}</div></div>
+          {sv.approver && <div><div style={{ fontSize: '0.75rem', color: '#999', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Approved By</div><div style={{ marginTop: '2px' }}>{sv.approver.name} · {new Date(sv.approved_at).toLocaleDateString('en-IN')}</div></div>}
+          {sv.narration && <div style={{ gridColumn: '1 / -1' }}><div style={{ fontSize: '0.75rem', color: '#999', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Narration</div><div style={{ marginTop: '2px' }}>{sv.narration}</div></div>}
+        </div>
+      </div>
+
+      {sv.settlements && sv.settlements.length > 0 && (
+        <div className="card" style={{ marginBottom: '1rem' }}>
+          <h3 style={{ fontWeight: 600, fontSize: '0.95rem', marginBottom: '0.75rem' }}>Settlement Entries</h3>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+              <thead>
+                <tr style={{ background: '#f8f9fa' }}>
+                  <th style={{ padding: '8px 12px', textAlign: 'left', borderBottom: '1px solid #e2e8f0' }}>Date</th>
+                  <th style={{ padding: '8px 12px', textAlign: 'left', borderBottom: '1px solid #e2e8f0' }}>Type</th>
+                  <th style={{ padding: '8px 12px', textAlign: 'left', borderBottom: '1px solid #e2e8f0' }}>Description</th>
+                  <th style={{ padding: '8px 12px', textAlign: 'left', borderBottom: '1px solid #e2e8f0' }}>By</th>
+                  <th style={{ padding: '8px 12px', textAlign: 'right', borderBottom: '1px solid #e2e8f0' }}>Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sv.settlements.map((s, i) => (
+                  <tr key={s.id} style={{ background: i % 2 === 0 ? 'white' : '#f8f9fa' }}>
+                    <td style={{ padding: '8px 12px', borderBottom: '1px solid #f0f0f0' }}>{new Date(s.created_at).toLocaleDateString('en-IN')}</td>
+                    <td style={{ padding: '8px 12px', borderBottom: '1px solid #f0f0f0' }}><span style={{ color: entryTypeColor(s.entry_type), fontWeight: 600, fontSize: '0.8rem' }}>{entryTypeLabel(s.entry_type)}</span></td>
+                    <td style={{ padding: '8px 12px', borderBottom: '1px solid #f0f0f0' }}>{s.description}{s.head_of_account && <span style={{ color: '#888', fontSize: '0.75rem' }}> · {s.head_of_account}</span>}</td>
+                    <td style={{ padding: '8px 12px', borderBottom: '1px solid #f0f0f0', color: '#666' }}>{s.submitter?.name || '—'}</td>
+                    <td style={{ padding: '8px 12px', borderBottom: '1px solid #f0f0f0', textAlign: 'right', fontWeight: 600, color: entryTypeColor(s.entry_type) }}>{formatRupees(s.amount)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      <BillAttachmentPanel suspenseId={suspenseId} voucherType="suspense" companyId={user.company.id} />
+
+      {showSettlement && (
+        <SettlementEntryForm
+          suspenseId={suspenseId}
+          onDone={() => { setShowSettlement(false); load(); }}
+          onClose={() => setShowSettlement(false)}
+        />
+      )}
+
+      {showRejectModal && (
+        <div className="modal-overlay" onClick={() => setShowRejectModal(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header"><h3 className="modal-title">Reject Suspense Voucher</h3><button className="modal-close" onClick={() => setShowRejectModal(false)}>×</button></div>
+            <div className="modal-body">
+              <div className="form-group"><label className="form-label">Reason for rejection</label><textarea className="form-input" rows={3} placeholder="Enter reason..." value={rejectReason} onChange={e => setRejectReason(e.target.value)} /></div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setShowRejectModal(false)}>Cancel</button>
+              <button className="btn btn-danger" onClick={handleReject} disabled={actionLoading}>{actionLoading && Icons.loader} Confirm Rejection</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CAPTURE SESSION PAGE (public — no auth)
+// ─────────────────────────────────────────────────────────────────────────────
+const CaptureSessionPage = ({ sessionId }) => {
+  const [session, setSession] = useState(null);
+  const [status, setStatus] = useState('loading'); // loading | ready | uploading | success | error | expired | used
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    api.getCaptureSession(sessionId).then(data => {
+      if (data.session) {
+        const s = data.session;
+        setSession(s);
+        if (s.status === 'used') setStatus('used');
+        else if (s.status === 'expired') setStatus('expired');
+        else setStatus('ready');
+      } else {
+        setError('Session not found');
+        setStatus('error');
+      }
+    }).catch(() => { setError('Failed to load session'); setStatus('error'); });
+  }, [sessionId]);
+
+  const handleCapture = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setStatus('uploading');
+    try {
+      let processedFile = file;
+      if (file.type.startsWith('image/') && typeof imageCompression !== 'undefined') {
+        try { processedFile = await imageCompression(file, { maxSizeMB: 1.5, maxWidthOrHeight: 2000, useWebWorker: true }); } catch {}
+      }
+      const reader = new FileReader();
+      reader.onload = async () => {
+        try {
+          const result = await api.uploadToCapture(sessionId, { fileData: reader.result, mimeType: processedFile.type, fileName: file.name });
+          if (result.success) setStatus('success');
+          else { setError(result.error || 'Upload failed'); setStatus('error'); }
+        } catch { setError('Upload failed'); setStatus('error'); }
+      };
+      reader.onerror = () => { setError('Failed to read file'); setStatus('error'); };
+      reader.readAsDataURL(processedFile);
+    } catch { setError('Failed to process image'); setStatus('error'); }
+  };
+
+  const containerStyle = { minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '2rem', background: '#f8f9fa', fontFamily: 'Outfit, sans-serif', textAlign: 'center' };
+  const cardStyle = { background: 'white', borderRadius: '16px', padding: '2rem', boxShadow: '0 4px 24px rgba(0,0,0,0.08)', maxWidth: '400px', width: '100%' };
+
+  if (status === 'loading') return <div style={containerStyle}><div style={cardStyle}>{Icons.loader}<p style={{ marginTop: '1rem', color: '#666' }}>Loading session...</p></div></div>;
+  if (status === 'error') return <div style={containerStyle}><div style={cardStyle}><div style={{ fontSize: '3rem' }}>❌</div><h2 style={{ marginTop: '1rem' }}>Session Error</h2><p style={{ color: '#666', marginTop: '0.5rem' }}>{error}</p></div></div>;
+  if (status === 'expired') return <div style={containerStyle}><div style={cardStyle}><div style={{ fontSize: '3rem' }}>⏰</div><h2 style={{ marginTop: '1rem' }}>Session Expired</h2><p style={{ color: '#666', marginTop: '0.5rem' }}>This QR code has expired. Please generate a new one.</p></div></div>;
+  if (status === 'used') return <div style={containerStyle}><div style={cardStyle}><div style={{ fontSize: '3rem' }}>✅</div><h2 style={{ marginTop: '1rem' }}>Already Used</h2><p style={{ color: '#666', marginTop: '0.5rem' }}>A photo was already uploaded via this link.</p></div></div>;
+  if (status === 'success') return <div style={containerStyle}><div style={cardStyle}><div style={{ fontSize: '3rem' }}>✅</div><h2 style={{ marginTop: '1rem', color: '#10b981' }}>Photo Sent!</h2><p style={{ color: '#666', marginTop: '0.5rem' }}>Your photo has been attached successfully. You can close this page.</p></div></div>;
+  if (status === 'uploading') return <div style={containerStyle}><div style={cardStyle}>{Icons.loader}<p style={{ marginTop: '1rem', color: '#666' }}>Uploading photo...</p></div></div>;
+
+  return (
+    <div style={containerStyle}>
+      <div style={cardStyle}>
+        <div style={{ fontSize: '2.5rem', marginBottom: '0.5rem' }}>📷</div>
+        <h2 style={{ fontWeight: 700, color: '#1a1a1a' }}>Attach Bill Photo</h2>
+        <p style={{ color: '#666', fontSize: '0.9rem', margin: '0.75rem 0 1.5rem' }}>
+          Take a photo of the bill or receipt to attach it to the voucher.
+        </p>
+        <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', background: '#f5841f', color: 'white', padding: '0.85rem 2rem', borderRadius: '8px', cursor: 'pointer', fontWeight: 600, fontSize: '1rem', width: '100%', justifyContent: 'center', boxSizing: 'border-box' }}>
+          📷 Take Photo / Choose File
+          <input type="file" accept="image/*" capture="environment" style={{ display: 'none' }} onChange={handleCapture} />
+        </label>
+        <p style={{ color: '#aaa', fontSize: '0.75rem', marginTop: '1rem' }}>
+          Session expires: {session ? new Date(session.expires_at).toLocaleTimeString('en-IN') : ''}
+        </p>
+      </div>
+    </div>
+  );
+};
+
 // Main App
 const App = () => {
   const [user, setUser] = useState(() => {
@@ -5121,6 +5778,8 @@ const App = () => {
   const [switchingCompany, setSwitchingCompany] = useState(false);
   const [toasts, setToasts] = useState([]);
   const [pushEnabled, setPushEnabled] = useState(false);
+  const [suspenseDetailId, setSuspenseDetailId] = useState(null);
+  const [captureSessionId] = useState(() => { const m = window.location.pathname.match(/^\/capture\/([^/]+)/); return m ? m[1] : null; });
   const lastNotificationCount = React.useRef(0);
 
   // Notification sound (using Web Audio API for better compatibility)
@@ -5427,10 +6086,13 @@ const App = () => {
     return <MobileLockScreen savedUser={mobileSavedUser} onUnlock={handleMobileUnlock} onSignOut={handleMobileLockSignOut} />;
   }
 
+  // Capture session page — public, no auth required
+  if (captureSessionId) return <CaptureSessionPage sessionId={captureSessionId} />;
+
   if (!user) return <LoginPage onLogin={handleLogin} />;
 
   const contextValue = { user, vouchers, notifications, addToast, refreshVouchers, refreshNotifications };
-  const renderPage = () => { switch(currentPage) { case 'dashboard': return <Dashboard />; case 'create': return (user.role === 'accounts' || user.isSuperAdmin) ? <CreateVoucher /> : <Dashboard />; case 'drafts': return (user.role === 'accounts' || user.isSuperAdmin) ? <VoucherList filter="draft" /> : <Dashboard />; case 'pending': return <VoucherList filter="pending" />; case 'approved': return <VoucherList filter="approved" />; case 'completed': return <VoucherList filter="completed" />; case 'all': return <VoucherList filter="all" />; case 'users': return user.isSuperAdmin ? <UsersManagement /> : <Dashboard />; case 'payees': return (user.role === 'accounts' || user.isSuperAdmin) ? <PayeesManagement /> : <Dashboard />; case 'accounts': return (user.role === 'accounts' || user.isSuperAdmin) ? <AccountsManagement /> : <Dashboard />; default: return <Dashboard />; } };
+  const renderPage = () => { switch(currentPage) { case 'dashboard': return <Dashboard />; case 'create': return (user.role === 'accounts' || user.isSuperAdmin) ? <CreateVoucher /> : <Dashboard />; case 'drafts': return (user.role === 'accounts' || user.isSuperAdmin) ? <VoucherList filter="draft" /> : <Dashboard />; case 'pending': return <VoucherList filter="pending" />; case 'approved': return <VoucherList filter="approved" />; case 'completed': return <VoucherList filter="completed" />; case 'all': return <VoucherList filter="all" />; case 'users': return user.isSuperAdmin ? <UsersManagement /> : <Dashboard />; case 'payees': return (user.role === 'accounts' || user.isSuperAdmin) ? <PayeesManagement /> : <Dashboard />; case 'accounts': return (user.role === 'accounts' || user.isSuperAdmin) ? <AccountsManagement /> : <Dashboard />; case 'suspense': return <SuspenseVoucherList onViewDetail={(id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); }} />; case 'create-suspense': return (user.role === 'accounts' || user.isSuperAdmin) ? <SuspenseVoucherForm onCreated={() => { setCurrentPage('suspense'); }} /> : <Dashboard />; case 'suspense-detail': return suspenseDetailId ? <SuspenseVoucherDetail suspenseId={suspenseDetailId} onBack={() => setCurrentPage('suspense')} /> : <SuspenseVoucherList onViewDetail={(id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); }} />; default: return <Dashboard />; } };
 
   const handleNavClick = (page) => {
     try { localStorage.setItem('relish_page', page); } catch {}
@@ -5530,6 +6192,10 @@ const App = () => {
               <div className={`nav-item ${currentPage === 'completed' ? 'active' : ''}`} onClick={() => handleNavClick('completed')}>{Icons.checkCircle} Completed</div>
               <div className={`nav-item ${currentPage === 'all' ? 'active' : ''}`} onClick={() => handleNavClick('all')}>{Icons.fileText} All Vouchers</div>
             </div>
+            <div className="nav-section"><div className="nav-section-title">Suspense Accounts</div>
+              <div className={`nav-item ${currentPage === 'suspense' || currentPage === 'suspense-detail' ? 'active' : ''}`} onClick={() => handleNavClick('suspense')}>{Icons.wallet} Suspense Vouchers</div>
+              {(user.role === 'accounts' || user.isSuperAdmin) && <div className={`nav-item ${currentPage === 'create-suspense' ? 'active' : ''}`} onClick={() => handleNavClick('create-suspense')}>{Icons.plus} New Suspense</div>}
+            </div>
             {(user.role === 'accounts' || user.isSuperAdmin) && <div className="nav-section"><div className="nav-section-title">Master Data</div>
               <div className={`nav-item ${currentPage === 'payees' ? 'active' : ''}`} onClick={() => handleNavClick('payees')}>{Icons.users} Manage Payees</div>
               <div className={`nav-item ${currentPage === 'accounts' ? 'active' : ''}`} onClick={() => handleNavClick('accounts')}>{Icons.fileText} Heads of Account</div>
@@ -5577,6 +6243,10 @@ const App = () => {
                   <div className={`nav-item ${currentPage === 'approved' ? 'active' : ''}`} onClick={() => handleNavClick('approved')}>{Icons.smartphone} Awaiting OTP</div>
                   <div className={`nav-item ${currentPage === 'completed' ? 'active' : ''}`} onClick={() => handleNavClick('completed')}>{Icons.checkCircle} Completed</div>
                   <div className={`nav-item ${currentPage === 'all' ? 'active' : ''}`} onClick={() => handleNavClick('all')}>{Icons.fileText} All Vouchers</div>
+                </div>
+                <div className="nav-section"><div className="nav-section-title">Suspense Accounts</div>
+                  <div className={`nav-item ${currentPage === 'suspense' || currentPage === 'suspense-detail' ? 'active' : ''}`} onClick={() => handleNavClick('suspense')}>{Icons.wallet} Suspense Vouchers</div>
+                  {(user.role === 'accounts' || user.isSuperAdmin) && <div className={`nav-item ${currentPage === 'create-suspense' ? 'active' : ''}`} onClick={() => handleNavClick('create-suspense')}>{Icons.plus} New Suspense</div>}
                 </div>
                 {(user.role === 'accounts' || user.isSuperAdmin) && <div className="nav-section"><div className="nav-section-title">Master Data</div>
                   <div className={`nav-item ${currentPage === 'payees' ? 'active' : ''}`} onClick={() => handleNavClick('payees')}>{Icons.users} Manage Payees</div>

@@ -2250,6 +2250,417 @@ app.get('/api/vouchers/:voucherId/document', async (req, res) => {
   }
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// SUSPENSE VOUCHER SYSTEM
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Create suspense voucher
+app.post('/api/suspense-vouchers', async (req, res) => {
+  const { companyId, staffUserId, advanceAmount, purpose, narration, paymentMode, createdBy } = req.body;
+  if (!companyId || !staffUserId || !advanceAmount || !purpose || !createdBy) {
+    return res.status(400).json({ error: 'Missing required fields' });
+  }
+  try {
+    const actor = await getActorRole(createdBy);
+    if (actor.role !== 'accounts' && !actor.is_super_admin) {
+      return res.status(403).json({ error: 'Unauthorized: Only Accounts users or Super Admin can create suspense vouchers' });
+    }
+    const { data: serialData, error: serialError } = await supabase.rpc('get_next_suspense_number', { p_company_id: companyId });
+    if (serialError) throw serialError;
+
+    const { data: sv, error } = await supabase.from('suspense_vouchers').insert({
+      company_id: companyId,
+      serial_number: serialData,
+      staff_user_id: staffUserId,
+      advance_amount: advanceAmount,
+      balance_amount: advanceAmount,
+      purpose,
+      narration: narration || null,
+      payment_mode: paymentMode || null,
+      created_by: createdBy,
+      status: 'pending_approval'
+    }).select().single();
+    if (error) throw error;
+
+    // Notify admins
+    const { data: adminEntries } = await supabase.from('user_companies')
+      .select('user_id').eq('company_id', companyId).eq('role', 'admin');
+    const { data: creator } = await supabase.from('users').select('name').eq('id', createdBy).single();
+    if (adminEntries && adminEntries.length > 0) {
+      const notifications = adminEntries.map(a => ({
+        user_id: a.user_id,
+        title: 'Suspense Voucher Pending Approval',
+        message: `Suspense voucher ${serialData} created by ${creator?.name || 'Unknown'} requires approval.`,
+        type: 'approval_required'
+      }));
+      await supabase.from('notifications').insert(notifications);
+      for (const admin of adminEntries) {
+        sendPushNotification(admin.user_id, '💼 Suspense Voucher Pending', `${serialData} by ${creator?.name || 'Unknown'} requires approval.`, '/');
+      }
+    }
+    res.json({ success: true, suspenseVoucher: sv });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// List suspense vouchers for a company
+app.get('/api/companies/:companyId/suspense-vouchers', async (req, res) => {
+  const { status, staffUserId } = req.query;
+  try {
+    let query = supabase.from('suspense_vouchers')
+      .select(`*, staff:users!staff_user_id(id,name,first_name), creator:users!created_by(id,name), approver:users!approved_by(id,name)`)
+      .eq('company_id', req.params.companyId)
+      .order('created_at', { ascending: false });
+    if (status) query = query.eq('status', status);
+    if (staffUserId) query = query.eq('staff_user_id', staffUserId);
+    const { data, error } = await query;
+    if (error) throw error;
+    res.json({ suspenseVouchers: data });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get single suspense voucher with settlements
+app.get('/api/suspense-vouchers/:id', async (req, res) => {
+  try {
+    const { data: sv, error } = await supabase.from('suspense_vouchers')
+      .select(`*, staff:users!staff_user_id(id,name,first_name,mobile), creator:users!created_by(id,name), approver:users!approved_by(id,name)`)
+      .eq('id', req.params.id)
+      .single();
+    if (error || !sv) return res.status(404).json({ error: 'Suspense voucher not found' });
+
+    const { data: settlements } = await supabase.from('suspense_settlements')
+      .select(`*, submitter:users!submitted_by(id,name)`)
+      .eq('suspense_id', req.params.id)
+      .order('created_at', { ascending: true });
+
+    const { data: attachments } = await supabase.from('voucher_attachments')
+      .select('*').eq('suspense_id', req.params.id).order('uploaded_at', { ascending: false });
+
+    res.json({ suspenseVoucher: { ...sv, settlements: settlements || [], attachments: attachments || [] } });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Approve suspense voucher
+app.post('/api/suspense-vouchers/:id/approve', async (req, res) => {
+  const { approvedBy } = req.body;
+  if (!approvedBy) return res.status(400).json({ error: 'approvedBy is required' });
+  try {
+    const actor = await getActorRole(approvedBy);
+    if (actor.role !== 'admin' && !actor.is_super_admin) {
+      return res.status(403).json({ error: 'Unauthorized: Only admins can approve' });
+    }
+    const { data: sv, error } = await supabase.from('suspense_vouchers')
+      .update({ status: 'open', approved_by: approvedBy, approved_at: new Date().toISOString() })
+      .eq('id', req.params.id)
+      .eq('status', 'pending_approval')
+      .select().single();
+    if (error) throw error;
+    if (!sv) return res.status(404).json({ error: 'Suspense voucher not found or already processed' });
+
+    // Notify creator
+    const { data: approver } = await supabase.from('users').select('name').eq('id', approvedBy).single();
+    await supabase.from('notifications').insert({
+      user_id: sv.created_by,
+      title: 'Suspense Voucher Approved',
+      message: `Suspense voucher ${sv.serial_number} has been approved by ${approver?.name || 'Admin'}.`,
+      type: 'info'
+    });
+    res.json({ success: true, suspenseVoucher: sv });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Reject suspense voucher
+app.post('/api/suspense-vouchers/:id/reject', async (req, res) => {
+  const { rejectedBy, reason } = req.body;
+  if (!rejectedBy) return res.status(400).json({ error: 'rejectedBy is required' });
+  try {
+    const actor = await getActorRole(rejectedBy);
+    if (actor.role !== 'admin' && !actor.is_super_admin) {
+      return res.status(403).json({ error: 'Unauthorized: Only admins can reject' });
+    }
+    const { data: sv, error } = await supabase.from('suspense_vouchers')
+      .update({ status: 'rejected', rejected_by: rejectedBy, rejected_at: new Date().toISOString(), rejection_reason: reason || null })
+      .eq('id', req.params.id)
+      .eq('status', 'pending_approval')
+      .select().single();
+    if (error) throw error;
+    if (!sv) return res.status(404).json({ error: 'Suspense voucher not found or already processed' });
+    res.json({ success: true, suspenseVoucher: sv });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Add settlement entry
+app.post('/api/suspense-vouchers/:id/settlements', async (req, res) => {
+  const { entryType, amount, description, headOfAccount, referenceNumber, submittedBy } = req.body;
+  if (!entryType || !amount || !description || !submittedBy) {
+    return res.status(400).json({ error: 'Missing required fields' });
+  }
+  try {
+    const { data: sv, error: svError } = await supabase.from('suspense_vouchers')
+      .select('*').eq('id', req.params.id).single();
+    if (svError || !sv) return res.status(404).json({ error: 'Suspense voucher not found' });
+    if (sv.status !== 'open' && sv.status !== 'partial') {
+      return res.status(400).json({ error: 'Cannot add settlement to a voucher in this state' });
+    }
+
+    const { data: settlement, error: sErr } = await supabase.from('suspense_settlements').insert({
+      suspense_id: req.params.id,
+      company_id: sv.company_id,
+      entry_type: entryType,
+      amount: parseFloat(amount),
+      description,
+      head_of_account: headOfAccount || null,
+      reference_number: referenceNumber || null,
+      submitted_by: submittedBy
+    }).select().single();
+    if (sErr) throw sErr;
+
+    // Recalculate balance
+    const { data: allSettlements } = await supabase.from('suspense_settlements')
+      .select('entry_type, amount').eq('suspense_id', req.params.id);
+    let balance = parseFloat(sv.advance_amount);
+    for (const s of (allSettlements || [])) {
+      if (s.entry_type === 'expense') balance -= parseFloat(s.amount);
+      else if (s.entry_type === 'refund')  balance += parseFloat(s.amount);
+      else if (s.entry_type === 'topup')   balance += parseFloat(s.amount);
+    }
+    const newStatus = balance <= 0 ? 'closed' : 'partial';
+    const closedAt = balance <= 0 ? new Date().toISOString() : null;
+    await supabase.from('suspense_vouchers')
+      .update({ balance_amount: Math.max(0, balance), status: newStatus, ...(closedAt ? { closed_at: closedAt } : {}) })
+      .eq('id', req.params.id);
+
+    res.json({ success: true, settlement, newBalance: Math.max(0, balance), newStatus });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get settlements for a suspense voucher
+app.get('/api/suspense-vouchers/:id/settlements', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('suspense_settlements')
+      .select(`*, submitter:users!submitted_by(id,name)`)
+      .eq('suspense_id', req.params.id)
+      .order('created_at', { ascending: true });
+    if (error) throw error;
+    res.json({ settlements: data || [] });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BILL ATTACHMENTS
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Upload attachment (supports regular vouchers, suspense vouchers, settlements)
+app.post('/api/attachments/upload', async (req, res) => {
+  const { fileData, mimeType, fileName, voucherId, voucherType, suspenseId, settlementId, captureSessionId, uploadedBy, companyId } = req.body;
+  if (!fileData || !uploadedBy || !companyId) {
+    return res.status(400).json({ error: 'fileData, uploadedBy and companyId are required' });
+  }
+  try {
+    const base64Data = fileData.replace(/^data:.*?;base64,/, '');
+    const buffer = Buffer.from(base64Data, 'base64');
+    const ext = mimeType?.includes('pdf') ? 'pdf' : mimeType?.includes('png') ? 'png' : mimeType?.includes('webp') ? 'webp' : 'jpg';
+    const prefix = suspenseId ? 'sus' : 'vch';
+    const refId = suspenseId || voucherId || 'misc';
+    const storagePath = `${companyId}/${prefix}-${refId}-${Date.now()}.${ext}`;
+    const originalName = fileName || `attachment-${Date.now()}.${ext}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from('voucher-bills')
+      .upload(storagePath, buffer, { contentType: mimeType || 'image/jpeg', upsert: false });
+    if (uploadError) return res.status(500).json({ error: 'Storage upload failed', details: uploadError.message });
+
+    const { data: urlData } = supabase.storage.from('voucher-bills').getPublicUrl(storagePath);
+    const publicUrl = urlData?.publicUrl || storagePath;
+
+    const { data: attachment, error: dbErr } = await supabase.from('voucher_attachments').insert({
+      company_id: companyId,
+      voucher_id: voucherId || null,
+      voucher_type: voucherType || (suspenseId ? 'suspense' : 'regular'),
+      suspense_id: suspenseId || null,
+      settlement_id: settlementId || null,
+      file_name: originalName,
+      storage_path: storagePath,
+      public_url: publicUrl,
+      mime_type: mimeType || 'image/jpeg',
+      file_size_bytes: buffer.length,
+      capture_session_id: captureSessionId || null,
+      uploaded_by: uploadedBy
+    }).select().single();
+    if (dbErr) throw dbErr;
+
+    // Mark capture session used if provided
+    if (captureSessionId) {
+      await supabase.from('capture_sessions')
+        .update({ status: 'used', used_at: new Date().toISOString(), attachment_id: attachment.id })
+        .eq('id', captureSessionId).eq('status', 'pending');
+    }
+
+    res.json({ success: true, attachment });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// List attachments (by voucherId or suspenseId)
+app.get('/api/attachments', async (req, res) => {
+  const { voucherId, suspenseId, settlementId } = req.query;
+  try {
+    let query = supabase.from('voucher_attachments')
+      .select(`*, uploader:users!uploaded_by(id,name)`)
+      .order('uploaded_at', { ascending: false });
+    if (voucherId)    query = query.eq('voucher_id', voucherId);
+    if (suspenseId)   query = query.eq('suspense_id', suspenseId);
+    if (settlementId) query = query.eq('settlement_id', settlementId);
+    if (!voucherId && !suspenseId && !settlementId) {
+      return res.status(400).json({ error: 'At least one filter is required' });
+    }
+    const { data, error } = await query;
+    if (error) throw error;
+    res.json({ attachments: data || [] });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Delete attachment
+app.delete('/api/attachments/:id', async (req, res) => {
+  const { deletedBy } = req.body;
+  if (!deletedBy) return res.status(400).json({ error: 'deletedBy is required' });
+  try {
+    const actor = await getActorRole(deletedBy);
+    const { data: att, error: fetchErr } = await supabase.from('voucher_attachments')
+      .select('*').eq('id', req.params.id).single();
+    if (fetchErr || !att) return res.status(404).json({ error: 'Attachment not found' });
+
+    const isOwner = att.uploaded_by === deletedBy;
+    const isAdmin = actor.role === 'admin' || actor.is_super_admin;
+    const ageMs = Date.now() - new Date(att.uploaded_at).getTime();
+    if (!isAdmin && (!isOwner || ageMs > 24 * 60 * 60 * 1000)) {
+      return res.status(403).json({ error: 'Cannot delete: must be owner within 24 hours or admin' });
+    }
+
+    await supabase.storage.from('voucher-bills').remove([att.storage_path]);
+    await supabase.from('voucher_attachments').delete().eq('id', req.params.id);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CAPTURE SESSIONS (Mobile Camera QR Relay)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Create capture session
+app.post('/api/capture-sessions', async (req, res) => {
+  const { companyId, createdBy, voucherId, suspenseId, settlementId, contextType } = req.body;
+  if (!companyId || !createdBy) return res.status(400).json({ error: 'companyId and createdBy required' });
+  try {
+    const { data: session, error } = await supabase.from('capture_sessions').insert({
+      company_id: companyId,
+      created_by: createdBy,
+      voucher_id: voucherId || null,
+      suspense_id: suspenseId || null,
+      settlement_id: settlementId || null,
+      context_type: contextType || (suspenseId ? 'suspense' : 'regular'),
+      expires_at: new Date(Date.now() + 15 * 60 * 1000).toISOString()
+    }).select().single();
+    if (error) throw error;
+    res.json({ success: true, session });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get capture session (validate + check if used)
+app.get('/api/capture-sessions/:id', async (req, res) => {
+  try {
+    const { data: session, error } = await supabase.from('capture_sessions')
+      .select(`*, attachment:voucher_attachments(id,public_url,file_name,uploaded_at)`)
+      .eq('id', req.params.id).single();
+    if (error || !session) return res.status(404).json({ error: 'Session not found' });
+
+    // Auto-expire
+    if (session.status === 'pending' && new Date(session.expires_at) < new Date()) {
+      await supabase.from('capture_sessions').update({ status: 'expired' }).eq('id', req.params.id);
+      return res.json({ session: { ...session, status: 'expired' } });
+    }
+    res.json({ session });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CAPTURE PAGE UPLOAD (called by mobile browser after camera capture)
+// ─────────────────────────────────────────────────────────────────────────────
+app.post('/api/capture-sessions/:id/upload', async (req, res) => {
+  const { fileData, mimeType, fileName } = req.body;
+  if (!fileData) return res.status(400).json({ error: 'fileData is required' });
+  try {
+    const { data: session, error: sErr } = await supabase.from('capture_sessions')
+      .select('*').eq('id', req.params.id).single();
+    if (sErr || !session) return res.status(404).json({ error: 'Session not found' });
+    if (session.status !== 'pending') return res.status(400).json({ error: `Session is ${session.status}` });
+    if (new Date(session.expires_at) < new Date()) {
+      await supabase.from('capture_sessions').update({ status: 'expired' }).eq('id', req.params.id);
+      return res.status(400).json({ error: 'Session has expired' });
+    }
+
+    const base64Data = fileData.replace(/^data:.*?;base64,/, '');
+    const buffer = Buffer.from(base64Data, 'base64');
+    const ext = mimeType?.includes('pdf') ? 'pdf' : mimeType?.includes('png') ? 'png' : mimeType?.includes('webp') ? 'webp' : 'jpg';
+    const storagePath = `${session.company_id}/mobile-cap-${req.params.id}-${Date.now()}.${ext}`;
+    const originalName = fileName || `capture-${Date.now()}.${ext}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from('voucher-bills')
+      .upload(storagePath, buffer, { contentType: mimeType || 'image/jpeg', upsert: false });
+    if (uploadError) return res.status(500).json({ error: 'Upload failed', details: uploadError.message });
+
+    const { data: urlData } = supabase.storage.from('voucher-bills').getPublicUrl(storagePath);
+    const publicUrl = urlData?.publicUrl || storagePath;
+
+    const { data: attachment, error: dbErr } = await supabase.from('voucher_attachments').insert({
+      company_id: session.company_id,
+      voucher_id: session.voucher_id || null,
+      voucher_type: session.context_type,
+      suspense_id: session.suspense_id || null,
+      settlement_id: session.settlement_id || null,
+      file_name: originalName,
+      storage_path: storagePath,
+      public_url: publicUrl,
+      mime_type: mimeType || 'image/jpeg',
+      file_size_bytes: buffer.length,
+      capture_session_id: req.params.id,
+      uploaded_by: session.created_by
+    }).select().single();
+    if (dbErr) throw dbErr;
+
+    await supabase.from('capture_sessions')
+      .update({ status: 'used', used_at: new Date().toISOString(), attachment_id: attachment.id })
+      .eq('id', req.params.id);
+
+    res.json({ success: true, attachment });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Health check
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
