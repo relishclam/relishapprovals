@@ -1484,6 +1484,7 @@ const CreateVoucher = () => {
         setShowDeductions(false);
         setUseNarrationTable(false);
         setCreatedVoucher({ id: result.voucherId, serialNumber: result.serialNumber, status: result.status || (saveAsDraft ? 'draft' : 'pending') });
+        window.scrollTo({ top: 0, behavior: 'smooth' });
         refreshVouchers(); 
       } else {
         addToast(result.error || 'Failed', 'error');
@@ -1507,6 +1508,7 @@ const CreateVoucher = () => {
           </div>
         </div>
       )}
+      {!createdVoucher && <>
       {/* Draft restored banner */}
       {(form.headOfAccount || form.payeeId || form.amount || form.narration || form.narrationItems.some(i => i.description || i.amount)) && (() => {
         let hasSaved = false;
@@ -1687,6 +1689,7 @@ const CreateVoucher = () => {
           </p>
         </div>
       </div>
+      </>}
       {showPayeeModal && (
         <div className="modal-overlay" onClick={() => setShowPayeeModal(false)}><div className="modal" onClick={(e) => e.stopPropagation()}>
           <div className="modal-header"><h3 className="modal-title">Add New Payee</h3><button className="modal-close" onClick={() => setShowPayeeModal(false)}>×</button></div>
@@ -5344,19 +5347,34 @@ const BillAttachmentPanel = ({ voucherId, voucherType = 'regular', suspenseId, s
 
   useEffect(() => {
     if (!polling || !captureSession) return;
+    let lastKnownCount = attachments.length;
+    const stop = (msg, isError) => {
+      clearInterval(pollIntervalRef.current);
+      setPolling(false); setMode(null); setCaptureSession(null); setQrImageUrl(null);
+      addToast(msg, isError ? 'error' : 'success');
+    };
     const poll = async () => {
       try {
         const data = await api.getCaptureSession(captureSession.id);
         const s = data.session;
-        if (s.status === 'used') {
-          clearInterval(pollIntervalRef.current);
-          setPolling(false); setMode(null); setCaptureSession(null); setQrImageUrl(null);
-          addToast('Photo received from phone!', 'success');
-          loadAttachments();
-        } else if (s.status === 'expired') {
-          clearInterval(pollIntervalRef.current);
-          setPolling(false); setMode(null); setCaptureSession(null); setQrImageUrl(null);
-          addToast('Session expired', 'error');
+        if (s.status === 'used') { stop('Photo received from phone!', false); loadAttachments(); return; }
+        if (s.status === 'expired') { stop('QR session expired', true); return; }
+        // Fallback: directly check if a new attachment appeared
+        // (handles cases where the session status update failed server-side)
+        if (voucherId || suspenseId || settlementId) {
+          try {
+            const params = {};
+            if (voucherId)    params.voucherId    = voucherId;
+            if (suspenseId)   params.suspenseId   = suspenseId;
+            if (settlementId) params.settlementId = settlementId;
+            const attData = await api.getAttachments(params);
+            const newList = attData.attachments || [];
+            if (newList.length > lastKnownCount) {
+              lastKnownCount = newList.length;
+              stop('Photo received from phone!', false);
+              setAttachments(newList);
+            }
+          } catch {}
         }
       } catch {}
     };
@@ -5459,10 +5477,14 @@ const BillAttachmentPanel = ({ voucherId, voucherType = 'regular', suspenseId, s
           </div>
           <ol style={{ fontSize: '0.85rem', color: '#555', paddingLeft: '1.25rem', marginBottom: '1rem', lineHeight: 1.9 }}>
             <li>Place the bill/invoice face-down on the scanner glass</li>
-            <li>Open your scanner software (<strong>Windows Scan</strong>, <strong>HP Smart</strong>, <strong>NAPS2</strong>, etc.)</li>
-            <li>Scan and save the file as JPG or PDF</li>
-            <li>Click <strong>Select Scanned File</strong> below to upload it</li>
+            <li>Click <strong>Open Scanner App</strong> below — it will launch your scanner software</li>
+            <li>Scan and save the file as JPG or PDF to your computer</li>
+            <li>Click <strong>Select Scanned File</strong> below to upload it here</li>
           </ol>
+          <button className="btn btn-secondary" style={{ width: '100%', marginBottom: '0.75rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
+            onClick={() => { try { window.open('ms-scan:'); } catch(e) {} }}>
+            🖥️ Open Scanner App (Windows Scan)
+          </button>
           <label className="btn btn-primary" style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
             {uploading ? Icons.loader : Icons.upload} {uploading ? 'Uploading...' : 'Select Scanned File'}
             <input type="file" accept="image/*,.pdf" style={{ display: 'none' }} onChange={(e) => { setMode(null); handleFileUpload(e); }} disabled={uploading} />
