@@ -3032,7 +3032,6 @@ const VoucherList = ({ filter }) => {
                 </div>
               )}
             </div>
-          </div>
             <BillAttachmentPanel
               voucherId={selectedVoucher.id}
               voucherType="regular"
