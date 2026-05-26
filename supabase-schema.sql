@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS users (
     first_name TEXT NOT NULL,
     mobile TEXT UNIQUE NOT NULL,
     aadhar TEXT NOT NULL,
-    role TEXT NOT NULL CHECK(role IN ('accounts', 'admin')),
+    role TEXT NOT NULL CHECK(role IN ('accounts', 'admin', 'auditor')),
     mobile_verified BOOLEAN DEFAULT FALSE,
     username TEXT UNIQUE,
     created_at TIMESTAMPTZ DEFAULT NOW(),
@@ -88,7 +88,7 @@ CREATE TABLE IF NOT EXISTS user_companies (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     company_id TEXT NOT NULL REFERENCES companies(id),
-    role TEXT NOT NULL CHECK(role IN ('accounts', 'admin')),
+    role TEXT NOT NULL CHECK(role IN ('accounts', 'admin', 'auditor')),
     is_primary BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     UNIQUE(user_id, company_id)
