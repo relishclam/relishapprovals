@@ -305,7 +305,7 @@ app.post('/api/otp/verify', async (req, res) => {
 // Admin-only: Onboard new user
 app.post('/api/admin/onboard-user', async (req, res) => {
   const { adminMobile, companyId, name, mobile, aadhar, role, companyAccess } = req.body;
-  if (!adminMobile || !companyId || !name || !mobile || !aadhar || !role) {
+  if (!adminMobile || !companyId || !name || !mobile || !role || (role !== 'auditor' && !aadhar)) {
     return res.status(400).json({ error: 'All fields are required' });
   }
   
@@ -389,7 +389,7 @@ app.post('/api/users/:userId/verify-mobile', async (req, res) => {
 app.put('/api/users/:userId', async (req, res) => {
   const { name, mobile, aadhar, role, requesterId } = req.body;
   
-  if (!name || !mobile || !aadhar || !role) {
+  if (!name || !mobile || !role || (role !== 'auditor' && !aadhar)) {
     return res.status(400).json({ error: 'All fields are required' });
   }
   
