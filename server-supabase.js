@@ -317,7 +317,7 @@ app.post('/api/admin/onboard-user', async (req, res) => {
     }
     
     const firstName = name.split(' ')[0];
-    const rolePrefix = role === 'admin' ? 'Approve' : 'Accounts';
+    const rolePrefix = role === 'admin' ? 'Approve' : role === 'auditor' ? 'Audit' : 'Accounts';
     const username = `${rolePrefix}-${firstName}`;
     const formattedMobile = formatMobile(mobile);
     
@@ -400,7 +400,7 @@ app.put('/api/users/:userId', async (req, res) => {
     }
     
     const firstName = name.split(' ')[0];
-    const rolePrefix = role === 'admin' ? 'Approve' : 'Accounts';
+    const rolePrefix = role === 'admin' ? 'Approve' : role === 'auditor' ? 'Audit' : 'Accounts';
     const username = `${rolePrefix}-${firstName}`;
     const formattedMobile = formatMobile(mobile);
     

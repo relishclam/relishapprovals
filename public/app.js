@@ -838,7 +838,7 @@ const LoginPage = ({ onLogin }) => {
                 <div>
                   <div style={{ fontWeight: 600 }}>{company.name}</div>
                   <div style={{ fontSize: '12px', opacity: 0.7, marginTop: '4px' }}>
-                    Role: {company.role === 'admin' ? '🛡️ Admin / Approver' : '👤 Accounts'}
+                    Role: {company.role === 'admin' ? '🛡️ Admin / Approver' : company.role === 'auditor' ? '🔍 Auditor' : '👤 Accounts'}
                   </div>
                 </div>
                 <span style={{ fontSize: '20px' }}>→</span>
@@ -3470,6 +3470,11 @@ const UsersManagement = () => {
           <div className="stat-label">Accounts Staff</div>
         </div>
         <div className="stat-card">
+          <div className="stat-icon teal" style={{fontSize:'1rem'}}>🔍</div>
+          <div className="stat-value">{users.filter(u => u.role === 'auditor').length}</div>
+          <div className="stat-label">Auditors</div>
+        </div>
+        <div className="stat-card">
           <div className="stat-icon teal">✓</div>
           <div className="stat-value">{users.filter(u => u.mobile_verified).length}</div>
           <div className="stat-label">Verified</div>
@@ -3499,8 +3504,8 @@ const UsersManagement = () => {
                     <td className="text-mono">{u.username}</td>
                     <td>{u.mobile?.replace(/\d(?=\d{4})/g, '*')}</td>
                     <td>
-                      <span className={`status-badge ${u.role === 'admin' ? 'status-approved' : 'status-pending'}`}>
-                        {u.role === 'admin' ? '🛡 Admin' : '👤 Accounts'}
+                      <span className={`status-badge ${u.role === 'admin' ? 'status-approved' : u.role === 'auditor' ? 'status-completed' : 'status-pending'}`}>
+                        {u.role === 'admin' ? '🛡 Admin' : u.role === 'auditor' ? '🔍 Auditor' : '👤 Accounts'}
                       </span>
                     </td>
                     <td>
@@ -3603,9 +3608,10 @@ const UsersManagement = () => {
                     >
                       <option value="accounts">👤 Accounts</option>
                       <option value="admin">🛡️ Approver</option>
+                      <option value="auditor">🔍 Auditor</option>
                     </select>
                     <small style={{color: '#666', fontSize: '0.85rem', marginTop: '4px', display: 'block'}}>
-                      Username will be: <code style={{background: '#f0f0f0', padding: '2px 6px', borderRadius: '4px'}}>{newUser.role === 'admin' ? 'Approve' : 'Accounts'}-{newUser.name.split(' ')[0] || 'FirstName'}</code>
+                      Username will be: <code style={{background: '#f0f0f0', padding: '2px 6px', borderRadius: '4px'}}>{newUser.role === 'admin' ? 'Approve' : newUser.role === 'auditor' ? 'Audit' : 'Accounts'}-{newUser.name.split(' ')[0] || 'FirstName'}</code>
                     </small>
                   </div>
                   
@@ -3765,6 +3771,7 @@ const UsersManagement = () => {
                 >
                   <option value="accounts">👤 Accounts</option>
                   <option value="admin">🛡️ Approver</option>
+                  <option value="auditor">🔍 Auditor</option>
                 </select>
               </div>
               
@@ -3873,8 +3880,8 @@ const UsersManagement = () => {
                 
                 <div>
                   <label style={{display: 'block', fontSize: '0.85rem', color: '#666', marginBottom: '0.25rem'}}>Role</label>
-                  <span className={`status-badge ${selectedUser.role === 'admin' ? 'status-approved' : 'status-pending'}`}>
-                    {selectedUser.role === 'admin' ? '🛡 Admin' : '👤 Accounts'}
+                  <span className={`status-badge ${selectedUser.role === 'admin' ? 'status-approved' : selectedUser.role === 'auditor' ? 'status-completed' : 'status-pending'}`}>
+                    {selectedUser.role === 'admin' ? '🛡 Admin' : selectedUser.role === 'auditor' ? '🔍 Auditor' : '👤 Accounts'}
                   </span>
                 </div>
                 
@@ -5414,7 +5421,7 @@ const BillAttachmentPanel = ({ voucherId, voucherType = 'regular', suspenseId, s
               {confirmDeleteId !== att.id && (
                 <a href={att.public_url} target="_blank" rel="noopener noreferrer" className="btn btn-sm btn-secondary" style={{ padding: '4px 8px', fontSize: '0.75rem' }}>{Icons.eye}</a>
               )}
-              {(att.uploaded_by === user.id || user.role === 'admin' || user.isSuperAdmin) && (
+              {user.role !== 'auditor' && (att.uploaded_by === user.id || user.role === 'admin' || user.isSuperAdmin) && (
                 confirmDeleteId === att.id ? (
                   <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                     <span style={{ fontSize: '0.75rem', color: '#dc2626', fontWeight: 600, whiteSpace: 'nowrap' }}>Delete?</span>
@@ -5480,7 +5487,7 @@ const BillAttachmentPanel = ({ voucherId, voucherType = 'regular', suspenseId, s
       )}
 
       {/* ── ACTION BUTTONS (shown when no mode active) ── */}
-      {!mode && (
+      {!mode && user.role !== 'auditor' && (
         <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
           <label className="btn btn-sm btn-secondary" style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
             {uploading ? Icons.loader : Icons.upload} {uploading ? 'Uploading...' : 'Upload File'}
@@ -6261,11 +6268,12 @@ const App = () => {
 
   const handleLogin = async (userData) => {
     try { localStorage.setItem('relish_session', JSON.stringify(userData)); } catch {}
-    try { localStorage.setItem('relish_page', 'dashboard'); } catch {}
+    const defaultPage = userData.role === 'auditor' ? 'completed' : 'dashboard';
+    try { localStorage.setItem('relish_page', defaultPage); } catch {}
     // Clean up legacy keys
     try { localStorage.removeItem('relish_biometric_id'); } catch {}
     setUser(userData);
-    setCurrentPage('dashboard');
+    setCurrentPage(defaultPage);
     // Mobile only: offer biometric or PIN setup if not yet configured
     if (isMobileDevice()) {
       const alreadySetup = !!localStorage.getItem('relish_mobile_pin') || !!localStorage.getItem('relish_mobile_bio_id');
@@ -6346,7 +6354,9 @@ const App = () => {
   if (!user) return <LoginPage onLogin={handleLogin} />;
 
   const contextValue = { user, vouchers, notifications, addToast, refreshVouchers, refreshNotifications };
-  const renderPage = () => { switch(currentPage) { case 'dashboard': return <Dashboard />; case 'create': return (user.role === 'accounts' || user.isSuperAdmin) ? <CreateVoucher /> : <Dashboard />; case 'drafts': return (user.role === 'accounts' || user.isSuperAdmin) ? <VoucherList filter="draft" /> : <Dashboard />; case 'pending': return <VoucherList filter="pending" />; case 'approved': return <VoucherList filter="approved" />; case 'completed': return <VoucherList filter="completed" />; case 'all': return <VoucherList filter="all" />; case 'users': return user.isSuperAdmin ? <UsersManagement /> : <Dashboard />; case 'payees': return (user.role === 'accounts' || user.isSuperAdmin) ? <PayeesManagement /> : <Dashboard />; case 'accounts': return (user.role === 'accounts' || user.isSuperAdmin) ? <AccountsManagement /> : <Dashboard />; case 'suspense': return <SuspenseVoucherList onViewDetail={(id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); }} />; case 'create-suspense': return (user.role === 'accounts' || user.isSuperAdmin) ? <SuspenseVoucherForm onCreated={() => { setCurrentPage('suspense'); }} /> : <Dashboard />; case 'suspense-detail': return suspenseDetailId ? <SuspenseVoucherDetail suspenseId={suspenseDetailId} onBack={() => setCurrentPage('suspense')} /> : <SuspenseVoucherList onViewDetail={(id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); }} />; default: return <Dashboard />; } };
+  const renderPage = () => {
+    if (user.role === 'auditor') return <VoucherList filter="completed" />;
+    switch(currentPage) { case 'dashboard': return <Dashboard />; case 'create': return (user.role === 'accounts' || user.isSuperAdmin) ? <CreateVoucher /> : <Dashboard />; case 'drafts': return (user.role === 'accounts' || user.isSuperAdmin) ? <VoucherList filter="draft" /> : <Dashboard />; case 'pending': return <VoucherList filter="pending" />; case 'approved': return <VoucherList filter="approved" />; case 'completed': return <VoucherList filter="completed" />; case 'all': return <VoucherList filter="all" />; case 'users': return user.isSuperAdmin ? <UsersManagement /> : <Dashboard />; case 'payees': return (user.role === 'accounts' || user.isSuperAdmin) ? <PayeesManagement /> : <Dashboard />; case 'accounts': return (user.role === 'accounts' || user.isSuperAdmin) ? <AccountsManagement /> : <Dashboard />; case 'suspense': return <SuspenseVoucherList onViewDetail={(id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); }} />; case 'create-suspense': return (user.role === 'accounts' || user.isSuperAdmin) ? <SuspenseVoucherForm onCreated={() => { setCurrentPage('suspense'); }} /> : <Dashboard />; case 'suspense-detail': return suspenseDetailId ? <SuspenseVoucherDetail suspenseId={suspenseDetailId} onBack={() => setCurrentPage('suspense')} /> : <SuspenseVoucherList onViewDetail={(id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); }} />; default: return <Dashboard />; } };
 
   const handleNavClick = (page) => {
     try { localStorage.setItem('relish_page', page); } catch {}
@@ -6437,6 +6447,11 @@ const App = () => {
         )}
         <div className="main-layout">
           <aside className="sidebar">
+            {user.role === 'auditor' ? (
+              <div className="nav-section"><div className="nav-section-title">Audit View</div>
+                <div className={`nav-item ${currentPage === 'completed' ? 'active' : ''}`} onClick={() => handleNavClick('completed')}>{Icons.checkCircle} Completed Vouchers</div>
+              </div>
+            ) : (<>
             <div className="nav-section"><div className="nav-section-title">Main</div><div className={`nav-item ${currentPage === 'dashboard' ? 'active' : ''}`} onClick={() => handleNavClick('dashboard')}>{Icons.home} Dashboard</div></div>
             <div className="nav-section"><div className="nav-section-title">Vouchers</div>
               {(user.role === 'accounts' || user.isSuperAdmin) && <div className={`nav-item ${currentPage === 'create' ? 'active' : ''}`} onClick={() => handleNavClick('create')}>{Icons.plus} Create Voucher</div>}
@@ -6455,6 +6470,7 @@ const App = () => {
               <div className={`nav-item ${currentPage === 'accounts' ? 'active' : ''}`} onClick={() => handleNavClick('accounts')}>{Icons.fileText} Heads of Account</div>
             </div>}
             {user.isSuperAdmin && <div className="nav-section"><div className="nav-section-title">Admin Dashboard</div><div className={`nav-item ${currentPage === 'users' ? 'active' : ''}`} onClick={() => handleNavClick('users')}>{Icons.users} User Management</div></div>}
+            </>)}
           </aside>
           
           {showMobileMenu && (
@@ -6489,6 +6505,11 @@ const App = () => {
                     {switchingCompany && <div style={{padding:'8px 16px', fontSize:'0.8rem', opacity:0.7}}>Switching...</div>}
                   </div>
                 )}
+                {user.role === 'auditor' ? (
+                  <div className="nav-section"><div className="nav-section-title">Audit View</div>
+                    <div className={`nav-item ${currentPage === 'completed' ? 'active' : ''}`} onClick={() => handleNavClick('completed')}>{Icons.checkCircle} Completed Vouchers</div>
+                  </div>
+                ) : (<>
                 <div className="nav-section"><div className="nav-section-title">Main</div><div className={`nav-item ${currentPage === 'dashboard' ? 'active' : ''}`} onClick={() => handleNavClick('dashboard')}>{Icons.home} Dashboard</div></div>
                 <div className="nav-section"><div className="nav-section-title">Vouchers</div>
                   {(user.role === 'accounts' || user.isSuperAdmin) && <div className={`nav-item ${currentPage === 'create' ? 'active' : ''}`} onClick={() => handleNavClick('create')}>{Icons.plus} Create Voucher</div>}
@@ -6507,6 +6528,7 @@ const App = () => {
                   <div className={`nav-item ${currentPage === 'accounts' ? 'active' : ''}`} onClick={() => handleNavClick('accounts')}>{Icons.fileText} Heads of Account</div>
                 </div>}
                 {user.isSuperAdmin && <div className="nav-section"><div className="nav-section-title">Admin Dashboard</div><div className={`nav-item ${currentPage === 'users' ? 'active' : ''}`} onClick={() => handleNavClick('users')}>{Icons.users} User Management</div></div>}
+                </>)}
               </aside>
             </>
           )}
