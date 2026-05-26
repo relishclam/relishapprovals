@@ -5476,15 +5476,12 @@ const BillAttachmentPanel = ({ voucherId, voucherType = 'regular', suspenseId, s
             <button className="btn btn-sm btn-secondary" onClick={() => setMode(null)}>{Icons.x} Cancel</button>
           </div>
           <ol style={{ fontSize: '0.85rem', color: '#555', paddingLeft: '1.25rem', marginBottom: '1rem', lineHeight: 1.9 }}>
-            <li>Place the bill/invoice face-down on the scanner glass</li>
-            <li>Click <strong>Open Scanner App</strong> below — it will launch your scanner software</li>
-            <li>Scan and save the file as JPG or PDF to your computer</li>
+            <li>Open <strong>Windows Fax and Scan</strong> (search it in the Start menu)</li>
+            <li>Place the bill face-down on the scanner glass</li>
+            <li>Click <strong>New Scan</strong> in Windows Fax and Scan → choose your scanner → scan</li>
+            <li>Save / export the scanned file as <strong>JPG or PDF</strong> to your computer</li>
             <li>Click <strong>Select Scanned File</strong> below to upload it here</li>
           </ol>
-          <button className="btn btn-secondary" style={{ width: '100%', marginBottom: '0.75rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
-            onClick={() => { try { window.open('ms-scan:'); } catch(e) {} }}>
-            🖥️ Open Scanner App (Windows Scan)
-          </button>
           <label className="btn btn-primary" style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
             {uploading ? Icons.loader : Icons.upload} {uploading ? 'Uploading...' : 'Select Scanned File'}
             <input type="file" accept="image/*,.pdf" style={{ display: 'none' }} onChange={(e) => { setMode(null); handleFileUpload(e); }} disabled={uploading} />
