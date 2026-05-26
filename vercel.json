@@ -16,8 +16,12 @@
       "dest": "/server-supabase.js"
     },
     {
-      "src": "/(.*\\.(js|css|png|jpg|jpeg|gif|svg|ico|json))",
+      "src": "/(.*\\.(js|css|png|jpg|jpeg|gif|svg|ico|json|html))",
       "dest": "/public/$1"
+    },
+    {
+      "src": "/capture/(.*)",
+      "dest": "/public/capture.html"
     },
     {
       "src": "/(.*)",

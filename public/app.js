@@ -1293,6 +1293,7 @@ const DeductionsTable = ({ items, onChange, disabled }) => {
 const CreateVoucher = () => {
   const { user, addToast, refreshVouchers } = useApp();
   const [loading, setLoading] = useState(false);
+  const [createdVoucher, setCreatedVoucher] = useState(null);
   const [payees, setPayees] = useState([]);
   const [heads, setHeads] = useState([]);
   const [headsData, setHeadsData] = useState([]); // Full data with IDs
@@ -1482,6 +1483,7 @@ const CreateVoucher = () => {
         setForm({ headOfAccount: '', subHeadOfAccount: '', narration: '', narrationItems: [], deductions: [], payeeId: '', paymentMode: 'UPI', amount: '', invoiceReference: '' }); 
         setShowDeductions(false);
         setUseNarrationTable(false);
+        setCreatedVoucher({ id: result.voucherId, serialNumber: result.serialNumber, status: result.status || (saveAsDraft ? 'draft' : 'pending') });
         refreshVouchers(); 
       } else {
         addToast(result.error || 'Failed', 'error');
@@ -1493,6 +1495,18 @@ const CreateVoucher = () => {
   return (
     <div>
       <div className="page-header"><h1 className="page-title">Create Payment Voucher</h1><p className="page-subtitle">Prepare a new payment voucher for approval</p></div>
+      {createdVoucher && (
+        <div className="card" style={{ marginBottom: '1rem', border: '2px solid #10b981' }}>
+          <div className="card-header" style={{ background: '#d1fae5', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <h3 className="card-title" style={{ color: '#065f46' }}>✅ {createdVoucher.status === 'draft' ? `Draft ${createdVoucher.serialNumber} saved` : `Voucher ${createdVoucher.serialNumber} submitted for approval`}</h3>
+            <button className="btn btn-sm btn-secondary" onClick={() => setCreatedVoucher(null)}>✕ New Voucher</button>
+          </div>
+          <div className="card-body">
+            <p style={{ fontSize: '0.85rem', color: '#047857', marginBottom: '0.75rem' }}>You can attach the bill or invoice now, or come back to it later from the voucher list.</p>
+            <BillAttachmentPanel voucherId={createdVoucher.id} voucherType="regular" companyId={user.company.id} />
+          </div>
+        </div>
+      )}
       {/* Draft restored banner */}
       {(form.headOfAccount || form.payeeId || form.amount || form.narration || form.narrationItems.some(i => i.description || i.amount)) && (() => {
         let hasSaved = false;
@@ -1950,6 +1964,16 @@ const VoucherList = ({ filter }) => {
   const [useNarrationTable, setUseNarrationTable] = useState(false);
   const [showEditDeductions, setShowEditDeductions] = useState(false);
 
+  // Search state — Completed Vouchers tab
+  const [searchNum, setSearchNum] = useState('');
+  const [searchHead, setSearchHead] = useState('');
+  const [searchPayee, setSearchPayee] = useState('');
+  const [searchDateMode, setSearchDateMode] = useState('range'); // 'exact' | 'range'
+  const [searchDate, setSearchDate] = useState('');
+  const [searchFrom, setSearchFrom] = useState('');
+  const [searchTo, setSearchTo] = useState('');
+  const hasSearchFilters = searchNum || searchHead || searchPayee || searchDate || searchFrom || searchTo;
+
   // Load payees and heads for edit modal
   useEffect(() => {
     api.getPayees(user.company.id).then(setPayees);
@@ -1989,12 +2013,28 @@ const VoucherList = ({ filter }) => {
     }
   }, [editForm.narrationItems, useNarrationTable]);
 
-  const filtered = vouchers.filter(v => { 
+  const baseFiltered = vouchers.filter(v => { 
     if (filter === 'draft') return v.status === 'draft';
     if (filter === 'pending') return v.status === 'pending'; 
     if (filter === 'approved') return ['approved', 'awaiting_payee_otp'].includes(v.status); 
     if (filter === 'completed') return v.status === 'completed'; 
     return true; 
+  });
+
+  const filtered = filter !== 'completed' ? baseFiltered : baseFiltered.filter(v => {
+    const lc = s => (s || '').toLowerCase();
+    if (searchNum && !lc(v.serial_number).includes(lc(searchNum))) return false;
+    if (searchHead && !lc(v.head_of_account).includes(lc(searchHead))) return false;
+    if (searchPayee && !lc(v.payee_name).includes(lc(searchPayee))) return false;
+    const vDate = new Date(v.created_at);
+    if (searchDateMode === 'exact' && searchDate) {
+      const d = new Date(searchDate + 'T00:00:00'); const next = new Date(d); next.setDate(next.getDate() + 1);
+      if (vDate < d || vDate >= next) return false;
+    } else if (searchDateMode === 'range') {
+      if (searchFrom && vDate < new Date(searchFrom + 'T00:00:00')) return false;
+      if (searchTo && vDate > new Date(searchTo + 'T23:59:59')) return false;
+    }
+    return true;
   });
   
   const openVoucher = async (v) => { const full = await api.getVoucher(v.id); setSelectedVoucher(full); setShowModal(true); };
@@ -2559,6 +2599,80 @@ const VoucherList = ({ filter }) => {
           </div>
         )}
       </div>
+
+      {/* ── SEARCH PANEL (Completed Vouchers only) ── */}
+      {filter === 'completed' && (
+        <div className="card" style={{ marginBottom: '1rem' }}>
+          <div className="card-body" style={{ padding: '1rem 1.25rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
+              <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>🔍 Search Vouchers</span>
+              {hasSearchFilters && (
+                <button className="btn btn-sm btn-secondary" style={{ marginLeft: 'auto', fontSize: '0.78rem' }}
+                  onClick={() => { setSearchNum(''); setSearchHead(''); setSearchPayee(''); setSearchDate(''); setSearchFrom(''); setSearchTo(''); }}>
+                  ✕ Clear All Filters
+                </button>
+              )}
+              {hasSearchFilters && (
+                <span style={{ fontSize: '0.8rem', color: '#f5841f', fontWeight: 600 }}>
+                  {filtered.length} of {baseFiltered.length} vouchers
+                </span>
+              )}
+            </div>
+            <div className="form-row">
+              <div className="form-group">
+                <label className="form-label">Voucher Number</label>
+                <input type="text" className="form-input" placeholder="e.g. 431 or VCH-2025-26-00431"
+                  value={searchNum} onChange={e => setSearchNum(e.target.value)} />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Head of Account</label>
+                <input type="text" className="form-input" placeholder="Partial name..."
+                  value={searchHead} onChange={e => setSearchHead(e.target.value)} />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Payee</label>
+                <input type="text" className="form-input" placeholder="Partial name..."
+                  value={searchPayee} onChange={e => setSearchPayee(e.target.value)} />
+              </div>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'flex-end', gap: '1rem', flexWrap: 'wrap' }}>
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label className="form-label">Date Filter</label>
+                <div style={{ display: 'flex', gap: '0.4rem' }}>
+                  <button
+                    className={`btn btn-sm ${searchDateMode === 'exact' ? 'btn-primary' : 'btn-secondary'}`}
+                    onClick={() => { setSearchDateMode('exact'); setSearchFrom(''); setSearchTo(''); }}>
+                    📅 Specific Date
+                  </button>
+                  <button
+                    className={`btn btn-sm ${searchDateMode === 'range' ? 'btn-primary' : 'btn-secondary'}`}
+                    onClick={() => { setSearchDateMode('range'); setSearchDate(''); }}>
+                    📅 Date Range
+                  </button>
+                </div>
+              </div>
+              {searchDateMode === 'exact' ? (
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label className="form-label">Date</label>
+                  <input type="date" className="form-input" value={searchDate} onChange={e => setSearchDate(e.target.value)} />
+                </div>
+              ) : (
+                <>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="form-label">From</label>
+                    <input type="date" className="form-input" value={searchFrom} onChange={e => setSearchFrom(e.target.value)} />
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="form-label">To</label>
+                    <input type="date" className="form-input" value={searchTo} onChange={e => setSearchTo(e.target.value)} />
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="card"><div className="card-body" style={{ padding: 0 }}>
         {filtered.length === 0 ? <div className="empty-state">{Icons.fileText}<p>No vouchers found</p></div> : (
           <div className="table-container"><table className="table"><thead><tr><th>Serial No.</th><th>Head of Account</th><th>Payee</th><th>Amount</th><th>Mode</th><th>Status</th><th>Date</th><th>Actions</th></tr></thead><tbody>
@@ -2584,14 +2698,12 @@ const VoucherList = ({ filter }) => {
           </div>
           <div className="modal-body">
             <VoucherPreview voucher={selectedVoucher} />
-            {/* Bill Attachments */}
-            {(selectedVoucher.status === 'completed' || selectedVoucher.status === 'awaiting_document' || user.role === 'admin' || user.isSuperAdmin) && (
-              <BillAttachmentPanel
-                voucherId={selectedVoucher.id}
-                voucherType="regular"
-                companyId={user.company.id}
-              />
-            )}
+            {/* Bill Attachments — visible on all statuses */}
+            <BillAttachmentPanel
+              voucherId={selectedVoucher.id}
+              voucherType="regular"
+              companyId={user.company.id}
+            />
             {/* Document Upload Section - for awaiting_document status */}
             {selectedVoucher.status === 'awaiting_document' && (selectedVoucher.prepared_by === user.id || user.role === 'admin' || user.isSuperAdmin) && !selectedVoucher.document_url && (
               <div className="document-upload-section" style={{background: '#fef3c7', padding: '1.5rem', borderRadius: '8px', marginTop: '1rem', textAlign: 'center'}}>
@@ -2920,6 +3032,12 @@ const VoucherList = ({ filter }) => {
                 </div>
               )}
             </div>
+          </div>
+            <BillAttachmentPanel
+              voucherId={selectedVoucher.id}
+              voucherType="regular"
+              companyId={user.company.id}
+            />
           </div>
           <div className="modal-footer" style={{display: 'flex', gap: '0.5rem', justifyContent: 'space-between'}}>
             <button className="btn btn-secondary" onClick={() => setShowEditModal(false)}>Cancel</button>
@@ -5088,6 +5206,7 @@ const AccountsManagement = () => {
 // ─────────────────────────────────────────────────────────────────────────────
 const BillAttachmentPanel = ({ voucherId, voucherType = 'regular', suspenseId, settlementId, companyId: companyIdProp }) => {
   const { user, addToast } = useApp();
+  const isMobile = /Mobi|Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || navigator.maxTouchPoints > 1;
   const companyId = companyIdProp || user.company.id;
   const [attachments, setAttachments] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -5332,6 +5451,26 @@ const BillAttachmentPanel = ({ voucherId, voucherType = 'regular', suspenseId, s
         </div>
       )}
 
+      {/* ── SCANNER HELP MODE (desktop only) ── */}
+      {mode === 'scanner' && (
+        <div style={{ background: 'white', borderRadius: '8px', border: '2px solid #6366f1', padding: '1rem', marginBottom: '0.75rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+            <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>🖨️ Scan Document</span>
+            <button className="btn btn-sm btn-secondary" onClick={() => setMode(null)}>{Icons.x} Cancel</button>
+          </div>
+          <ol style={{ fontSize: '0.85rem', color: '#555', paddingLeft: '1.25rem', marginBottom: '1rem', lineHeight: 1.9 }}>
+            <li>Place the bill/invoice face-down on the scanner glass</li>
+            <li>Open your scanner software (<strong>Windows Scan</strong>, <strong>HP Smart</strong>, <strong>NAPS2</strong>, etc.)</li>
+            <li>Scan and save the file as JPG or PDF</li>
+            <li>Click <strong>Select Scanned File</strong> below to upload it</li>
+          </ol>
+          <label className="btn btn-primary" style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
+            {uploading ? Icons.loader : Icons.upload} {uploading ? 'Uploading...' : 'Select Scanned File'}
+            <input type="file" accept="image/*,.pdf" style={{ display: 'none' }} onChange={(e) => { setMode(null); handleFileUpload(e); }} disabled={uploading} />
+          </label>
+        </div>
+      )}
+
       {/* ── ACTION BUTTONS (shown when no mode active) ── */}
       {!mode && (
         <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
@@ -5339,9 +5478,15 @@ const BillAttachmentPanel = ({ voucherId, voucherType = 'regular', suspenseId, s
             {uploading ? Icons.loader : Icons.upload} {uploading ? 'Uploading...' : 'Upload File'}
             <input type="file" accept="image/*,.pdf" style={{ display: 'none' }} onChange={handleFileUpload} disabled={uploading} />
           </label>
-          <button className="btn btn-sm btn-secondary" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }} onClick={startCamera}>
-            {Icons.camera} Use Camera / Scanner
-          </button>
+          {isMobile ? (
+            <button className="btn btn-sm btn-secondary" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }} onClick={startCamera}>
+              {Icons.camera} Use Camera
+            </button>
+          ) : (
+            <button className="btn btn-sm btn-secondary" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }} onClick={() => setMode('scanner')}>
+              🖨️ Scan Document
+            </button>
+          )}
           <button className="btn btn-sm btn-secondary" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }} onClick={startQRCapture}>
             {Icons.qrCode} Send to Phone
           </button>

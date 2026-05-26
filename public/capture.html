@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#f5841f">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <title>Scan Bill — Relish</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+      min-height: 100vh;
+      color: white;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 1rem;
+    }
+    .card {
+      background: rgba(255,255,255,0.07);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 16px;
+      padding: 2rem 1.5rem;
+      width: 100%;
+      max-width: 420px;
+      text-align: center;
+    }
+    .logo {
+      font-size: 2rem;
+      font-weight: 700;
+      color: #f5841f;
+      margin-bottom: 0.25rem;
+      letter-spacing: -0.5px;
+    }
+    .subtitle {
+      font-size: 0.85rem;
+      color: rgba(255,255,255,0.5);
+      margin-bottom: 2rem;
+    }
+    h2 { font-size: 1.2rem; font-weight: 600; margin-bottom: 0.5rem; }
+    p { font-size: 0.85rem; color: rgba(255,255,255,0.65); line-height: 1.6; }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+      width: 100%;
+      padding: 1rem;
+      border: none;
+      border-radius: 10px;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.15s, transform 0.1s;
+      margin-top: 0.75rem;
+      text-decoration: none;
+    }
+    .btn:active { opacity: 0.8; transform: scale(0.98); }
+    .btn-primary { background: #f5841f; color: white; }
+    .btn-secondary { background: rgba(255,255,255,0.1); color: white; border: 1px solid rgba(255,255,255,0.2); }
+    .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+    input[type=file] { display: none; }
+    .preview-wrap {
+      position: relative;
+      margin: 1rem 0;
+      border-radius: 10px;
+      overflow: hidden;
+      background: #000;
+      display: none;
+    }
+    .preview-wrap img {
+      width: 100%;
+      display: block;
+      border-radius: 10px;
+    }
+    .progress-bar {
+      height: 4px;
+      background: rgba(255,255,255,0.1);
+      border-radius: 2px;
+      overflow: hidden;
+      margin-top: 1rem;
+      display: none;
+    }
+    .progress-bar-fill {
+      height: 100%;
+      background: #f5841f;
+      border-radius: 2px;
+      width: 0%;
+      transition: width 0.3s ease;
+    }
+    .status-box {
+      border-radius: 10px;
+      padding: 1rem;
+      margin-top: 1rem;
+      font-size: 0.85rem;
+      font-weight: 500;
+      display: none;
+    }
+    .status-success { background: rgba(34,197,94,0.15); border: 1px solid rgba(34,197,94,0.4); color: #4ade80; }
+    .status-error   { background: rgba(239,68,68,0.15);  border: 1px solid rgba(239,68,68,0.4);  color: #f87171; }
+    .status-info    { background: rgba(59,130,246,0.15); border: 1px solid rgba(59,130,246,0.4); color: #93c5fd; }
+    .spinner {
+      width: 40px; height: 40px;
+      border: 3px solid rgba(255,255,255,0.15);
+      border-top-color: #f5841f;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin: 1.5rem auto;
+      display: none;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #success-screen { display: none; }
+    #error-screen   { display: none; }
+    #main-screen    { display: block; }
+
+    .big-icon { font-size: 3.5rem; margin-bottom: 0.75rem; display: block; }
+    .divider { height: 1px; background: rgba(255,255,255,0.1); margin: 1.25rem 0; }
+    .hint { font-size: 0.75rem; color: rgba(255,255,255,0.4); margin-top: 0.75rem; }
+  </style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">Relish</div>
+  <div class="subtitle">Bill Capture</div>
+
+  <!-- ── LOADING ── -->
+  <div id="loading-screen">
+    <div class="spinner" id="main-spinner" style="display:block"></div>
+    <p>Checking session…</p>
+  </div>
+
+  <!-- ── MAIN UPLOAD SCREEN ── -->
+  <div id="main-screen" style="display:none">
+    <span class="big-icon">📄</span>
+    <h2>Take a Photo of the Bill</h2>
+    <p>Point your camera at the invoice or receipt, then tap the button below.</p>
+
+    <div class="preview-wrap" id="preview-wrap">
+      <img id="preview-img" src="" alt="Preview" />
+    </div>
+
+    <div class="progress-bar" id="progress-bar">
+      <div class="progress-bar-fill" id="progress-fill"></div>
+    </div>
+
+    <div class="status-box status-error" id="upload-error"></div>
+
+    <!-- Hidden file input — capture="environment" opens rear camera on phones -->
+    <input type="file" id="file-input" accept="image/*" capture="environment">
+
+    <button class="btn btn-primary" id="camera-btn" onclick="openCamera()">
+      📷 Take Photo
+    </button>
+    <button class="btn btn-secondary" id="upload-btn" onclick="document.getElementById('gallery-input').click()" style="margin-top:0.5rem">
+      🖼️ Choose from Gallery
+    </button>
+    <input type="file" id="gallery-input" accept="image/*,.pdf">
+
+    <div class="divider"></div>
+    <p class="hint" id="expiry-hint"></p>
+  </div>
+
+  <!-- ── SUCCESS SCREEN ── -->
+  <div id="success-screen">
+    <span class="big-icon">✅</span>
+    <h2 style="color:#4ade80">Photo Sent!</h2>
+    <p style="margin-top:0.5rem">The bill has been attached to the voucher. You can close this tab.</p>
+  </div>
+
+  <!-- ── SESSION ERROR SCREEN ── -->
+  <div id="error-screen">
+    <span class="big-icon">⚠️</span>
+    <h2 id="error-title">Session Expired</h2>
+    <p id="error-msg" style="margin-top:0.5rem">This QR code has already been used or has expired. Please generate a new one from the desktop app.</p>
+  </div>
+</div>
+
+<script>
+(function() {
+  // ── Extract session ID from URL ──────────────────────────────────────────
+  var pathParts = window.location.pathname.split('/');
+  var sessionId = pathParts[pathParts.length - 1];
+
+  if (!sessionId || sessionId === 'capture') {
+    showError('Invalid Link', 'This link is missing the session ID. Please scan the QR code again.');
+    return;
+  }
+
+  // ── Validate session on load ─────────────────────────────────────────────
+  fetch('/api/capture-sessions/' + sessionId)
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      hide('loading-screen');
+      var s = data.session;
+      if (!s) { showError('Not Found', 'Session not found. Please generate a new QR code.'); return; }
+      if (s.status === 'used') { showError('Already Used', 'A photo has already been uploaded with this QR code. It can only be used once.'); return; }
+      if (s.status === 'expired') { showError('Session Expired', 'This QR code has expired (15 min limit). Please generate a new one from the desktop.'); return; }
+
+      // Show expiry time
+      var expiry = new Date(s.expires_at);
+      var mins = Math.max(0, Math.round((expiry - Date.now()) / 60000));
+      show('main-screen');
+      document.getElementById('expiry-hint').textContent = 'Session expires in ~' + mins + ' minutes';
+    })
+    .catch(function() {
+      hide('loading-screen');
+      showError('Connection Error', 'Unable to reach the server. Check your internet connection and try again.');
+    });
+
+  // ── Camera / file handlers ────────────────────────────────────────────────
+  window.openCamera = function() {
+    document.getElementById('file-input').click();
+  };
+
+  document.getElementById('file-input').addEventListener('change', function(e) {
+    handleFile(e.target.files[0]);
+  });
+  document.getElementById('gallery-input').addEventListener('change', function(e) {
+    handleFile(e.target.files[0]);
+  });
+
+  function handleFile(file) {
+    if (!file) return;
+    if (file.size > 15 * 1024 * 1024) { showUploadError('File too large (max 15 MB). Please use a lower resolution.'); return; }
+
+    // Show preview
+    var reader = new FileReader();
+    reader.onload = function(ev) {
+      document.getElementById('preview-img').src = ev.target.result;
+      show('preview-wrap');
+
+      // Compress + upload
+      compressAndUpload(file, ev.target.result);
+    };
+    reader.readAsDataURL(file);
+  }
+
+  function compressAndUpload(file, dataUrl) {
+    setButtons(false);
+    showProgress(10);
+    hideUploadError();
+
+    // Compress image using canvas if it's an image (not PDF)
+    if (file.type.startsWith('image/')) {
+      var img = new Image();
+      img.onload = function() {
+        var maxDim = 1600;
+        var w = img.width, h = img.height;
+        if (w > maxDim || h > maxDim) {
+          var scale = maxDim / Math.max(w, h);
+          w = Math.round(w * scale);
+          h = Math.round(h * scale);
+        }
+        var canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        var ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, w, h);
+        var compressed = canvas.toDataURL('image/jpeg', 0.82);
+        showProgress(40);
+        doUpload(compressed, 'image/jpeg', file.name.replace(/\.[^.]+$/, '.jpg'));
+      };
+      img.onerror = function() { doUpload(dataUrl, file.type, file.name); };
+      img.src = dataUrl;
+    } else {
+      // PDF or other — upload as-is
+      doUpload(dataUrl, file.type, file.name);
+    }
+  }
+
+  function doUpload(fileData, mimeType, fileName) {
+    showProgress(60);
+    fetch('/api/capture-sessions/' + sessionId + '/upload', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fileData: fileData, mimeType: mimeType, fileName: fileName })
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      showProgress(100);
+      if (data.success) {
+        setTimeout(function() {
+          hide('main-screen');
+          show('success-screen');
+        }, 400);
+      } else {
+        setButtons(true);
+        showUploadError(data.error || 'Upload failed. Please try again.');
+      }
+    })
+    .catch(function() {
+      setButtons(true);
+      showUploadError('Network error — check your connection and try again.');
+    });
+  }
+
+  // ── Helpers ───────────────────────────────────────────────────────────────
+  function show(id) { document.getElementById(id).style.display = 'block'; }
+  function hide(id) { document.getElementById(id).style.display = 'none'; }
+
+  function showError(title, msg) {
+    hide('loading-screen'); hide('main-screen'); hide('success-screen');
+    document.getElementById('error-title').textContent = title;
+    document.getElementById('error-msg').textContent = msg;
+    show('error-screen');
+  }
+
+  function showUploadError(msg) {
+    var el = document.getElementById('upload-error');
+    el.textContent = '⚠️ ' + msg;
+    el.style.display = 'block';
+  }
+  function hideUploadError() {
+    document.getElementById('upload-error').style.display = 'none';
+  }
+
+  function showProgress(pct) {
+    show('progress-bar');
+    document.getElementById('progress-fill').style.width = pct + '%';
+  }
+
+  function setButtons(enabled) {
+    document.getElementById('camera-btn').disabled = !enabled;
+    document.getElementById('upload-btn').disabled = !enabled;
+    if (!enabled) {
+      document.getElementById('camera-btn').textContent = '⏳ Uploading…';
+    } else {
+      document.getElementById('camera-btn').innerHTML = '📷 Take Photo';
+    }
+  }
+})();
+</script>
+</body>
+</html>
