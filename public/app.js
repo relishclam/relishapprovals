@@ -5299,42 +5299,47 @@ const SuspenseVoucherForm = ({ onCreated }) => {
   };
 
   return (
-    <div className="page-container">
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.5rem' }}>
-        {Icons.wallet}
-        <h1 style={{ fontSize: '1.5rem', fontWeight: 700 }}>New Suspense Voucher</h1>
+    <div>
+      <div className="page-header">
+        <h1 className="page-title">{Icons.wallet} New Suspense Voucher</h1>
+        <p className="page-subtitle">Request an advance cash disbursement for a staff member</p>
       </div>
-      <div className="card" style={{ maxWidth: 600 }}>
-        <div className="form-group">
-          <label className="form-label">Staff Member *</label>
-          <select className="form-input" value={form.staffUserId} onChange={e => setForm(f => ({ ...f, staffUserId: e.target.value }))}>
-            <option value="">Select staff member</option>
-            {staffUsers.map(u => <option key={u.id} value={u.id}>{u.name} ({u.role})</option>)}
-          </select>
-        </div>
-        <div className="form-group">
-          <label className="form-label">Purpose *</label>
-          <input className="form-input" type="text" placeholder="e.g. Field trip expenses" value={form.purpose} onChange={e => setForm(f => ({ ...f, purpose: e.target.value }))} />
-        </div>
-        <div className="form-group">
-          <label className="form-label">Advance Amount (₹) *</label>
-          <input className="form-input" type="number" min="0" step="0.01" placeholder="0.00" value={form.advanceAmount} onChange={e => setForm(f => ({ ...f, advanceAmount: e.target.value }))} />
-        </div>
-        <div className="form-group">
-          <label className="form-label">Payment Mode</label>
-          <select className="form-input" value={form.paymentMode} onChange={e => setForm(f => ({ ...f, paymentMode: e.target.value }))}>
-            <option value="Cash">Cash</option>
-            <option value="UPI">UPI</option>
-            <option value="Account Transfer">Account Transfer</option>
-          </select>
-        </div>
-        <div className="form-group">
-          <label className="form-label">Narration (optional)</label>
-          <textarea className="form-input" rows={3} placeholder="Additional notes..." value={form.narration} onChange={e => setForm(f => ({ ...f, narration: e.target.value }))} />
-        </div>
-        <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end', marginTop: '1rem' }}>
-          <button className="btn btn-secondary" onClick={() => onCreated && onCreated()}>Cancel</button>
-          <button className="btn btn-primary" onClick={handleSubmit} disabled={loading}>{loading && Icons.loader}{Icons.send} Submit for Approval</button>
+      <div className="card">
+        <div className="card-header"><h3 className="card-title">{Icons.wallet} Suspense Voucher Details</h3></div>
+        <div className="card-body">
+          <div className="form-group">
+            <label className="form-label">Staff Member *</label>
+            <select className="form-select" value={form.staffUserId} onChange={e => setForm(f => ({ ...f, staffUserId: e.target.value }))}>
+              <option value="">Select staff member</option>
+              {staffUsers.map(u => <option key={u.id} value={u.id}>{u.name} ({u.role})</option>)}
+            </select>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Purpose *</label>
+            <input className="form-input" type="text" placeholder="e.g. Field trip expenses" value={form.purpose} onChange={e => setForm(f => ({ ...f, purpose: e.target.value }))} />
+          </div>
+          <div className="form-row">
+            <div className="form-group">
+              <label className="form-label">Advance Amount (₹) *</label>
+              <input className="form-input" type="number" min="0" step="0.01" placeholder="0.00" value={form.advanceAmount} onChange={e => setForm(f => ({ ...f, advanceAmount: e.target.value }))} />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Payment Mode</label>
+              <select className="form-select" value={form.paymentMode} onChange={e => setForm(f => ({ ...f, paymentMode: e.target.value }))}>
+                <option value="Cash">Cash</option>
+                <option value="UPI">UPI</option>
+                <option value="Account Transfer">Account Transfer</option>
+              </select>
+            </div>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Narration (optional)</label>
+            <textarea className="form-input" rows={3} placeholder="Additional notes..." value={form.narration} onChange={e => setForm(f => ({ ...f, narration: e.target.value }))} />
+          </div>
+          <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end', marginTop: '1rem' }}>
+            <button className="btn btn-secondary" onClick={() => onCreated && onCreated()}>Cancel</button>
+            <button className="btn btn-primary" onClick={handleSubmit} disabled={loading}>{loading && Icons.loader}{Icons.send} Submit for Approval</button>
+          </div>
         </div>
       </div>
     </div>
@@ -5369,12 +5374,14 @@ const SuspenseVoucherList = ({ onViewDetail }) => {
   };
 
   return (
-    <div className="page-container">
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.5rem', flexWrap: 'wrap' }}>
-        {Icons.wallet}
-        <h1 style={{ fontSize: '1.5rem', fontWeight: 700 }}>Suspense Vouchers</h1>
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-          <select className="form-input" style={{ width: 'auto', padding: '6px 10px', fontSize: '0.85rem' }} value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
+    <div>
+      <div className="page-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.75rem' }}>
+        <div>
+          <h1 className="page-title">{Icons.wallet} Suspense Vouchers</h1>
+          <p className="page-subtitle">Track advance disbursements and settlements</p>
+        </div>
+        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+          <select className="form-select" style={{ width: 'auto', padding: '6px 10px', fontSize: '0.85rem' }} value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
             <option value="">All Status</option>
             <option value="pending_approval">Pending Approval</option>
             <option value="open">Open</option>
@@ -5547,13 +5554,16 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
   const canSettle = (sv.status === 'open' || sv.status === 'partial');
 
   return (
-    <div className="page-container">
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.5rem', flexWrap: 'wrap' }}>
-        <button className="btn btn-sm btn-secondary" onClick={onBack}>← Back</button>
-        {Icons.wallet}
-        <h1 style={{ fontSize: '1.3rem', fontWeight: 700 }}>{sv.serial_number}</h1>
-        {statusBadge(sv.status)}
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.5rem' }}>
+    <div>
+      <div className="page-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.75rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+          <button className="btn btn-sm btn-secondary" onClick={onBack}>← Back</button>
+          <div>
+            <h1 className="page-title" style={{ marginBottom: '0.25rem' }}>{Icons.wallet} {sv.serial_number} {statusBadge(sv.status)}</h1>
+            <p className="page-subtitle">{sv.purpose}</p>
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
           {isAdmin && sv.status === 'pending_approval' && (
             <>
               <button className="btn btn-sm btn-danger" onClick={() => setShowRejectModal(true)} disabled={actionLoading}>{Icons.x} Reject</button>
