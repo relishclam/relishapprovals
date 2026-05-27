@@ -906,7 +906,7 @@ const Dashboard = () => {
         <div className="card-body" style={{ padding: 0 }}>
           {vouchers.length === 0 ? <div className="empty-state">{Icons.fileText}<p>No vouchers yet</p></div> : (
             <div className="table-container"><table className="table"><thead><tr><th>Serial No.</th><th>Payee</th><th>Amount</th><th>Status</th><th>Date</th></tr></thead><tbody>
-              {vouchers.slice(0, 5).map(v => (<tr key={v.id}><td className="text-mono fw-600">{v.serial_number}</td><td>{v.payee_name}</td><td className="fw-600">{formatRupees(v.amount, 0)}</td><td><span className={`status-badge status-${v.status}`}>{v.status.replace(/_/g, ' ')}</span></td><td>{new Date(v.created_at).toLocaleDateString('en-IN')}</td></tr>))}
+              {vouchers.slice(0, 5).map(v => (<tr key={v.id}><td className="text-mono fw-600">{v.serial_number}{v.attachment_count > 0 && <span title={`${v.attachment_count} attachment${v.attachment_count > 1 ? 's' : ''}`} style={{marginLeft: '6px', color: '#f5841f', verticalAlign: 'middle', display: 'inline-flex'}}>{Icons.paperclip}</span>}</td><td>{v.payee_name}</td><td className="fw-600">{formatRupees(v.amount, 0)}</td><td><span className={`status-badge status-${v.status}`}>{v.status.replace(/_/g, ' ')}</span></td><td>{new Date(v.created_at).toLocaleDateString('en-IN')}</td></tr>))}
             </tbody></table></div>
           )}
         </div>
@@ -2679,7 +2679,7 @@ const VoucherList = ({ filter }) => {
       <div className="card"><div className="card-body" style={{ padding: 0 }}>
         {filtered.length === 0 ? <div className="empty-state">{Icons.fileText}<p>No vouchers found</p></div> : (
           <div className="table-container"><table className="table"><thead><tr><th>Serial No.</th><th>Head of Account</th><th>Payee</th><th>Amount</th><th>Mode</th><th>Status</th><th>Date</th><th>Actions</th></tr></thead><tbody>
-            {filtered.map(v => (<tr key={v.id}><td className="text-mono fw-600">{v.serial_number}</td><td>{v.head_of_account}</td><td>{v.payee_name}</td><td className="fw-600">{formatRupees(v.amount, 0)}</td><td>{v.payment_mode}</td><td><span className={`status-badge status-${v.status}`}>{v.status.replace(/_/g, ' ')}</span></td><td>{new Date(v.created_at).toLocaleDateString('en-IN')}</td><td><button className="btn btn-sm btn-secondary" onClick={() => openVoucher(v)}>{Icons.eye} View</button></td></tr>))}
+            {filtered.map(v => (<tr key={v.id}><td className="text-mono fw-600">{v.serial_number}{v.attachment_count > 0 && <span title={`${v.attachment_count} attachment${v.attachment_count > 1 ? 's' : ''}`} style={{marginLeft: '6px', color: '#f5841f', verticalAlign: 'middle', display: 'inline-flex'}}>{Icons.paperclip}</span>}</td><td>{v.head_of_account}</td><td>{v.payee_name}</td><td className="fw-600">{formatRupees(v.amount, 0)}</td><td>{v.payment_mode}</td><td><span className={`status-badge status-${v.status}`}>{v.status.replace(/_/g, ' ')}</span></td><td>{new Date(v.created_at).toLocaleDateString('en-IN')}</td><td><button className="btn btn-sm btn-secondary" onClick={() => openVoucher(v)}>{Icons.eye} View</button></td></tr>))}
           </tbody></table></div>
         )}
       </div></div>

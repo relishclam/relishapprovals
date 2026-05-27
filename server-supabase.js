@@ -1135,7 +1135,20 @@ app.get('/api/companies/:companyId/vouchers', async (req, res) => {
       .order('created_at', { ascending: false });
     
     if (error) throw error;
-    
+
+    // Fetch attachment counts for all vouchers in a single query
+    const voucherIds = vouchers.map(v => v.id);
+    let attCounts = {};
+    if (voucherIds.length > 0) {
+      const { data: attData } = await supabase
+        .from('voucher_attachments')
+        .select('voucher_id')
+        .in('voucher_id', voucherIds);
+      (attData || []).forEach(a => {
+        attCounts[a.voucher_id] = (attCounts[a.voucher_id] || 0) + 1;
+      });
+    }
+
     // Flatten the response
     const formattedVouchers = vouchers.map(v => ({
       ...v,
@@ -1148,7 +1161,8 @@ app.get('/api/companies/:companyId/vouchers', async (req, res) => {
       approver_username: v.approver?.username,
       company_name: v.company?.name,
       company_address: v.company?.address,
-      company_gst: v.company?.gst
+      company_gst: v.company?.gst,
+      attachment_count: attCounts[v.id] || 0
     }));
     
     res.json(formattedVouchers);
@@ -2553,8 +2567,15 @@ app.delete('/api/attachments/:id', async (req, res) => {
       return res.status(403).json({ error: 'Cannot delete: must be owner within 24 hours or admin' });
     }
 
-    await supabase.storage.from('voucher-bills').remove([att.storage_path]);
-    await supabase.from('voucher_attachments').delete().eq('id', req.params.id);
+    const { error: storageErr } = await supabase.storage.from('voucher-bills').remove([att.storage_path]);
+    if (storageErr) console.warn('Storage remove warning:', storageErr.message);
+
+    // Clear FK reference in capture_sessions before deleting (prevents FK constraint violation
+    // for attachments uploaded via the QR/Send-to-Phone capture flow)
+    await supabase.from('capture_sessions').update({ attachment_id: null }).eq('attachment_id', req.params.id);
+
+    const { error: delErr } = await supabase.from('voucher_attachments').delete().eq('id', req.params.id);
+    if (delErr) throw delErr;
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
