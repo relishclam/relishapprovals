@@ -5860,6 +5860,9 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
   const [approveForm, setApproveForm] = useState({ headOfAccount: '', subHeadOfAccount: '', narration: '', invoiceReference: '', paymentMode: 'UPI', createVoucher: true });
   const [heads, setHeads] = useState([]);
   const [resendLoading, setResendLoading] = useState(false);
+  const [showShareModal, setShowShareModal] = useState(false);
+  const [shareUrl, setShareUrl] = useState('');
+  const [shareSmsStatus, setShareSmsStatus] = useState(null); // 'sent' | 'failed' | null
   const [showTopUp, setShowTopUp] = useState(false);
   const [topUpForm, setTopUpForm] = useState({ amount: '', description: '' });
   const [topUpLoading, setTopUpLoading] = useState(false);
@@ -5895,11 +5898,9 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
     setResendLoading(true);
     const result = await api.resendSettlementLink(suspenseId, user.id);
     if (result.success) {
-      if (result.smsSent === false) {
-        addToast(`SMS failed (${result.smsError || 'unknown error'}). Share this link manually: ${result.settlementUrl}`, 'warning', 12000);
-      } else {
-        addToast('Settlement link resent via SMS', 'success');
-      }
+      setShareUrl(result.settlementUrl);
+      setShareSmsStatus(result.smsSent === false ? 'failed' : 'sent');
+      setShowShareModal(true);
     } else {
       addToast(result.error || 'Failed to resend link', 'error');
     }
@@ -6087,6 +6088,54 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
             <div className="modal-footer">
               <button className="btn btn-secondary" onClick={() => setShowTopUp(false)}>Cancel</button>
               <button className="btn btn-success" onClick={handleTopUp} disabled={topUpLoading}>{topUpLoading ? Icons.loader : '💰'} Confirm Top Up</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showShareModal && (
+        <div className="modal-overlay" onClick={() => setShowShareModal(false)}>
+          <div className="modal" style={{ maxWidth: '480px' }} onClick={e => e.stopPropagation()}>
+            <div className="modal-header" style={{ background: shareSmsStatus === 'sent' ? '#10b981' : '#f59e0b', color: 'white' }}>
+              <h3 className="modal-title" style={{ color: 'white' }}>{shareSmsStatus === 'sent' ? '📲 Settlement Link Sent' : '⚠️ SMS Failed — Share Manually'}</h3>
+              <button className="modal-close" style={{ color: 'white' }} onClick={() => setShowShareModal(false)}>×</button>
+            </div>
+            <div className="modal-body">
+              {shareSmsStatus === 'sent' ? (
+                <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '8px', padding: '0.75rem', marginBottom: '1rem', fontSize: '0.85rem', color: '#166534' }}>
+                  ✅ SMS sent successfully to <strong>{sv.staff_payee?.mobile || sv.staff?.mobile || 'payee'}</strong>. You can also share this link directly:
+                </div>
+              ) : (
+                <div style={{ background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: '8px', padding: '0.75rem', marginBottom: '1rem', fontSize: '0.85rem', color: '#92400e' }}>
+                  ⚠️ SMS could not be delivered. Please share this link directly with <strong>{sv.staff_payee?.name || sv.staff?.name || 'the staff member'}</strong> via WhatsApp or any other channel.
+                </div>
+              )}
+              <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
+                <input
+                  className="form-input"
+                  readOnly
+                  value={shareUrl}
+                  style={{ flex: 1, fontSize: '0.8rem', background: '#f8fafc' }}
+                  onFocus={e => e.target.select()}
+                />
+                <button
+                  className="btn btn-secondary"
+                  style={{ whiteSpace: 'nowrap' }}
+                  onClick={() => {
+                    navigator.clipboard.writeText(shareUrl).then(() => addToast('Link copied!', 'success')).catch(() => addToast('Copy failed — select and copy manually', 'error'));
+                  }}
+                >📋 Copy</button>
+              </div>
+              <a
+                href={`https://wa.me/${(sv.staff_payee?.mobile || '').replace(/\D/g, '')}?text=${encodeURIComponent('Your settlement form for ' + sv.serial_number + ' is ready. Open it here: ' + shareUrl)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="btn btn-success"
+                style={{ width: '100%', display: 'block', textAlign: 'center', textDecoration: 'none' }}
+              >💬 Share via WhatsApp</a>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setShowShareModal(false)}>Close</button>
             </div>
           </div>
         </div>
