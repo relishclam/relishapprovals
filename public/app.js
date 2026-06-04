@@ -5708,7 +5708,11 @@ const SuspenseVoucherList = ({ onViewDetail }) => {
                   <div style={{ fontWeight: 700, fontSize: '1rem', color: '#f5841f' }}>{sv.serial_number}</div>
                   <div style={{ fontSize: '0.9rem', fontWeight: 500, marginTop: '2px' }}>{sv.purpose}</div>
                   <div style={{ fontSize: '0.8rem', color: '#666', marginTop: '2px' }}>
-                    Staff: {sv.staff_payee?.name || sv.staff?.name || 'Unknown'} · Created by: {sv.creator?.name || 'Unknown'}
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}>
+                      <span style={{ background: '#10b981', color: 'white', fontSize: '0.68rem', padding: '1px 6px', borderRadius: '4px', fontWeight: 600 }}>👤 Staff</span>
+                      {sv.staff_payee?.name || sv.staff?.name || 'Unknown'}
+                    </span>
+                    {' · '} Created by: {sv.creator?.name || 'Unknown'}
                   </div>
                   <div style={{ fontSize: '0.75rem', color: '#999', marginTop: '2px' }}>{new Date(sv.created_at).toLocaleDateString('en-IN')}</div>
                 </div>
@@ -5921,7 +5925,7 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
 
       <div className="card" style={{ marginBottom: '1rem' }}>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem' }}>
-          <div><div style={{ fontSize: '0.75rem', color: '#999', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Staff Member</div><div style={{ fontWeight: 600, marginTop: '2px' }}>{sv.staff_payee?.name || sv.staff?.name || 'Unknown'}{sv.staff_payee?.mobile && <span style={{ fontWeight: 400, color: '#6b7280', fontSize: '0.85rem', marginLeft: '0.4rem' }}>· {sv.staff_payee.mobile}</span>}</div></div>
+          <div><div style={{ fontSize: '0.75rem', color: '#999', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Staff Member</div><div style={{ fontWeight: 600, marginTop: '2px', display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}><span style={{ background: '#10b981', color: 'white', fontSize: '0.68rem', padding: '2px 7px', borderRadius: '4px', fontWeight: 600 }}>👤 Staff</span>{sv.staff_payee?.name || sv.staff?.name || 'Unknown'}{sv.staff_payee?.mobile && <span style={{ fontWeight: 400, color: '#6b7280', fontSize: '0.85rem' }}>· {sv.staff_payee.mobile}</span>}</div></div>
           <div><div style={{ fontSize: '0.75rem', color: '#999', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Purpose</div><div style={{ fontWeight: 600, marginTop: '2px' }}>{sv.purpose}</div></div>
           <div><div style={{ fontSize: '0.75rem', color: '#999', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Advance Amount</div><div style={{ fontWeight: 700, fontSize: '1.1rem', color: '#f5841f', marginTop: '2px' }}>{formatRupees(sv.advance_amount)}</div></div>
           <div><div style={{ fontSize: '0.75rem', color: '#999', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Balance</div><div style={{ fontWeight: 700, fontSize: '1.1rem', color: '#3b82f6', marginTop: '2px' }}>{formatRupees(sv.balance_amount ?? sv.advance_amount)}</div></div>
@@ -5954,7 +5958,14 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
                     <td style={{ padding: '8px 12px', borderBottom: '1px solid #f0f0f0' }}>{new Date(s.created_at).toLocaleDateString('en-IN')}</td>
                     <td style={{ padding: '8px 12px', borderBottom: '1px solid #f0f0f0' }}><span style={{ color: entryTypeColor(s.entry_type), fontWeight: 600, fontSize: '0.8rem' }}>{entryTypeLabel(s.entry_type)}</span></td>
                     <td style={{ padding: '8px 12px', borderBottom: '1px solid #f0f0f0' }}>{s.description}{s.head_of_account && <span style={{ color: '#888', fontSize: '0.75rem' }}> · {s.head_of_account}</span>}</td>
-                    <td style={{ padding: '8px 12px', borderBottom: '1px solid #f0f0f0', color: '#666' }}>{s.payee?.name || s.submitter?.name || '—'}</td>
+                    <td style={{ padding: '8px 12px', borderBottom: '1px solid #f0f0f0', color: '#666' }}>
+                      {(s.payee?.name || s.submitter?.name) ? (
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', flexWrap: 'wrap' }}>
+                          {s.payee?.name && <span style={{ background: '#10b981', color: 'white', fontSize: '0.65rem', padding: '1px 5px', borderRadius: '3px', fontWeight: 600 }}>👤</span>}
+                          {s.payee?.name || s.submitter?.name}
+                        </span>
+                      ) : '—'}
+                    </td>
                     <td style={{ padding: '8px 12px', borderBottom: '1px solid #f0f0f0', textAlign: 'right', fontWeight: 600, color: entryTypeColor(s.entry_type) }}>{formatRupees(s.amount)}</td>
                     <td style={{ padding: '8px 12px', borderBottom: '1px solid #f0f0f0' }}>{settlementStatusBadge(s.status)}</td>
                     <td style={{ padding: '8px 12px', borderBottom: '1px solid #f0f0f0', textAlign: 'center' }}>
