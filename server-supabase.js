@@ -2331,6 +2331,21 @@ app.post('/api/suspense-vouchers', async (req, res) => {
       return res.status(400).json({ error: 'Staff payee not found. Please add the staff member in Payees Management and mark them as a Staff Payee first.' });
     }
 
+    // Block if this payee already has an active (open/partial/pending_approval) voucher
+    const { data: existingActive } = await supabase.from('suspense_vouchers')
+      .select('id, serial_number, status, balance_amount, advance_amount')
+      .eq('company_id', companyId)
+      .eq('staff_payee_id', staffPayeeId)
+      .in('status', ['pending_approval', 'open', 'partial'])
+      .limit(1);
+    if (existingActive && existingActive.length > 0) {
+      const ev = existingActive[0];
+      return res.status(409).json({
+        error: `${payee.name} already has an active suspense voucher (${ev.serial_number} · ${ev.status}). Please close it before creating a new one.`,
+        activeVoucher: { id: ev.id, serialNumber: ev.serial_number, status: ev.status, balanceAmount: ev.balance_amount, advanceAmount: ev.advance_amount }
+      });
+    }
+
     const { data: serialData, error: serialError } = await supabase.rpc('get_next_suspense_number', { p_company_id: companyId });
     if (serialError) throw serialError;
 

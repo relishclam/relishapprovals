@@ -5553,9 +5553,11 @@ const BillAttachmentPanel = ({ voucherId, voucherType = 'regular', suspenseId, s
 // ─────────────────────────────────────────────────────────────────────────────
 // SUSPENSE VOUCHER FORM
 // ─────────────────────────────────────────────────────────────────────────────
-const SuspenseVoucherForm = ({ onCreated }) => {
+const SuspenseVoucherForm = ({ onCreated, onViewDetail }) => {
   const { user, addToast } = useApp();
   const [staffPayees, setStaffPayees] = useState([]);
+  const [activeVouchers, setActiveVouchers] = useState({}); // payeeId → voucher
+  const [activeBlock, setActiveBlock] = useState(null); // the active voucher for selected payee
   const [form, setForm] = useState({ staffPayeeId: '', purpose: '', advanceAmount: '', paymentMode: 'Cash', narration: '' });
   const [loading, setLoading] = useState(false);
 
@@ -5563,7 +5565,23 @@ const SuspenseVoucherForm = ({ onCreated }) => {
     api.getPayees(user.company.id).then(data => {
       if (Array.isArray(data)) setStaffPayees(data.filter(p => p.is_staff && p.company_id === user.company.id));
     });
+    // Load all active suspense vouchers to detect conflicts upfront
+    api.getSuspenseVouchers(user.company.id, {}).then(data => {
+      const vouchers = Array.isArray(data) ? data : (data?.vouchers || []);
+      const map = {};
+      for (const v of vouchers) {
+        if (['pending_approval', 'open', 'partial'].includes(v.status) && v.staff_payee_id) {
+          if (!map[v.staff_payee_id]) map[v.staff_payee_id] = v; // keep first (earliest)
+        }
+      }
+      setActiveVouchers(map);
+    });
   }, [user.company.id]);
+
+  const handlePayeeChange = (payeeId) => {
+    setForm(f => ({ ...f, staffPayeeId: payeeId }));
+    setActiveBlock(payeeId && activeVouchers[payeeId] ? activeVouchers[payeeId] : null);
+  };
 
   const handleSubmit = async () => {
     if (!form.staffPayeeId || !form.purpose || !form.advanceAmount) {
@@ -5572,6 +5590,10 @@ const SuspenseVoucherForm = ({ onCreated }) => {
     }
     if (isNaN(parseFloat(form.advanceAmount)) || parseFloat(form.advanceAmount) <= 0) {
       addToast('Enter a valid advance amount', 'error');
+      return;
+    }
+    if (activeBlock) {
+      addToast('This staff member already has an active suspense voucher. Please close it first.', 'error');
       return;
     }
     setLoading(true);
@@ -5588,6 +5610,9 @@ const SuspenseVoucherForm = ({ onCreated }) => {
       if (result.success) {
         addToast(`Suspense voucher ${result.suspenseVoucher.serial_number} created`, 'success');
         onCreated && onCreated();
+      } else if (result.activeVoucher) {
+        setActiveBlock(result.activeVoucher);
+        addToast(result.error, 'error');
       } else {
         addToast(result.error || 'Failed to create suspense voucher', 'error');
       }
@@ -5611,10 +5636,23 @@ const SuspenseVoucherForm = ({ onCreated }) => {
                 ⚠️ No staff payees found. Please go to <strong>Manage Payees</strong>, add the staff member, and check <strong>Staff Payee</strong> on their record first.
               </div>
             ) : (
-              <select className="form-select" value={form.staffPayeeId} onChange={e => setForm(f => ({ ...f, staffPayeeId: e.target.value }))}>
+              <select className="form-select" value={form.staffPayeeId} onChange={e => handlePayeeChange(e.target.value)}>
                 <option value="">Select staff member</option>
-                {staffPayees.map(p => <option key={p.id} value={p.id}>{p.name}{p.mobile ? ` · ${p.mobile}` : ''}</option>)}
+                {staffPayees.map(p => <option key={p.id} value={p.id}>{p.name}{p.mobile ? ` · ${p.mobile}` : ''}{activeVouchers[p.id] ? ' ⚠️ Active' : ''}</option>)}
               </select>
+            )}
+            {activeBlock && (
+              <div style={{ background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: '8px', padding: '0.9rem', marginTop: '0.5rem', fontSize: '0.88rem', color: '#991b1b' }}>
+                <div style={{ fontWeight: 600, marginBottom: '0.4rem' }}>🚫 Cannot create a new voucher</div>
+                <div>This staff member already has an active suspense voucher:</div>
+                <div style={{ margin: '0.4rem 0', padding: '0.5rem 0.75rem', background: 'white', borderRadius: '6px', border: '1px solid #fca5a5', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
+                  <span><strong>{activeBlock.serial_number || activeBlock.serialNumber}</strong> · <span style={{ textTransform: 'capitalize' }}>{activeBlock.status}</span> · Balance: {formatRupees(activeBlock.balance_amount ?? activeBlock.balanceAmount ?? activeBlock.advance_amount)}</span>
+                  {onViewDetail && activeBlock.id && (
+                    <button className="btn btn-sm btn-secondary" style={{ fontSize: '0.78rem', padding: '2px 10px' }} onClick={() => onViewDetail(activeBlock.id)}>View →</button>
+                  )}
+                </div>
+                <div style={{ marginTop: '0.3rem', color: '#b91c1c' }}>Please close or fully settle this voucher before creating a new one. You can also use <strong>💰 Top Up</strong> to add more funds to the existing voucher.</div>
+              </div>
             )}
           </div>
           <div className="form-group">
@@ -5641,7 +5679,7 @@ const SuspenseVoucherForm = ({ onCreated }) => {
           </div>
           <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end', marginTop: '1rem' }}>
             <button className="btn btn-secondary" onClick={() => onCreated && onCreated()}>Cancel</button>
-            <button className="btn btn-primary" onClick={handleSubmit} disabled={loading}>{loading && Icons.loader}{Icons.send} Submit for Approval</button>
+            <button className="btn btn-primary" onClick={handleSubmit} disabled={loading || !!activeBlock}>{loading && Icons.loader}{Icons.send} Submit for Approval</button>
           </div>
         </div>
       </div>
@@ -6918,7 +6956,7 @@ const App = () => {
   const contextValue = { user, vouchers, notifications, addToast, refreshVouchers, refreshNotifications };
   const renderPage = () => {
     if (user.role === 'auditor') return <VoucherList filter="completed" />;
-    switch(currentPage) { case 'dashboard': return <Dashboard />; case 'create': return (user.role === 'accounts' || user.isSuperAdmin) ? <CreateVoucher /> : <Dashboard />; case 'drafts': return (user.role === 'accounts' || user.isSuperAdmin) ? <VoucherList filter="draft" /> : <Dashboard />; case 'pending': return <VoucherList filter="pending" />; case 'approved': return <VoucherList filter="approved" />; case 'completed': return <VoucherList filter="completed" />; case 'all': return <VoucherList filter="all" />; case 'users': return user.isSuperAdmin ? <UsersManagement /> : <Dashboard />; case 'payees': return (user.role === 'accounts' || user.isSuperAdmin) ? <PayeesManagement /> : <Dashboard />; case 'accounts': return (user.role === 'accounts' || user.isSuperAdmin) ? <AccountsManagement /> : <Dashboard />; case 'suspense': return <SuspenseVoucherList onViewDetail={(id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); }} />; case 'create-suspense': return (user.role === 'accounts' || user.isSuperAdmin) ? <SuspenseVoucherForm onCreated={() => { setCurrentPage('suspense'); }} /> : <Dashboard />; case 'suspense-detail': return suspenseDetailId ? <SuspenseVoucherDetail suspenseId={suspenseDetailId} onBack={() => setCurrentPage('suspense')} /> : <SuspenseVoucherList onViewDetail={(id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); }} />; default: return <Dashboard />; } };
+    switch(currentPage) { case 'dashboard': return <Dashboard />; case 'create': return (user.role === 'accounts' || user.isSuperAdmin) ? <CreateVoucher /> : <Dashboard />; case 'drafts': return (user.role === 'accounts' || user.isSuperAdmin) ? <VoucherList filter="draft" /> : <Dashboard />; case 'pending': return <VoucherList filter="pending" />; case 'approved': return <VoucherList filter="approved" />; case 'completed': return <VoucherList filter="completed" />; case 'all': return <VoucherList filter="all" />; case 'users': return user.isSuperAdmin ? <UsersManagement /> : <Dashboard />; case 'payees': return (user.role === 'accounts' || user.isSuperAdmin) ? <PayeesManagement /> : <Dashboard />; case 'accounts': return (user.role === 'accounts' || user.isSuperAdmin) ? <AccountsManagement /> : <Dashboard />; case 'suspense': return <SuspenseVoucherList onViewDetail={(id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); }} />; case 'create-suspense': return (user.role === 'accounts' || user.isSuperAdmin) ? <SuspenseVoucherForm onCreated={() => { setCurrentPage('suspense'); }} onViewDetail={(id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); }} /> : <Dashboard />; case 'suspense-detail': return suspenseDetailId ? <SuspenseVoucherDetail suspenseId={suspenseDetailId} onBack={() => setCurrentPage('suspense')} /> : <SuspenseVoucherList onViewDetail={(id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); }} />; default: return <Dashboard />; } };
 
   const handleNavClick = (page) => {
     try { localStorage.setItem('relish_page', page); } catch {}
