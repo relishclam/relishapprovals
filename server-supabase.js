@@ -2550,6 +2550,85 @@ app.post('/api/suspense-vouchers/:id/resend-settlement-link', async (req, res) =
   }
 });
 
+// Top-up: accounts/superAdmin adds more funds to an existing suspense voucher
+app.post('/api/suspense-vouchers/:id/topup', async (req, res) => {
+  const { amount, description, addedBy } = req.body;
+  if (!amount || !description || !addedBy) return res.status(400).json({ error: 'amount, description and addedBy are required' });
+  if (isNaN(parseFloat(amount)) || parseFloat(amount) <= 0) return res.status(400).json({ error: 'Invalid amount' });
+
+  try {
+    const actor = await getActorRole(addedBy);
+    if (actor.role !== 'accounts' && !actor.is_super_admin) {
+      return res.status(403).json({ error: 'Only Accounts users or Super Admin can top up a suspense voucher' });
+    }
+
+    const { data: sv, error: svError } = await supabase.from('suspense_vouchers')
+      .select('*').eq('id', req.params.id).single();
+    if (svError || !sv) return res.status(404).json({ error: 'Suspense voucher not found' });
+    if (sv.status === 'pending_approval' || sv.status === 'rejected') {
+      return res.status(400).json({ error: `Cannot top up a voucher in "${sv.status}" state` });
+    }
+
+    // Insert as auto-approved topup (accounts added it — no review needed)
+    const { data: settlement, error: sErr } = await supabase.from('suspense_settlements').insert({
+      suspense_id: sv.id,
+      company_id: sv.company_id,
+      entry_type: 'topup',
+      amount: parseFloat(amount),
+      description,
+      submitted_by: addedBy,
+      settlement_payee_id: sv.staff_payee_id || null,
+      requires_invoice: false,
+      status: 'approved',
+      reviewed_by: addedBy,
+      reviewed_at: new Date().toISOString()
+    }).select().single();
+    if (sErr) throw sErr;
+
+    // Recalculate balance from all approved entries
+    const { data: approvedSettlements } = await supabase.from('suspense_settlements')
+      .select('entry_type, amount')
+      .eq('suspense_id', sv.id)
+      .eq('status', 'approved');
+
+    let balance = parseFloat(sv.advance_amount);
+    for (const s of (approvedSettlements || [])) {
+      if (s.entry_type === 'expense') balance -= parseFloat(s.amount);
+      else if (s.entry_type === 'refund' || s.entry_type === 'topup') balance += parseFloat(s.amount);
+    }
+    const newStatus = balance <= 0 ? 'closed' : (sv.status === 'open' ? 'open' : 'partial');
+    const reopened = sv.status === 'closed';
+    await supabase.from('suspense_vouchers')
+      .update({ balance_amount: Math.max(0, balance), status: newStatus, ...(reopened ? { closed_at: null } : {}) })
+      .eq('id', sv.id);
+
+    // SMS notification to staff
+    if (sv.staff_payee_id) {
+      const { data: payee } = await supabase.from('payees').select('name, mobile').eq('id', sv.staff_payee_id).single();
+      if (payee?.mobile) {
+        const { data: adder } = await supabase.from('users').select('name').eq('id', addedBy).single();
+        const smsMessage = `Hi ${payee.name}, your suspense account ${sv.serial_number} has been topped up by ₹${parseFloat(amount).toFixed(2)}. New balance: ₹${Math.max(0, balance).toFixed(2)}. - ${adder?.name || 'Accounts'}`;
+        await send2FactorSms(payee.mobile, smsMessage);
+      }
+    }
+
+    // In-app notification to voucher creator
+    if (sv.created_by) {
+      const { data: adder } = await supabase.from('users').select('name').eq('id', addedBy).single();
+      await supabase.from('notifications').insert({
+        user_id: sv.created_by,
+        title: 'Suspense Voucher Topped Up',
+        message: `₹${parseFloat(amount).toFixed(2)} added to ${sv.serial_number} by ${adder?.name || 'Accounts'}. New balance: ₹${Math.max(0, balance).toFixed(2)}.`,
+        type: 'info'
+      });
+    }
+
+    res.json({ success: true, settlement, newBalance: Math.max(0, balance), newStatus, reopened });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Add settlement entry
 app.post('/api/suspense-vouchers/:id/settlements', async (req, res) => {
   const { entryType, amount, description, headOfAccount, referenceNumber, submittedBy, requiresInvoice, invoiceMissingReason } = req.body;

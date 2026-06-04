@@ -162,6 +162,7 @@ const api = {
   submitSettlementSession: (token, data) => fetch(`${API_BASE}/settlement-sessions/${token}/settlements`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
   approveSettlementEntry: (settlementId, data) => fetch(`${API_BASE}/suspense-settlements/${settlementId}/approve`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
   resendSettlementLink: (suspenseId, requestedBy) => fetch(`${API_BASE}/suspense-vouchers/${suspenseId}/resend-settlement-link`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ requestedBy }) }).then(r => r.json()),
+  topUpSuspenseVoucher: (suspenseId, data) => fetch(`${API_BASE}/suspense-vouchers/${suspenseId}/topup`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
   // Attachments
   uploadAttachment: (data) => fetch(`${API_BASE}/attachments/upload`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
   getAttachments: (params) => fetch(`${API_BASE}/attachments?${new URLSearchParams(params)}`).then(r => r.json()),
@@ -5821,6 +5822,9 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
   const [approveForm, setApproveForm] = useState({ headOfAccount: '', subHeadOfAccount: '', narration: '', invoiceReference: '', paymentMode: 'UPI', createVoucher: true });
   const [heads, setHeads] = useState([]);
   const [resendLoading, setResendLoading] = useState(false);
+  const [showTopUp, setShowTopUp] = useState(false);
+  const [topUpForm, setTopUpForm] = useState({ amount: '', description: '' });
+  const [topUpLoading, setTopUpLoading] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -5855,6 +5859,22 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
     if (result.success) addToast('Settlement link resent via SMS', 'success');
     else addToast(result.error || 'Failed to resend link', 'error');
     setResendLoading(false);
+  };
+
+  const handleTopUp = async () => {
+    if (!topUpForm.amount || isNaN(parseFloat(topUpForm.amount)) || parseFloat(topUpForm.amount) <= 0) {
+      addToast('Enter a valid top-up amount', 'error'); return;
+    }
+    if (!topUpForm.description.trim()) { addToast('Description is required', 'error'); return; }
+    setTopUpLoading(true);
+    const result = await api.topUpSuspenseVoucher(suspenseId, { amount: parseFloat(topUpForm.amount), description: topUpForm.description, addedBy: user.id });
+    if (result.success) {
+      addToast(`₹${parseFloat(topUpForm.amount).toFixed(2)} added · New balance: ₹${result.newBalance?.toFixed(2)}${result.reopened ? ' · Voucher reopened' : ''}`, 'success');
+      setShowTopUp(false);
+      setTopUpForm({ amount: '', description: '' });
+      load();
+    } else addToast(result.error || 'Top-up failed', 'error');
+    setTopUpLoading(false);
   };
 
   const openApproveModal = (entry) => {
@@ -5918,6 +5938,9 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
           )}
           {(user.role === 'accounts' || user.isSuperAdmin || isAdmin) && (sv.status === 'open' || sv.status === 'partial') && (
             <button className="btn btn-sm btn-secondary" onClick={handleResendLink} disabled={resendLoading}>{resendLoading ? Icons.loader : '📲'} Resend Link</button>
+          )}
+          {(user.role === 'accounts' || user.isSuperAdmin) && (sv.status === 'open' || sv.status === 'partial' || sv.status === 'closed') && sv.status !== 'pending_approval' && sv.status !== 'rejected' && (
+            <button className="btn btn-sm btn-success" onClick={() => { setTopUpForm({ amount: '', description: `Additional advance for ${sv.purpose}` }); setShowTopUp(true); }}>💰 Top Up</button>
           )}
           {canSettle && <button className="btn btn-sm btn-primary" onClick={() => setShowSettlement(true)}>{Icons.plus} Add Settlement</button>}
         </div>
@@ -5989,6 +6012,39 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
           onDone={() => { setShowSettlement(false); load(); }}
           onClose={() => setShowSettlement(false)}
         />
+      )}
+
+      {showTopUp && (
+        <div className="modal-overlay" onClick={() => setShowTopUp(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header" style={{ background: '#10b981', color: 'white' }}>
+              <h3 className="modal-title" style={{ color: 'white' }}>💰 Top Up Suspense Funds</h3>
+              <button className="modal-close" style={{ color: 'white' }} onClick={() => setShowTopUp(false)}>×</button>
+            </div>
+            <div className="modal-body">
+              <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '8px', padding: '0.75rem', marginBottom: '1rem', fontSize: '0.85rem', color: '#166534' }}>
+                Current balance: <strong>{formatRupees(sv.balance_amount ?? sv.advance_amount)}</strong> · Adding funds will immediately increase the staff member's available balance and send them an SMS notification.
+              </div>
+              <div className="form-group">
+                <label className="form-label">Top-up Amount (₹) *</label>
+                <input className="form-input" type="number" min="0.01" step="0.01" placeholder="0.00" value={topUpForm.amount} onChange={e => setTopUpForm(f => ({ ...f, amount: e.target.value }))} autoFocus />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Description / Reason *</label>
+                <input className="form-input" type="text" placeholder="e.g. Additional advance for field expenses" value={topUpForm.description} onChange={e => setTopUpForm(f => ({ ...f, description: e.target.value }))} />
+              </div>
+              {topUpForm.amount && !isNaN(parseFloat(topUpForm.amount)) && parseFloat(topUpForm.amount) > 0 && (
+                <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '8px', padding: '0.6rem 0.85rem', fontSize: '0.85rem', color: '#1d4ed8' }}>
+                  New balance after top-up: <strong>{formatRupees((parseFloat(sv.balance_amount ?? sv.advance_amount) + parseFloat(topUpForm.amount)))}</strong>
+                </div>
+              )}
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setShowTopUp(false)}>Cancel</button>
+              <button className="btn btn-success" onClick={handleTopUp} disabled={topUpLoading}>{topUpLoading ? Icons.loader : '💰'} Confirm Top Up</button>
+            </div>
+          </div>
+        </div>
       )}
 
       {showRejectModal && (
