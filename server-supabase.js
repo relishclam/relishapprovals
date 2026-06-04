@@ -2598,9 +2598,15 @@ app.post('/api/suspense-vouchers/:id/resend-settlement-link', async (req, res) =
     const baseUrl = process.env.APP_BASE_URL || `${req.protocol}://${req.get('host')}`;
     const settlementUrl = `${baseUrl}/settlement/${settlementToken}`;
     const smsMessage = `Your settlement form for suspense voucher ${sv.serial_number} is ready. Open it here: ${settlementUrl}`;
-    await send2FactorSms(payee.mobile, smsMessage);
+    const smsResult = await send2FactorSms(payee.mobile, smsMessage);
 
-    res.json({ success: true, settlementUrl, session });
+    res.json({
+      success: true,
+      smsSent: smsResult.success === true,
+      smsError: smsResult.success ? undefined : (smsResult.error || smsResult.data?.Details || 'SMS delivery failed'),
+      settlementUrl,
+      session
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

@@ -5894,8 +5894,15 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
   const handleResendLink = async () => {
     setResendLoading(true);
     const result = await api.resendSettlementLink(suspenseId, user.id);
-    if (result.success) addToast('Settlement link resent via SMS', 'success');
-    else addToast(result.error || 'Failed to resend link', 'error');
+    if (result.success) {
+      if (result.smsSent === false) {
+        addToast(`SMS failed (${result.smsError || 'unknown error'}). Share this link manually: ${result.settlementUrl}`, 'warning', 12000);
+      } else {
+        addToast('Settlement link resent via SMS', 'success');
+      }
+    } else {
+      addToast(result.error || 'Failed to resend link', 'error');
+    }
     setResendLoading(false);
   };
 
@@ -6805,7 +6812,7 @@ const App = () => {
     }
   }, []);
 
-  const addToast = useCallback((message, type = 'info') => { const id = Date.now(); setToasts(prev => [...prev, { id, message, type }]); setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 4000); }, []);
+  const addToast = useCallback((message, type = 'info', duration = 4000) => { const id = Date.now(); setToasts(prev => [...prev, { id, message, type }]); setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), duration); }, []);
   const refreshVouchers = useCallback(async () => { if (user) { const data = await api.getVouchers(user.company.id); setVouchers(data); } }, [user]);
   const refreshNotifications = useCallback(async () => { 
     if (user) { 
