@@ -2444,12 +2444,30 @@ app.post('/api/suspense-vouchers/:id/approve', async (req, res) => {
     if (error) throw error;
     if (!sv) return res.status(404).json({ error: 'Suspense voucher not found or already processed' });
 
-    const { data: payee, error: payeeError } = await supabase.from('payees')
-      .select('id, mobile, name, user_id, is_staff')
-      .eq('id', sv.staff_payee_id)
-      .single();
-
-    if (payeeError || !payee || !payee.is_staff) {
+    let payee = null;
+    if (sv.staff_payee_id) {
+      const { data: p } = await supabase.from('payees')
+        .select('id, mobile, name, user_id, is_staff')
+        .eq('id', sv.staff_payee_id)
+        .eq('is_staff', true)
+        .single();
+      payee = p || null;
+    }
+    // Fallback for vouchers created before migration 015
+    if (!payee && sv.staff_user_id) {
+      const { data: p } = await supabase.from('payees')
+        .select('id, mobile, name, user_id, is_staff')
+        .eq('user_id', sv.staff_user_id)
+        .eq('is_staff', true)
+        .single();
+      if (p) {
+        payee = p;
+        await supabase.from('suspense_vouchers')
+          .update({ staff_payee_id: p.id })
+          .eq('id', sv.id);
+      }
+    }
+    if (!payee) {
       return res.status(400).json({ error: 'The suspense staff payee is missing. Please update the voucher or set up the staff payee first.' });
     }
 
@@ -2469,22 +2487,25 @@ app.post('/api/suspense-vouchers/:id/approve', async (req, res) => {
     const smsMessage = `Your settlement form for suspense voucher ${sv.serial_number} is ready. Open it here: ${settlementUrl}`;
     await send2FactorSms(payee.mobile, smsMessage);
 
-    // Notify creator and payee
+    // Notify creator and payee (payee may not be an app user — skip in-app notification if so)
     const { data: approver } = await supabase.from('users').select('name').eq('id', approvedBy).single();
-    await supabase.from('notifications').insert([
+    const approvalNotifications = [
       {
         user_id: sv.created_by,
         title: 'Suspense Voucher Approved',
         message: `Suspense voucher ${sv.serial_number} has been approved by ${approver?.name || 'Admin'}.`,
         type: 'info'
-      },
-      {
+      }
+    ];
+    if (payee.user_id) {
+      approvalNotifications.push({
         user_id: payee.user_id,
         title: 'Settlement Form Ready',
         message: `Your settlement form for ${sv.serial_number} is ready. Please submit your entries.`,
         type: 'info'
-      }
-    ]);
+      });
+    }
+    await supabase.from('notifications').insert(approvalNotifications);
 
     res.json({ success: true, suspenseVoucher: sv, settlementSession: session, settlementUrl });
   } catch (error) {
@@ -2529,12 +2550,32 @@ app.post('/api/suspense-vouchers/:id/resend-settlement-link', async (req, res) =
     if (!['open', 'partial'].includes(sv.status)) {
       return res.status(400).json({ error: 'Settlement link can only be resent for open or partially-settled vouchers' });
     }
-    const { data: payee, error: payeeError } = await supabase.from('payees')
-      .select('id, mobile, name, user_id, is_staff')
-      .eq('id', sv.staff_payee_id)
-      .eq('is_staff', true)
-      .single();
-    if (payeeError || !payee) {
+    let payee = null;
+    // Primary lookup: by staff_payee_id
+    if (sv.staff_payee_id) {
+      const { data: p } = await supabase.from('payees')
+        .select('id, mobile, name, user_id, is_staff')
+        .eq('id', sv.staff_payee_id)
+        .eq('is_staff', true)
+        .single();
+      payee = p || null;
+    }
+    // Fallback: vouchers created before migration 015 may have staff_user_id but no staff_payee_id
+    if (!payee && sv.staff_user_id) {
+      const { data: p } = await supabase.from('payees')
+        .select('id, mobile, name, user_id, is_staff')
+        .eq('user_id', sv.staff_user_id)
+        .eq('is_staff', true)
+        .single();
+      if (p) {
+        payee = p;
+        // Auto-repair: backfill staff_payee_id so future operations work correctly
+        await supabase.from('suspense_vouchers')
+          .update({ staff_payee_id: p.id })
+          .eq('id', sv.id);
+      }
+    }
+    if (!payee) {
       return res.status(400).json({ error: 'No designated staff payee found. Please set up the staff payee in Payees Management first.' });
     }
     // Expire all existing active sessions for this voucher
@@ -2731,7 +2772,7 @@ app.post('/api/settlement-sessions/:token/settlements', async (req, res) => {
 
   try {
     const { data: session, error: sessionError } = await supabase.from('settlement_sessions')
-      .select(`*, payee:payees(id,user_id,name,mobile), suspense:suspense_vouchers(id,serial_number,company_id,status)`) 
+      .select(`*, payee:payees(id,user_id,name,mobile,is_staff), suspense:suspense_vouchers(id,serial_number,company_id,status)`) 
       .eq('token', req.params.token)
       .single();
     if (sessionError || !session) return res.status(404).json({ error: 'Settlement session not found' });
