@@ -158,6 +158,10 @@ const api = {
   rejectSuspenseVoucher: (id, rejectedBy, reason) => fetch(`${API_BASE}/suspense-vouchers/${id}/reject`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rejectedBy, reason }) }).then(r => r.json()),
   addSuspenseSettlement: (suspenseId, data) => fetch(`${API_BASE}/suspense-vouchers/${suspenseId}/settlements`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
   getSuspenseSettlements: (suspenseId) => fetch(`${API_BASE}/suspense-vouchers/${suspenseId}/settlements`).then(r => r.json()),
+  getSettlementSession: (token) => fetch(`${API_BASE}/settlement-sessions/${token}`).then(r => r.json()),
+  submitSettlementSession: (token, data) => fetch(`${API_BASE}/settlement-sessions/${token}/settlements`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
+  approveSettlementEntry: (settlementId, data) => fetch(`${API_BASE}/suspense-settlements/${settlementId}/approve`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
+  resendSettlementLink: (suspenseId, requestedBy) => fetch(`${API_BASE}/suspense-vouchers/${suspenseId}/resend-settlement-link`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ requestedBy }) }).then(r => r.json()),
   // Attachments
   uploadAttachment: (data) => fetch(`${API_BASE}/attachments/upload`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
   getAttachments: (params) => fetch(`${API_BASE}/attachments?${new URLSearchParams(params)}`).then(r => r.json()),
@@ -4001,13 +4005,14 @@ const UsersManagement = () => {
 const PayeesManagement = () => {
   const { user, addToast } = useApp();
   const [payees, setPayees] = useState([]);
+  const [companyUsers, setCompanyUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [newPayee, setNewPayee] = useState({ name: '', alias: '', mobile: '', bankAccount: '', ifsc: '', upiId: '', isGlobal: false, payeeType: 'registered', requiresOtp: true });
-  const [editPayee, setEditPayee] = useState({ id: '', name: '', alias: '', mobile: '', bankAccount: '', ifsc: '', upiId: '', is_global: false, payee_type: 'registered', requires_otp: true });
+  const [newPayee, setNewPayee] = useState({ name: '', alias: '', mobile: '', bankAccount: '', ifsc: '', upiId: '', isGlobal: false, payeeType: 'registered', requiresOtp: true, isStaff: false, userId: '' });
+  const [editPayee, setEditPayee] = useState({ id: '', name: '', alias: '', mobile: '', bankAccount: '', ifsc: '', upiId: '', is_global: false, payee_type: 'registered', requires_otp: true, is_staff: false, user_id: '' });
   const [importData, setImportData] = useState('');
   const [importMethod, setImportMethod] = useState('excel'); // 'paste' or 'excel'
 
@@ -4016,6 +4021,7 @@ const PayeesManagement = () => {
   };
 
   useEffect(() => { refreshPayees(); }, [user.company.id]);
+  useEffect(() => { api.getCompanyUsers(user.company.id).then(data => { if (Array.isArray(data)) setCompanyUsers(data); }); }, [user.company.id]);
 
   const handleAddPayee = async () => {
     if (!newPayee.name?.trim() || !newPayee.mobile?.trim()) {
@@ -4301,6 +4307,7 @@ const PayeesManagement = () => {
                         {p.name}
                         {p.is_global && <span style={{marginLeft: '0.5rem', fontSize: '0.7rem', background: '#3b82f6', color: 'white', padding: '2px 6px', borderRadius: '4px'}}>🌐 Global</span>}
                         {p.is_global && p.company_id !== user.company.id && <span style={{marginLeft: '0.25rem', fontSize: '0.65rem', color: '#666'}}>(from other company)</span>}
+                        {p.is_staff && <span style={{marginLeft: '0.5rem', fontSize: '0.7rem', background: '#10b981', color: 'white', padding: '2px 6px', borderRadius: '4px'}}>👤 Staff</span>}
                       </td>
                       <td>
                         {p.payee_type === 'adhoc' ? (
@@ -4393,6 +4400,22 @@ const PayeesManagement = () => {
                   If checked, this payee will be visible and selectable across all companies.
                 </p>
               </div>
+              <div className="form-group" style={{background: '#f0fdf4', padding: '1rem', borderRadius: '8px', border: '1px solid #86efac', marginTop: '0.75rem'}}>
+                <label style={{display: 'flex', alignItems: 'center', gap: '0.75rem', cursor: 'pointer'}}>
+                  <input type="checkbox" checked={newPayee.isStaff} onChange={e => setNewPayee({...newPayee, isStaff: e.target.checked, userId: ''})} style={{width: '18px', height: '18px'}} />
+                  <span style={{fontWeight: 500}}>👤 Staff Payee (internal employee)</span>
+                </label>
+                {newPayee.isStaff && (
+                  <div style={{marginTop: '0.75rem'}}>
+                    <label className="form-label">Link to System User <span style={{color: '#ef4444'}}>*</span></label>
+                    <select className="form-select" value={newPayee.userId} onChange={e => setNewPayee({...newPayee, userId: e.target.value})}>
+                      <option value="">Select user account…</option>
+                      {companyUsers.map(u => <option key={u.id} value={u.id}>{u.name} ({u.role})</option>)}
+                    </select>
+                    <p style={{fontSize: '0.8rem', color: '#166534', marginTop: '0.5rem'}}>Required for suspense advance disbursements and settlement link delivery.</p>
+                  </div>
+                )}
+              </div>
             </div>
             <div className="modal-footer">
               <button className="btn btn-secondary" onClick={() => setShowAddModal(false)}>Cancel</button>
@@ -4442,6 +4465,22 @@ const PayeesManagement = () => {
                 <p style={{fontSize: '0.8rem', color: '#666', marginTop: '0.5rem', marginLeft: '2rem'}}>
                   If checked, this payee will be visible and selectable across all companies.
                 </p>
+              </div>
+              <div className="form-group" style={{background: '#f0fdf4', padding: '1rem', borderRadius: '8px', border: '1px solid #86efac', marginTop: '0.75rem'}}>
+                <label style={{display: 'flex', alignItems: 'center', gap: '0.75rem', cursor: 'pointer'}}>
+                  <input type="checkbox" checked={editPayee.is_staff || false} onChange={e => setEditPayee({...editPayee, is_staff: e.target.checked, user_id: e.target.checked ? editPayee.user_id : ''})} style={{width: '18px', height: '18px'}} />
+                  <span style={{fontWeight: 500}}>👤 Staff Payee (internal employee)</span>
+                </label>
+                {editPayee.is_staff && (
+                  <div style={{marginTop: '0.75rem'}}>
+                    <label className="form-label">Linked System User <span style={{color: '#ef4444'}}>*</span></label>
+                    <select className="form-select" value={editPayee.user_id || ''} onChange={e => setEditPayee({...editPayee, user_id: e.target.value})}>
+                      <option value="">Select user account…</option>
+                      {companyUsers.map(u => <option key={u.id} value={u.id}>{u.name} ({u.role})</option>)}
+                    </select>
+                    <p style={{fontSize: '0.8rem', color: '#166534', marginTop: '0.5rem'}}>Required for suspense advance disbursements and settlement link delivery.</p>
+                  </div>
+                )}
               </div>
             </div>
             <div className="modal-footer">
@@ -5517,12 +5556,17 @@ const BillAttachmentPanel = ({ voucherId, voucherType = 'regular', suspenseId, s
 const SuspenseVoucherForm = ({ onCreated }) => {
   const { user, addToast } = useApp();
   const [staffUsers, setStaffUsers] = useState([]);
+  const [payees, setPayees] = useState([]);
+  const [staffPayeeWarning, setStaffPayeeWarning] = useState('');
   const [form, setForm] = useState({ staffUserId: '', purpose: '', advanceAmount: '', paymentMode: 'Cash', narration: '' });
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     api.getCompanyUsers(user.company.id).then(data => {
       if (Array.isArray(data)) setStaffUsers(data);
+    });
+    api.getPayees(user.company.id).then(data => {
+      if (Array.isArray(data)) setPayees(data);
     });
   }, [user.company.id]);
 
@@ -5567,10 +5611,20 @@ const SuspenseVoucherForm = ({ onCreated }) => {
         <div className="card-body">
           <div className="form-group">
             <label className="form-label">Staff Member *</label>
-            <select className="form-select" value={form.staffUserId} onChange={e => setForm(f => ({ ...f, staffUserId: e.target.value }))}>
+            <select className="form-select" value={form.staffUserId} onChange={e => {
+              const uid = e.target.value;
+              setForm(f => ({ ...f, staffUserId: uid }));
+              if (uid) {
+                const linked = payees.find(p => p.user_id === uid && p.is_staff);
+                setStaffPayeeWarning(linked ? '' : '⚠️ No staff payee is linked to this user. Please set one up in Payees Management before the admin can approve this voucher.');
+              } else {
+                setStaffPayeeWarning('');
+              }
+            }}>
               <option value="">Select staff member</option>
               {staffUsers.map(u => <option key={u.id} value={u.id}>{u.name} ({u.role})</option>)}
             </select>
+            {staffPayeeWarning && <div style={{ background: '#fef3c7', border: '1px solid #f59e0b', borderRadius: '6px', padding: '0.75rem', marginTop: '0.5rem', fontSize: '0.85rem', color: '#92400e' }}>{staffPayeeWarning}</div>}
           </div>
           <div className="form-group">
             <label className="form-label">Purpose *</label>
@@ -5768,6 +5822,11 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
   const [actionLoading, setActionLoading] = useState(false);
   const [showRejectModal, setShowRejectModal] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
+  const [showApproveModal, setShowApproveModal] = useState(false);
+  const [approvingEntry, setApprovingEntry] = useState(null);
+  const [approveForm, setApproveForm] = useState({ headOfAccount: '', subHeadOfAccount: '', narration: '', invoiceReference: '', paymentMode: 'UPI', createVoucher: true });
+  const [heads, setHeads] = useState([]);
+  const [resendLoading, setResendLoading] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -5796,6 +5855,36 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
     setActionLoading(false);
   };
 
+  const handleResendLink = async () => {
+    setResendLoading(true);
+    const result = await api.resendSettlementLink(suspenseId, user.id);
+    if (result.success) addToast('Settlement link resent via SMS', 'success');
+    else addToast(result.error || 'Failed to resend link', 'error');
+    setResendLoading(false);
+  };
+
+  const openApproveModal = (entry) => {
+    setApprovingEntry(entry);
+    setApproveForm({ headOfAccount: '', subHeadOfAccount: '', narration: entry.description, invoiceReference: entry.reference_number || '', paymentMode: sv?.payment_mode || 'UPI', createVoucher: true });
+    if (heads.length === 0) {
+      api.getHeadsOfAccount(user.company.id).then(data => { if (Array.isArray(data)) setHeads(data.sort((a, b) => a.name.localeCompare(b.name))); });
+    }
+    setShowApproveModal(true);
+  };
+
+  const handleApproveSettlement = async () => {
+    if (approveForm.createVoucher && !approveForm.headOfAccount) { addToast('Please select a Head of Account', 'error'); return; }
+    setActionLoading(true);
+    const result = await api.approveSettlementEntry(approvingEntry.id, {
+      approvedBy: user.id,
+      createVoucher: approveForm.createVoucher,
+      voucherData: approveForm.createVoucher ? { headOfAccount: approveForm.headOfAccount, subHeadOfAccount: approveForm.subHeadOfAccount || null, narration: approveForm.narration, invoiceReference: approveForm.invoiceReference || null, paymentMode: approveForm.paymentMode } : null
+    });
+    if (result.success) { addToast('Settlement entry approved' + (result.voucher ? ' · voucher created' : ''), 'success'); setShowApproveModal(false); load(); }
+    else addToast(result.error || 'Approval failed', 'error');
+    setActionLoading(false);
+  };
+
   const statusBadge = (status) => {
     const map = { pending_approval: ['Pending Approval', '#f59e0b', '#fffbeb'], open: ['Open', '#10b981', '#ecfdf5'], partial: ['Partial', '#3b82f6', '#eff6ff'], closed: ['Closed', '#6b7280', '#f3f4f6'], rejected: ['Rejected', '#ef4444', '#fef2f2'] };
     const [label, color, bg] = map[status] || [status, '#666', '#eee'];
@@ -5804,6 +5893,11 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
 
   const entryTypeColor = (t) => t === 'expense' ? '#ef4444' : t === 'refund' ? '#10b981' : '#3b82f6';
   const entryTypeLabel = (t) => t === 'expense' ? '↓ Expense' : t === 'refund' ? '↑ Refund' : '↑ Top-up';
+  const settlementStatusBadge = (status) => {
+    if (status === 'approved') return <span style={{ background: '#d1fae5', color: '#059669', padding: '2px 8px', borderRadius: '4px', fontSize: '0.72rem', fontWeight: 600 }}>✅ Approved</span>;
+    if (status === 'rejected') return <span style={{ background: '#fee2e2', color: '#dc2626', padding: '2px 8px', borderRadius: '4px', fontSize: '0.72rem', fontWeight: 600 }}>❌ Rejected</span>;
+    return <span style={{ background: '#fef3c7', color: '#d97706', padding: '2px 8px', borderRadius: '4px', fontSize: '0.72rem', fontWeight: 600 }}>⏳ Pending</span>;
+  };
 
   if (loading) return <div className="loading-state">{Icons.loader} Loading...</div>;
   if (!sv) return <div className="empty-state"><p>Suspense voucher not found</p></div>;
@@ -5827,6 +5921,9 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
               <button className="btn btn-sm btn-danger" onClick={() => setShowRejectModal(true)} disabled={actionLoading}>{Icons.x} Reject</button>
               <button className="btn btn-sm btn-success" onClick={handleApprove} disabled={actionLoading}>{actionLoading ? Icons.loader : Icons.check} Approve</button>
             </>
+          )}
+          {(user.role === 'accounts' || user.isSuperAdmin || isAdmin) && (sv.status === 'open' || sv.status === 'partial') && (
+            <button className="btn btn-sm btn-secondary" onClick={handleResendLink} disabled={resendLoading}>{resendLoading ? Icons.loader : '📲'} Resend Link</button>
           )}
           {canSettle && <button className="btn btn-sm btn-primary" onClick={() => setShowSettlement(true)}>{Icons.plus} Add Settlement</button>}
         </div>
@@ -5857,6 +5954,8 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
                   <th style={{ padding: '8px 12px', textAlign: 'left', borderBottom: '1px solid #e2e8f0' }}>Description</th>
                   <th style={{ padding: '8px 12px', textAlign: 'left', borderBottom: '1px solid #e2e8f0' }}>By</th>
                   <th style={{ padding: '8px 12px', textAlign: 'right', borderBottom: '1px solid #e2e8f0' }}>Amount</th>
+                  <th style={{ padding: '8px 12px', textAlign: 'left', borderBottom: '1px solid #e2e8f0' }}>Status</th>
+                  <th style={{ padding: '8px 12px', textAlign: 'center', borderBottom: '1px solid #e2e8f0' }}>Action</th>
                 </tr>
               </thead>
               <tbody>
@@ -5867,6 +5966,12 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
                     <td style={{ padding: '8px 12px', borderBottom: '1px solid #f0f0f0' }}>{s.description}{s.head_of_account && <span style={{ color: '#888', fontSize: '0.75rem' }}> · {s.head_of_account}</span>}</td>
                     <td style={{ padding: '8px 12px', borderBottom: '1px solid #f0f0f0', color: '#666' }}>{s.submitter?.name || '—'}</td>
                     <td style={{ padding: '8px 12px', borderBottom: '1px solid #f0f0f0', textAlign: 'right', fontWeight: 600, color: entryTypeColor(s.entry_type) }}>{formatRupees(s.amount)}</td>
+                    <td style={{ padding: '8px 12px', borderBottom: '1px solid #f0f0f0' }}>{settlementStatusBadge(s.status)}</td>
+                    <td style={{ padding: '8px 12px', borderBottom: '1px solid #f0f0f0', textAlign: 'center' }}>
+                      {(user.role === 'accounts' || user.isSuperAdmin) && s.status === 'pending_review' && (
+                        <button className="btn btn-sm btn-success" style={{ fontSize: '0.75rem', padding: '3px 10px' }} onClick={() => openApproveModal(s)}>✅ Review</button>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -5899,6 +6004,398 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
           </div>
         </div>
       )}
+
+      {showApproveModal && approvingEntry && (
+        <div className="modal-overlay" onClick={() => setShowApproveModal(false)}>
+          <div className="modal" style={{ maxWidth: '520px' }} onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3 className="modal-title">✅ Review & Approve Settlement Entry</h3>
+              <button className="modal-close" onClick={() => setShowApproveModal(false)}>×</button>
+            </div>
+            <div className="modal-body">
+              <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '1rem', marginBottom: '1rem' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', fontSize: '0.875rem' }}>
+                  <div><div style={{ color: '#64748b', fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Entry Type</div><div style={{ fontWeight: 600, color: entryTypeColor(approvingEntry.entry_type), marginTop: '2px' }}>{entryTypeLabel(approvingEntry.entry_type)}</div></div>
+                  <div><div style={{ color: '#64748b', fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Amount</div><div style={{ fontWeight: 700, fontSize: '1rem', marginTop: '2px' }}>{formatRupees(approvingEntry.amount)}</div></div>
+                  <div style={{ gridColumn: '1 / -1' }}><div style={{ color: '#64748b', fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Staff Description</div><div style={{ marginTop: '2px' }}>{approvingEntry.description}</div></div>
+                  {approvingEntry.reference_number && <div style={{ gridColumn: '1 / -1' }}><div style={{ color: '#64748b', fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Ref No.</div><div style={{ marginTop: '2px' }}>{approvingEntry.reference_number}</div></div>}
+                </div>
+              </div>
+              <div className="form-group" style={{ background: '#f0fdf4', border: '1px solid #86efac', borderRadius: '8px', padding: '1rem', marginBottom: '1rem' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={approveForm.createVoucher} onChange={e => setApproveForm(f => ({...f, createVoucher: e.target.checked}))} style={{ width: '18px', height: '18px' }} />
+                  <span style={{ fontWeight: 600 }}>📋 Create Payment Voucher from this entry</span>
+                </label>
+                <p style={{ fontSize: '0.8rem', color: '#166534', marginTop: '0.5rem', marginLeft: '2rem' }}>A formal voucher will be created and sent through the regular approval flow.</p>
+              </div>
+              {approveForm.createVoucher && (
+                <>
+                  <div className="form-group">
+                    <label className="form-label">Head of Account <span style={{ color: '#ef4444' }}>*</span></label>
+                    <select className="form-select" value={approveForm.headOfAccount} onChange={e => setApproveForm(f => ({...f, headOfAccount: e.target.value}))}>
+                      <option value="">— Select Head of Account —</option>
+                      {heads.map(h => <option key={h.id} value={h.name}>{h.name}</option>)}
+                    </select>
+                    <p style={{ fontSize: '0.78rem', color: '#64748b', marginTop: '0.4rem' }}>ℹ️ Staff do not set this — Accounts must choose the correct expense head.</p>
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Sub-Head (optional)</label>
+                    <input className="form-input" type="text" placeholder="Sub-head of account" value={approveForm.subHeadOfAccount} onChange={e => setApproveForm(f => ({...f, subHeadOfAccount: e.target.value}))} />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Narration</label>
+                    <textarea className="form-input" rows={2} value={approveForm.narration} onChange={e => setApproveForm(f => ({...f, narration: e.target.value}))} />
+                  </div>
+                  <div className="form-row">
+                    <div className="form-group">
+                      <label className="form-label">Payment Mode</label>
+                      <select className="form-select" value={approveForm.paymentMode} onChange={e => setApproveForm(f => ({...f, paymentMode: e.target.value}))}>
+                        <option value="Cash">Cash</option>
+                        <option value="UPI">UPI</option>
+                        <option value="Account Transfer">Account Transfer</option>
+                      </select>
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">Invoice Ref.</label>
+                      <input className="form-input" type="text" placeholder="Invoice / Bill No." value={approveForm.invoiceReference} onChange={e => setApproveForm(f => ({...f, invoiceReference: e.target.value}))} />
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setShowApproveModal(false)}>Cancel</button>
+              <button className="btn btn-success" onClick={handleApproveSettlement} disabled={actionLoading}>{actionLoading ? Icons.loader : Icons.check} Approve{approveForm.createVoucher ? ' & Create Voucher' : ' Entry'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SETTLEMENT SESSION PAGE (public — no auth)
+// ─────────────────────────────────────────────────────────────────────────────
+const SettlementSessionPage = ({ token }) => {
+  const [session, setSession] = useState(null);
+  const [status, setStatus] = useState('loading'); // loading | ready | submitting | submitted | error | expired | used
+  const [error, setError] = useState('');
+  const [entryType, setEntryType] = useState('expense');
+  const [amount, setAmount] = useState('');
+  const [description, setDescription] = useState('');
+  const [headOfAccount, setHeadOfAccount] = useState('');
+  const [referenceNumber, setReferenceNumber] = useState('');
+  const [requiresInvoice, setRequiresInvoice] = useState(true);
+  const [invoiceMissingReason, setInvoiceMissingReason] = useState('');
+  const [uploadNow, setUploadNow] = useState(false);
+  const [settlement, setSettlement] = useState(null);
+  const [attachments, setAttachments] = useState([]);
+  const [attachmentLoading, setAttachmentLoading] = useState(false);
+  const [attachmentUploading, setAttachmentUploading] = useState(false);
+  const [attachmentError, setAttachmentError] = useState('');
+  const [captureSession, setCaptureSession] = useState(null);
+  const [qrImageUrl, setQrImageUrl] = useState(null);
+  const [showQr, setShowQr] = useState(false);
+  const [polling, setPolling] = useState(false);
+  const [pollExpiry, setPollExpiry] = useState(null);
+  const pollIntervalRef = React.useRef(null);
+
+  const loadAttachments = async (settlementId) => {
+    if (!settlementId) return;
+    setAttachmentLoading(true);
+    try {
+      const data = await api.getAttachments({ settlementId });
+      setAttachments(data.attachments || []);
+    } catch {
+      setAttachments([]);
+    }
+    setAttachmentLoading(false);
+  };
+
+  const compressAndEncode = async (file) => {
+    let processedFile = file;
+    if (file.type.startsWith('image/') && typeof imageCompression !== 'undefined') {
+      try {
+        processedFile = await imageCompression(file, { maxSizeMB: 1, maxWidthOrHeight: 1600, useWebWorker: true });
+      } catch {}
+    }
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve({ data: reader.result, mimeType: processedFile.type, name: file.name });
+      reader.onerror = reject;
+      reader.readAsDataURL(processedFile);
+    });
+  };
+
+  const handleFileUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file || !settlement) return;
+    if (file.size > 10 * 1024 * 1024) { setAttachmentError('File too large (max 10 MB)'); return; }
+    setAttachmentUploading(true);
+    setAttachmentError('');
+    try {
+      const { data, mimeType, name } = await compressAndEncode(file);
+      const result = await api.uploadAttachment({ fileData: data, mimeType, fileName: name, settlementId: settlement.id, uploadedBy: session.payee?.user_id || null, companyId: session.suspense.company_id });
+      if (result.success) {
+        setAttachmentError('');
+        await loadAttachments(settlement.id);
+      } else {
+        setAttachmentError(result.error || 'Upload failed');
+      }
+    } catch {
+      setAttachmentError('Upload failed');
+    }
+    setAttachmentUploading(false);
+    e.target.value = '';
+  };
+
+  const startQRCapture = async () => {
+    if (!settlement) return;
+    setShowQr(false);
+    try {
+      const result = await api.createCaptureSession({ companyId: session.suspense.company_id, createdBy: session.payee?.user_id || null, voucherId: null, suspenseId: null, settlementId: settlement.id, contextType: 'settlement' });
+      if (!result.success) { setAttachmentError('Failed to create session'); return; }
+      const newSession = result.session;
+      setCaptureSession(newSession);
+      const url = `${window.location.origin}/capture/${newSession.id}`;
+      setQrImageUrl(`https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(url)}&bgcolor=ffffff&color=1a1a1a&margin=10`);
+      setShowQr(true);
+      setPollExpiry(new Date(newSession.expires_at));
+      setPolling(true);
+      setAttachmentError('');
+    } catch {
+      setAttachmentError('Failed to start phone capture');
+    }
+  };
+
+  useEffect(() => {
+    if (!polling || !captureSession || !settlement) return;
+    const stopPolling = (message, isError) => {
+      clearInterval(pollIntervalRef.current);
+      setPolling(false);
+      setShowQr(false);
+      setCaptureSession(null);
+      setQrImageUrl(null);
+      if (message) setAttachmentError(isError ? message : '');
+      if (!isError) loadAttachments(settlement.id);
+    };
+    const poll = async () => {
+      try {
+        const data = await api.getCaptureSession(captureSession.id);
+        const sessionData = data.session;
+        if (sessionData?.status === 'used') { stopPolling('Photo received from phone!', false); return; }
+        if (sessionData?.status === 'expired') { stopPolling('QR session expired', true); return; }
+      } catch {
+        // ignore polling errors
+      }
+    };
+    pollIntervalRef.current = setInterval(poll, 4000);
+    return () => clearInterval(pollIntervalRef.current);
+  }, [polling, captureSession, settlement]);
+
+  useEffect(() => {
+    api.getSettlementSession(token).then(data => {
+      if (data.settlementSession) {
+        setSession(data.settlementSession);
+        setStatus('ready');
+      } else {
+        setError(data.error || 'Settlement session not found');
+        setStatus('error');
+      }
+    }).catch(() => { setError('Failed to load settlement session'); setStatus('error'); });
+  }, [token]);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!amount || !description.trim()) {
+      setError('Amount and description are required.');
+      return;
+    }
+    setError('');
+    setStatus('submitting');
+    try {
+      const result = await api.submitSettlementSession(token, {
+        entryType,
+        amount,
+        description,
+        headOfAccount,
+        referenceNumber,
+        requiresInvoice,
+        invoiceMissingReason: requiresInvoice ? null : invoiceMissingReason
+      });
+      if (result.success) {
+        setSettlement(result.settlement);
+        setStatus('submitted');
+        await loadAttachments(result.settlement.id);
+        if (uploadNow) {
+          setTimeout(() => {
+            const el = document.getElementById('attachment-panel');
+            if (el) el.scrollIntoView({ behavior: 'smooth' });
+          }, 250);
+        }
+      } else {
+        setError(result.error || 'Failed to submit settlement entry');
+        setStatus('error');
+      }
+    } catch (err) {
+      setError(err.message || 'Failed to submit settlement entry');
+      setStatus('error');
+    }
+  };
+
+  const containerStyle = { minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '2rem', background: '#f8f9fa', fontFamily: 'Outfit, sans-serif', textAlign: 'center' };
+  const cardStyle = { background: 'white', borderRadius: '16px', padding: '2rem', boxShadow: '0 4px 24px rgba(0,0,0,0.08)', maxWidth: '520px', width: '100%' };
+  const fieldStyle = { width: '100%', marginBottom: '1rem', textAlign: 'left' };
+  const labelStyle = { display: 'block', marginBottom: '0.35rem', fontWeight: 600, color: '#333' };
+  const inputStyle = { width: '100%', padding: '0.85rem 1rem', borderRadius: '10px', border: '1px solid #d6d6d6', fontSize: '1rem' };
+  const buttonStyle = { width: '100%', background: '#f5841f', color: 'white', border: 'none', borderRadius: '10px', padding: '0.95rem 1rem', fontWeight: 700, cursor: 'pointer', fontSize: '1rem' };
+
+  if (status === 'loading') return <div style={containerStyle}><div style={cardStyle}>{Icons.loader}<p style={{ marginTop: '1rem', color: '#666' }}>Loading settlement session...</p></div></div>;
+  if (status === 'error') return <div style={containerStyle}><div style={cardStyle}><div style={{ fontSize: '3rem' }}>❌</div><h2 style={{ marginTop: '1rem' }}>Session Error</h2><p style={{ color: '#666', marginTop: '0.5rem' }}>{error}</p></div></div>;
+  if (!session) return null;
+  if (new Date(session.expires_at) < new Date()) return <div style={containerStyle}><div style={cardStyle}><div style={{ fontSize: '3rem' }}>⏰</div><h2 style={{ marginTop: '1rem' }}>Link Expired</h2><p style={{ color: '#666', marginTop: '0.5rem' }}>This settlement link has expired. Ask your approver to generate a new link.</p></div></div>;
+
+  return (
+    <div style={containerStyle}>
+      <div style={cardStyle}>
+        <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>🧾 Submit Settlement Details</div>
+        <p style={{ color: '#666', fontSize: '0.95rem', marginBottom: '1.5rem' }}>
+          Hello {session.payee?.name || 'staff payee'}, please provide the required settlement details for suspense voucher <strong>{session.suspense.serial_number}</strong>.
+        </p>
+        <div style={{ display: 'grid', gap: '0.75rem', marginBottom: '1.5rem' }}>
+          <div style={{ display: 'grid', gap: '0.35rem' }}>
+            <span style={labelStyle}>Voucher</span>
+            <div style={{ color: '#1f2937', fontWeight: 700 }}>{session.suspense.serial_number}</div>
+          </div>
+          <div style={{ display: 'grid', gap: '0.35rem' }}>
+            <span style={labelStyle}>Available Balance</span>
+            <div style={{ color: '#1f2937', fontWeight: 700 }}>{formatRupees(session.suspense.balance_amount || session.suspense.advance_amount || 0)}</div>
+          </div>
+          <div style={{ display: 'grid', gap: '0.35rem' }}>
+            <span style={labelStyle}>Payee</span>
+            <div style={{ color: '#1f2937' }}>{session.payee?.name || session.payee?.mobile}</div>
+          </div>
+          <div style={{ display: 'grid', gap: '0.35rem' }}>
+            <span style={labelStyle}>Expires At</span>
+            <div style={{ color: '#6b7280' }}>{new Date(session.expires_at).toLocaleString('en-IN')}</div>
+          </div>
+        </div>
+        {status !== 'submitted' ? (
+          <form onSubmit={handleSubmit}>
+            <div style={fieldStyle}>
+              <label style={labelStyle}>Settlement Type</label>
+              <select style={inputStyle} value={entryType} onChange={e => setEntryType(e.target.value)}>
+                <option value="expense">Expense</option>
+                <option value="advance_adjustment">Advance Adjustment</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+            <div style={fieldStyle}>
+              <label style={labelStyle}>Amount</label>
+              <input style={inputStyle} type="number" min="0" step="0.01" value={amount} onChange={e => setAmount(e.target.value)} placeholder="Enter settlement amount" />
+            </div>
+            <div style={fieldStyle}>
+              <label style={labelStyle}>Description / Purpose</label>
+              <textarea style={{ ...inputStyle, minHeight: '110px' }} value={description} onChange={e => setDescription(e.target.value)} placeholder="Describe the expense or adjustment" />
+            </div>
+            <div style={fieldStyle}>
+              <label style={labelStyle}>Head of Account (optional)</label>
+              <input style={inputStyle} type="text" value={headOfAccount} onChange={e => setHeadOfAccount(e.target.value)} placeholder="E.g. Travel, Office supplies" />
+            </div>
+            <div style={fieldStyle}>
+              <label style={labelStyle}>Reference Number (optional)</label>
+              <input style={inputStyle} type="text" value={referenceNumber} onChange={e => setReferenceNumber(e.target.value)} placeholder="Invoice / bill reference" />
+            </div>
+            <div style={{ ...fieldStyle, display: 'grid', gap: '0.35rem' }}>
+              <label style={labelStyle}>Invoice Available?</label>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                <button type="button" onClick={() => setRequiresInvoice(true)} style={{ ...inputStyle, background: requiresInvoice ? '#f5841f' : 'white', color: requiresInvoice ? 'white' : '#111', border: requiresInvoice ? 'none' : '1px solid #d6d6d6' }}>Yes</button>
+                <button type="button" onClick={() => setRequiresInvoice(false)} style={{ ...inputStyle, background: !requiresInvoice ? '#f5841f' : 'white', color: !requiresInvoice ? 'white' : '#111', border: !requiresInvoice ? 'none' : '1px solid #d6d6d6' }}>No</button>
+              </div>
+            </div>
+            {!requiresInvoice && (
+              <div style={fieldStyle}>
+                <label style={labelStyle}>If invoice is not available, explain why</label>
+                <textarea style={{ ...inputStyle, minHeight: '90px' }} value={invoiceMissingReason} onChange={e => setInvoiceMissingReason(e.target.value)} placeholder="Reason for missing invoice" />
+              </div>
+            )}
+            {error && <div style={{ color: '#b91c1c', marginBottom: '1rem' }}>{error}</div>}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
+              <input id="uploadNow" type="checkbox" checked={uploadNow} onChange={e => setUploadNow(e.target.checked)} />
+              <label htmlFor="uploadNow" style={{ fontSize: '0.92rem', color: '#374151' }}>Show upload options immediately after submitting</label>
+            </div>
+            <button style={buttonStyle} type="submit" disabled={status === 'submitting'}>{status === 'submitting' ? 'Submitting...' : 'Submit Settlement'}</button>
+          </form>
+          ) : null}
+        {settlement && (
+          <div id="attachment-panel" style={{ marginTop: '1.5rem', textAlign: 'left' }}>
+            <div style={{ background: '#ecfdf5', border: '1px solid #d1fae5', borderRadius: '12px', padding: '1rem', marginBottom: '1rem' }}>
+              <div style={{ fontWeight: 700, marginBottom: '0.25rem' }}>✅ Settlement Submitted</div>
+              <div style={{ color: '#064e3b', fontSize: '0.95rem' }}>You can now attach the invoice or receipt for this settlement.</div>
+              <button type="button" onClick={async () => {
+                setSettlement(null); setAmount(''); setDescription(''); setHeadOfAccount(''); setReferenceNumber(''); setRequiresInvoice(true); setInvoiceMissingReason('');
+                const data = await api.getSettlementSession(token);
+                if (data.settlementSession) setSession(data.settlementSession);
+                setStatus('ready');
+              }} style={{ marginTop: '0.75rem', background: '#1d4ed8', color: 'white', border: 'none', borderRadius: '8px', padding: '0.6rem 1.25rem', fontWeight: 600, cursor: 'pointer', fontSize: '0.9rem' }}>
+                ➕ Submit Another Entry
+              </button>
+            </div>
+            <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '1rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', gap: '1rem' }}>
+                <div>
+                  <div style={{ fontWeight: 700, color: '#111827' }}>Invoice / Receipt Upload</div>
+                  <div style={{ fontSize: '0.9rem', color: '#6b7280' }}>Upload directly or send a capture link to your phone.</div>
+                </div>
+                <div style={{ fontSize: '0.85rem', color: '#475569' }}>{attachments.length} attachment{attachments.length !== 1 ? 's' : ''}</div>
+              </div>
+              {attachmentLoading ? (
+                <div style={{ color: '#6b7280', padding: '1rem 0', textAlign: 'center' }}>{Icons.loader} Loading attachments...</div>
+              ) : attachments.length > 0 ? (
+                <div style={{ display: 'grid', gap: '0.75rem' }}>
+                  {attachments.map(att => (
+                    <div key={att.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', background: 'white', borderRadius: '10px', border: '1px solid #e2e8f0', padding: '0.75rem' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', minWidth: 0 }}>
+                        <span style={{ fontSize: '1.2rem' }}>{att.mime_type?.includes('pdf') ? '📄' : '🖼️'}</span>
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontWeight: 600, fontSize: '0.9rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{att.file_name}</div>
+                          <div style={{ fontSize: '0.78rem', color: '#6b7280' }}>{new Date(att.uploaded_at).toLocaleDateString('en-IN')}</div>
+                        </div>
+                      </div>
+                      <a href={att.public_url} target="_blank" rel="noopener noreferrer" style={{ color: '#1d4ed8', fontWeight: 700, fontSize: '0.82rem' }}>View</a>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div style={{ color: '#6b7280', padding: '1rem 0' }}>No invoice attachments uploaded yet.</div>
+              )}
+              <div style={{ display: 'grid', gap: '0.75rem', marginTop: '1rem' }}>
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', background: '#f5841f', color: 'white', padding: '0.8rem 1rem', borderRadius: '10px', cursor: 'pointer', width: '100%', justifyContent: 'center', boxSizing: 'border-box' }}>
+                  {attachmentUploading ? Icons.loader : '📷'} {attachmentUploading ? 'Uploading...' : 'Take Photo of Invoice'}
+                  <input type="file" accept="image/*" capture="environment" style={{ display: 'none' }} onChange={handleFileUpload} disabled={attachmentUploading} />
+                </label>
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', background: '#1f2937', color: 'white', padding: '0.8rem 1rem', borderRadius: '10px', cursor: 'pointer', width: '100%', justifyContent: 'center', boxSizing: 'border-box' }}>
+                  {Icons.upload} Upload from Gallery / PDF
+                  <input type="file" accept="image/*,.pdf" style={{ display: 'none' }} onChange={handleFileUpload} disabled={attachmentUploading} />
+                </label>
+                <button type="button" onClick={startQRCapture} style={{ width: '100%', background: 'white', color: '#374151', border: '1px solid #d1d5db', borderRadius: '10px', padding: '0.8rem 1rem', fontWeight: 600, cursor: 'pointer', fontSize: '0.9rem' }}>
+                  {Icons.qrCode} Send to Another Device (QR)
+                </button>
+              </div>
+              {showQr && captureSession && (
+                <div style={{ marginTop: '1rem', background: 'white', border: '1px dashed #f59e0b', borderRadius: '12px', padding: '1rem', textAlign: 'center' }}>
+                  <div style={{ fontWeight: 700, marginBottom: '0.5rem' }}>📱 Open on another device</div>
+                  <img src={qrImageUrl} alt="Capture QR code" style={{ width: 180, height: 180, marginBottom: '0.75rem', borderRadius: 8 }} />
+                  <div style={{ fontSize: '0.85rem', color: '#475569', marginBottom: '0.75rem' }}>Scan this QR code on another device to take/upload a photo of the invoice.</div>
+                  <div style={{ background: '#f3f4f6', borderRadius: 8, padding: '0.75rem', fontSize: '0.78rem', color: '#334155', wordBreak: 'break-all' }}>{`${window.location.origin}/capture/${captureSession.id}`}</div>
+                </div>
+              )}
+              {attachmentError && <div style={{ color: '#b91c1c', marginTop: '1rem' }}>{attachmentError}</div>}
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 };
@@ -6044,6 +6541,7 @@ const App = () => {
   const [toasts, setToasts] = useState([]);
   const [pushEnabled, setPushEnabled] = useState(false);
   const [suspenseDetailId, setSuspenseDetailId] = useState(null);
+  const [settlementToken] = useState(() => { const m = window.location.pathname.match(/^\/settlement\/([^/]+)/); return m ? m[1] : null; });
   const [captureSessionId] = useState(() => { const m = window.location.pathname.match(/^\/capture\/([^/]+)/); return m ? m[1] : null; });
   const lastNotificationCount = React.useRef(0);
 
@@ -6351,6 +6849,9 @@ const App = () => {
   if (mobileLocked && mobileSavedUser) {
     return <MobileLockScreen savedUser={mobileSavedUser} onUnlock={handleMobileUnlock} onSignOut={handleMobileLockSignOut} />;
   }
+
+  // Settlement session page — public, no auth required
+  if (settlementToken) return <SettlementSessionPage token={settlementToken} />;
 
   // Capture session page — public, no auth required
   if (captureSessionId) return <CaptureSessionPage sessionId={captureSessionId} />;

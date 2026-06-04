@@ -4,6 +4,7 @@ const express = require('express');
 const cors = require('cors');
 const fetch = require('node-fetch');
 const webpush = require('web-push');
+const crypto = require('crypto');
 const { createClient } = require('@supabase/supabase-js');
 
 const app = express();
@@ -103,6 +104,29 @@ const formatMobile = (mobile) => {
     cleaned = '91' + cleaned.substring(1);
   }
   return cleaned;
+};
+
+const generateSettlementToken = () => {
+  return crypto.randomBytes(24).toString('hex');
+};
+
+const send2FactorSms = async (mobile, message) => {
+  if (!mobile) return { success: false, error: 'No mobile number provided' };
+  const formattedMobile = formatMobile(mobile);
+  const encodedMessage = encodeURIComponent(message);
+  const url = `${TWOFACTOR_BASE_URL}/${TWOFACTOR_API_KEY}/SMS/${formattedMobile}/${encodedMessage}`;
+  console.log(`\n📩 Sending custom SMS to ${formattedMobile}`);
+  console.log(`   URL: ${url}`);
+
+  try {
+    const response = await fetch(url);
+    const data = await response.json();
+    console.log(`   SMS Response: ${JSON.stringify(data)}`);
+    return { success: data.Status === 'Success', data };
+  } catch (error) {
+    console.log(`   SMS Error: ${error.message}`);
+    return { success: false, error: error.message };
+  }
 };
 
 // RBAC helper: returns { role, is_super_admin } for a given user id
@@ -837,18 +861,27 @@ app.get('/api/companies/:companyId/users', async (req, res) => {
 
 // Add payee
 app.post('/api/payees', async (req, res) => {
-  const { companyId, name, alias, mobile, bankAccount, ifsc, upiId, isGlobal, payeeType, requiresOtp } = req.body;
+  const { companyId, name, alias, mobile, bankAccount, ifsc, upiId, isGlobal, payeeType, requiresOtp, userId, isStaff } = req.body;
   if (!companyId || !name || !mobile) {
     return res.status(400).json({ error: 'Company, name, and mobile are required' });
   }
-  
+
   const formattedMobile = formatMobile(mobile);
-  
-  // Determine if OTP is required based on payee type
   const isAdhoc = payeeType === 'adhoc';
   const otpRequired = requiresOtp !== undefined ? requiresOtp : !isAdhoc;
-  
+
+  if (isStaff && !userId) {
+    return res.status(400).json({ error: 'Staff payees must be linked to an existing user_id' });
+  }
+
   try {
+    if (userId) {
+      const { data: user, error: userError } = await supabase.from('users').select('id').eq('id', userId).single();
+      if (userError || !user) {
+        return res.status(400).json({ error: 'userId not found' });
+      }
+    }
+
     const { data, error } = await supabase.from('payees').insert({
       company_id: companyId,
       name,
@@ -859,9 +892,11 @@ app.post('/api/payees', async (req, res) => {
       upi_id: upiId || null,
       is_global: isGlobal || false,
       payee_type: payeeType || 'registered',
-      requires_otp: otpRequired
+      requires_otp: otpRequired,
+      user_id: userId || null,
+      is_staff: !!isStaff
     }).select().single();
-    
+
     if (error) throw error;
     res.json({ success: true, payeeId: data.id, payee: data });
   } catch (error) {
@@ -886,7 +921,7 @@ app.get('/api/companies/:companyId/payees', async (req, res) => {
 
 // Update payee
 app.put('/api/payees/:payeeId', async (req, res) => {
-  const { name, alias, mobile, bank_account, ifsc, upi_id, is_global, payee_type, requires_otp } = req.body;
+  const { name, alias, mobile, bank_account, ifsc, upi_id, is_global, payee_type, requires_otp, user_id, is_staff } = req.body;
   
   try {
     const updateData = {
@@ -900,6 +935,19 @@ app.put('/api/payees/:payeeId', async (req, res) => {
     if (is_global !== undefined) updateData.is_global = is_global;
     if (payee_type !== undefined) updateData.payee_type = payee_type;
     if (requires_otp !== undefined) updateData.requires_otp = requires_otp;
+    if (user_id !== undefined) updateData.user_id = user_id;
+    if (is_staff !== undefined) updateData.is_staff = is_staff;
+
+    if (is_staff && !user_id) {
+      return res.status(400).json({ error: 'Staff payees must be linked to an existing user_id' });
+    }
+
+    if (user_id) {
+      const { data: user, error: userError } = await supabase.from('users').select('id').eq('id', user_id).single();
+      if (userError || !user) {
+        return res.status(400).json({ error: 'user_id not found' });
+      }
+    }
     
     const { data, error } = await supabase.from('payees')
       .update(updateData)
@@ -2376,15 +2424,50 @@ app.post('/api/suspense-vouchers/:id/approve', async (req, res) => {
     if (error) throw error;
     if (!sv) return res.status(404).json({ error: 'Suspense voucher not found or already processed' });
 
-    // Notify creator
+    const { data: payee, error: payeeError } = await supabase.from('payees')
+      .select('id, mobile, name, user_id, is_staff')
+      .eq('company_id', sv.company_id)
+      .eq('user_id', sv.staff_user_id)
+      .single();
+
+    if (payeeError || !payee || !payee.is_staff) {
+      return res.status(400).json({ error: 'The suspense staff member must be designated as a staff payee before approval.' });
+    }
+
+    const settlementToken = generateSettlementToken();
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(); // 24-hour session window
+    const { data: session, error: sessionError } = await supabase.from('settlement_sessions').insert({
+      suspense_id: sv.id,
+      payee_id: payee.id,
+      token: settlementToken,
+      expires_at: expiresAt,
+      last_sent_at: new Date().toISOString()
+    }).select().single();
+    if (sessionError) throw sessionError;
+
+    const baseUrl = process.env.APP_BASE_URL || `${req.protocol}://${req.get('host')}`;
+    const settlementUrl = `${baseUrl}/settlement/${settlementToken}`;
+    const smsMessage = `Your settlement form for suspense voucher ${sv.serial_number} is ready. Open it here: ${settlementUrl}`;
+    await send2FactorSms(payee.mobile, smsMessage);
+
+    // Notify creator and payee
     const { data: approver } = await supabase.from('users').select('name').eq('id', approvedBy).single();
-    await supabase.from('notifications').insert({
-      user_id: sv.created_by,
-      title: 'Suspense Voucher Approved',
-      message: `Suspense voucher ${sv.serial_number} has been approved by ${approver?.name || 'Admin'}.`,
-      type: 'info'
-    });
-    res.json({ success: true, suspenseVoucher: sv });
+    await supabase.from('notifications').insert([
+      {
+        user_id: sv.created_by,
+        title: 'Suspense Voucher Approved',
+        message: `Suspense voucher ${sv.serial_number} has been approved by ${approver?.name || 'Admin'}.`,
+        type: 'info'
+      },
+      {
+        user_id: payee.user_id,
+        title: 'Settlement Form Ready',
+        message: `Your settlement form for ${sv.serial_number} is ready. Please submit your entries.`,
+        type: 'info'
+      }
+    ]);
+
+    res.json({ success: true, suspenseVoucher: sv, settlementSession: session, settlementUrl });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -2412,9 +2495,61 @@ app.post('/api/suspense-vouchers/:id/reject', async (req, res) => {
   }
 });
 
+// Resend settlement link (creates a new 24-hour session, invalidates previous ones, re-sends SMS)
+app.post('/api/suspense-vouchers/:id/resend-settlement-link', async (req, res) => {
+  const { requestedBy } = req.body;
+  if (!requestedBy) return res.status(400).json({ error: 'requestedBy is required' });
+  try {
+    const actor = await getActorRole(requestedBy);
+    if (actor.role !== 'accounts' && actor.role !== 'admin' && !actor.is_super_admin) {
+      return res.status(403).json({ error: 'Unauthorized: Only Accounts or Admin can resend settlement links' });
+    }
+    const { data: sv, error: svError } = await supabase.from('suspense_vouchers')
+      .select('*').eq('id', req.params.id).single();
+    if (svError || !sv) return res.status(404).json({ error: 'Suspense voucher not found' });
+    if (!['open', 'partial'].includes(sv.status)) {
+      return res.status(400).json({ error: 'Settlement link can only be resent for open or partially-settled vouchers' });
+    }
+    const { data: payee, error: payeeError } = await supabase.from('payees')
+      .select('id, mobile, name, user_id, is_staff')
+      .eq('company_id', sv.company_id)
+      .eq('user_id', sv.staff_user_id)
+      .eq('is_staff', true)
+      .single();
+    if (payeeError || !payee) {
+      return res.status(400).json({ error: 'No designated staff payee found. Please set up the staff payee in Payees Management first.' });
+    }
+    // Expire all existing active sessions for this voucher
+    await supabase.from('settlement_sessions')
+      .update({ expires_at: new Date().toISOString() })
+      .eq('suspense_id', sv.id)
+      .gt('expires_at', new Date().toISOString());
+
+    const settlementToken = generateSettlementToken();
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    const { data: session, error: sessionError } = await supabase.from('settlement_sessions').insert({
+      suspense_id: sv.id,
+      payee_id: payee.id,
+      token: settlementToken,
+      expires_at: expiresAt,
+      last_sent_at: new Date().toISOString()
+    }).select().single();
+    if (sessionError) throw sessionError;
+
+    const baseUrl = process.env.APP_BASE_URL || `${req.protocol}://${req.get('host')}`;
+    const settlementUrl = `${baseUrl}/settlement/${settlementToken}`;
+    const smsMessage = `Your settlement form for suspense voucher ${sv.serial_number} is ready. Open it here: ${settlementUrl}`;
+    await send2FactorSms(payee.mobile, smsMessage);
+
+    res.json({ success: true, settlementUrl, session });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Add settlement entry
 app.post('/api/suspense-vouchers/:id/settlements', async (req, res) => {
-  const { entryType, amount, description, headOfAccount, referenceNumber, submittedBy } = req.body;
+  const { entryType, amount, description, headOfAccount, referenceNumber, submittedBy, requiresInvoice, invoiceMissingReason } = req.body;
   if (!entryType || !amount || !description || !submittedBy) {
     return res.status(400).json({ error: 'Missing required fields' });
   }
@@ -2434,26 +2569,123 @@ app.post('/api/suspense-vouchers/:id/settlements', async (req, res) => {
       description,
       head_of_account: headOfAccount || null,
       reference_number: referenceNumber || null,
-      submitted_by: submittedBy
+      submitted_by: submittedBy,
+      requires_invoice: requiresInvoice !== undefined ? requiresInvoice : true,
+      invoice_missing_reason: invoiceMissingReason || null,
+      status: 'pending_review'
     }).select().single();
     if (sErr) throw sErr;
 
-    // Recalculate balance
-    const { data: allSettlements } = await supabase.from('suspense_settlements')
-      .select('entry_type, amount').eq('suspense_id', req.params.id);
-    let balance = parseFloat(sv.advance_amount);
-    for (const s of (allSettlements || [])) {
-      if (s.entry_type === 'expense') balance -= parseFloat(s.amount);
-      else if (s.entry_type === 'refund')  balance += parseFloat(s.amount);
-      else if (s.entry_type === 'topup')   balance += parseFloat(s.amount);
-    }
-    const newStatus = balance <= 0 ? 'closed' : 'partial';
-    const closedAt = balance <= 0 ? new Date().toISOString() : null;
-    await supabase.from('suspense_vouchers')
-      .update({ balance_amount: Math.max(0, balance), status: newStatus, ...(closedAt ? { closed_at: closedAt } : {}) })
-      .eq('id', req.params.id);
+    // Notify accounts users that a new settlement entry needs review
+    const { data: adminEntries } = await supabase.from('user_companies')
+      .select('user_id')
+      .eq('company_id', sv.company_id)
+      .eq('role', 'accounts');
+    const { data: submitter } = await supabase.from('users').select('name').eq('id', submittedBy).single();
 
-    res.json({ success: true, settlement, newBalance: Math.max(0, balance), newStatus });
+    if (adminEntries && adminEntries.length > 0) {
+      const notifications = adminEntries.map(a => ({
+        user_id: a.user_id,
+        title: 'New Settlement Entry Pending Review',
+        message: `A new settlement entry for ${sv.serial_number} has been submitted by ${submitter?.name || 'Staff'}.`,
+        type: 'approval_required'
+      }));
+      await supabase.from('notifications').insert(notifications);
+      for (const admin of adminEntries) {
+        sendPushNotification(
+          admin.user_id,
+          '🧾 Settlement Entry Submitted',
+          `A settlement entry for ${sv.serial_number} needs your review.`,
+          '/'
+        );
+      }
+    }
+
+    res.json({ success: true, settlement });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/settlement-sessions/:token', async (req, res) => {
+  try {
+    const { data: session, error } = await supabase.from('settlement_sessions')
+      .select(`*, payee:payees(id,name,mobile,user_id,is_staff), suspense:suspense_vouchers(id,serial_number,company_id,status,advance_amount,balance_amount)`) 
+      .eq('token', req.params.token)
+      .single();
+
+    if (error || !session) return res.status(404).json({ error: 'Settlement session not found' });
+    if (new Date(session.expires_at) < new Date()) return res.status(400).json({ error: 'Settlement session has expired' });
+    if (!session.payee || !session.payee.is_staff) {
+      return res.status(400).json({ error: 'Settlement session is not valid for a staff payee' });
+    }
+
+    res.json({ settlementSession: session });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/settlement-sessions/:token/settlements', async (req, res) => {
+  const { entryType, amount, description, headOfAccount, referenceNumber, requiresInvoice, invoiceMissingReason } = req.body;
+  if (!entryType || !amount || !description) {
+    return res.status(400).json({ error: 'Missing required fields' });
+  }
+
+  try {
+    const { data: session, error: sessionError } = await supabase.from('settlement_sessions')
+      .select(`*, payee:payees(id,user_id,name,mobile), suspense:suspense_vouchers(id,serial_number,company_id,status)`) 
+      .eq('token', req.params.token)
+      .single();
+    if (sessionError || !session) return res.status(404).json({ error: 'Settlement session not found' });
+    if (new Date(session.expires_at) < new Date()) return res.status(400).json({ error: 'Settlement session has expired' });
+    if (!session.payee || !session.payee.is_staff) {
+      return res.status(400).json({ error: 'Settlement session is not valid for a staff payee' });
+    }
+    if (!['open', 'partial'].includes(session.suspense?.status)) {
+      return res.status(400).json({ error: 'Cannot submit settlement: the suspense voucher is not open for settlement' });
+    }
+
+    const submittedBy = session.payee.user_id;
+    if (!submittedBy) return res.status(400).json({ error: 'Payee is not linked to a user account' });
+
+    const { data: settlement, error: sErr } = await supabase.from('suspense_settlements').insert({
+      suspense_id: session.suspense.id,
+      company_id: session.suspense.company_id,
+      entry_type: entryType,
+      amount: parseFloat(amount),
+      description,
+      head_of_account: headOfAccount || null,
+      reference_number: referenceNumber || null,
+      submitted_by: submittedBy,
+      requires_invoice: requiresInvoice !== undefined ? requiresInvoice : true,
+      invoice_missing_reason: invoiceMissingReason || null,
+      status: 'pending_review'
+    }).select().single();
+    if (sErr) throw sErr;
+
+    const { data: adminEntries } = await supabase.from('user_companies')
+      .select('user_id')
+      .eq('company_id', session.suspense.company_id)
+      .eq('role', 'accounts');
+    const notifications = (adminEntries || []).map(a => ({
+      user_id: a.user_id,
+      title: 'Settlement Entry Submitted',
+      message: `A new settlement entry has been submitted for ${session.suspense.serial_number}.`,
+      type: 'approval_required'
+    }));
+    if (notifications.length > 0) await supabase.from('notifications').insert(notifications);
+
+    for (const admin of adminEntries || []) {
+      sendPushNotification(
+        admin.user_id,
+        '🧾 Settlement Entry Submitted',
+        `A settlement entry has been submitted for ${session.suspense.serial_number}.`,
+        '/'
+      );
+    }
+
+    res.json({ success: true, settlement });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -2468,6 +2700,102 @@ app.get('/api/suspense-vouchers/:id/settlements', async (req, res) => {
       .order('created_at', { ascending: true });
     if (error) throw error;
     res.json({ settlements: data || [] });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Accounts approves a settlement entry and optionally creates a linked voucher
+app.post('/api/suspense-settlements/:settlementId/approve', async (req, res) => {
+  const { approvedBy, createVoucher, voucherData } = req.body;
+  if (!approvedBy) return res.status(400).json({ error: 'approvedBy is required' });
+
+  try {
+    const actor = await getActorRole(approvedBy);
+    if (actor.role !== 'accounts' && !actor.is_super_admin) {
+      return res.status(403).json({ error: 'Unauthorized: Only Accounts users or Super Admin can approve settlement entries' });
+    }
+
+    const { data: settlement, error: settlementError } = await supabase.from('suspense_settlements')
+      .select('*')
+      .eq('id', req.params.settlementId)
+      .single();
+    if (settlementError || !settlement) return res.status(404).json({ error: 'Settlement entry not found' });
+    if (settlement.status !== 'pending_review') return res.status(400).json({ error: 'Settlement entry is not pending review' });
+
+    const { data: sv, error: svError } = await supabase.from('suspense_vouchers')
+      .select('*')
+      .eq('id', settlement.suspense_id)
+      .single();
+    if (svError || !sv) return res.status(404).json({ error: 'Suspense voucher not found' });
+
+    const { data: payee } = await supabase.from('payees')
+      .select('id,user_id')
+      .eq('company_id', sv.company_id)
+      .eq('user_id', sv.staff_user_id)
+      .single();
+    if (!payee) return res.status(400).json({ error: 'No designated staff payee found for this suspense voucher' });
+
+    const { data: approvedSettlement, error: updateError } = await supabase.from('suspense_settlements')
+      .update({ status: 'approved', reviewed_by: approvedBy, reviewed_at: new Date().toISOString() })
+      .eq('id', req.params.settlementId)
+      .select()
+      .single();
+    if (updateError) throw updateError;
+
+    let voucher = null;
+    if (createVoucher) {
+      if (!voucherData?.headOfAccount) {
+        return res.status(400).json({ error: 'headOfAccount is required in voucherData when creating a voucher — please select the correct expense head' });
+      }
+      const headOfAccount = voucherData.headOfAccount;
+      const subHeadOfAccount = voucherData?.subHeadOfAccount || null;
+      const narration = voucherData?.narration || settlement.description;
+      const amount = settlement.amount;
+      const paymentMode = voucherData?.paymentMode || sv.payment_mode || 'UPI';
+      const invoiceReference = voucherData?.invoiceReference || settlement.reference_number || null;
+
+      const serialNumber = await getNextVoucherNumber(sv.company_id);
+      const { data: createdVoucher, error: createVoucherError } = await supabase.from('vouchers').insert({
+        company_id: sv.company_id,
+        serial_number: serialNumber,
+        head_of_account: headOfAccount,
+        sub_head_of_account: subHeadOfAccount,
+        narration,
+        amount,
+        payment_mode: paymentMode,
+        payee_id: payee.id,
+        prepared_by: approvedBy,
+        status: 'pending',
+        submitted_at: new Date().toISOString(),
+        invoice_reference: invoiceReference,
+        settlement_id: settlement.id
+      }).select().single();
+      if (createVoucherError) throw createVoucherError;
+      voucher = createdVoucher;
+
+      await supabase.from('voucher_attachments')
+        .update({ voucher_id: voucher.id })
+        .eq('settlement_id', settlement.id);
+    }
+
+    const { data: approvedSettlements } = await supabase.from('suspense_settlements')
+      .select('entry_type, amount')
+      .eq('suspense_id', sv.id)
+      .eq('status', 'approved');
+
+    let balance = parseFloat(sv.advance_amount);
+    for (const s of (approvedSettlements || [])) {
+      if (s.entry_type === 'expense') balance -= parseFloat(s.amount);
+      else if (s.entry_type === 'refund') balance += parseFloat(s.amount);
+      else if (s.entry_type === 'topup') balance += parseFloat(s.amount);
+    }
+    const newStatus = balance <= 0 ? 'closed' : 'partial';
+    await supabase.from('suspense_vouchers')
+      .update({ balance_amount: Math.max(0, balance), status: newStatus, ...(newStatus === 'closed' ? { closed_at: new Date().toISOString() } : {}) })
+      .eq('id', sv.id);
+
+    res.json({ success: true, settlement: approvedSettlement, voucher });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
