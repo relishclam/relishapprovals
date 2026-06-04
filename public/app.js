@@ -4289,17 +4289,14 @@ const PayeesManagement = () => {
                 <tr>
                   <th>Name</th>
                   <th>Type</th>
-                  <th>Alias</th>
                   <th>Mobile</th>
-                  <th>Bank Account</th>
-                  <th>IFSC</th>
-                  <th>UPI ID</th>
-                  <th style={{textAlign: 'center'}}>Actions</th>
+                  <th>Bank / UPI</th>
+                  <th style={{textAlign: 'center', minWidth: '90px'}}>Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {payees.length === 0 ? (
-                  <tr><td colSpan="8" style={{textAlign: 'center', padding: '2rem', color: 'var(--text-secondary)'}}>No payees added yet. Click "Add Payee" to get started.</td></tr>
+                  <tr><td colSpan="5" style={{textAlign: 'center', padding: '2rem', color: 'var(--text-secondary)'}}>No payees added yet. Click "Add Payee" to get started.</td></tr>
                 ) : (
                   payees.map(p => (
                     <tr key={p.id} style={p.is_global && p.company_id !== user.company.id ? {background: '#f0f9ff'} : {}}>
@@ -4308,6 +4305,7 @@ const PayeesManagement = () => {
                         {p.is_global && <span style={{marginLeft: '0.5rem', fontSize: '0.7rem', background: '#3b82f6', color: 'white', padding: '2px 6px', borderRadius: '4px'}}>🌐 Global</span>}
                         {p.is_global && p.company_id !== user.company.id && <span style={{marginLeft: '0.25rem', fontSize: '0.65rem', color: '#666'}}>(from other company)</span>}
                         {p.is_staff && <span style={{marginLeft: '0.5rem', fontSize: '0.7rem', background: '#10b981', color: 'white', padding: '2px 6px', borderRadius: '4px'}}>👤 Staff</span>}
+                        {p.alias && <div style={{fontSize: '0.75rem', color: '#6b7280', fontWeight: 400, marginTop: '1px'}}>{p.alias}</div>}
                       </td>
                       <td>
                         {p.payee_type === 'adhoc' ? (
@@ -4316,11 +4314,12 @@ const PayeesManagement = () => {
                           <span style={{fontSize: '0.75rem', background: '#d1fae5', color: '#059669', padding: '2px 8px', borderRadius: '4px'}}>✅ Registered</span>
                         )}
                       </td>
-                      <td>{p.alias || '-'}</td>
                       <td>{p.mobile}</td>
-                      <td>{p.bank_account || '-'}</td>
-                      <td>{p.ifsc || '-'}</td>
-                      <td>{p.upi_id || '-'}</td>
+                      <td style={{fontSize: '0.8rem', color: '#555'}}>
+                        {p.bank_account ? <div>{p.bank_account}{p.ifsc ? ` · ${p.ifsc}` : ''}</div> : null}
+                        {p.upi_id ? <div style={{color: '#7c3aed'}}>{p.upi_id}</div> : null}
+                        {!p.bank_account && !p.upi_id ? '-' : null}
+                      </td>
                       <td style={{textAlign: 'center'}}>
                         {p.company_id === user.company.id ? (
                           <div style={{display: 'flex', gap: '0.5rem', justifyContent: 'center'}}>

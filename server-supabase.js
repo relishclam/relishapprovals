@@ -870,10 +870,6 @@ app.post('/api/payees', async (req, res) => {
   const isAdhoc = payeeType === 'adhoc';
   const otpRequired = requiresOtp !== undefined ? requiresOtp : !isAdhoc;
 
-  if (isStaff && !userId) {
-    return res.status(400).json({ error: 'Staff payees must be linked to an existing user_id' });
-  }
-
   try {
     if (userId) {
       const { data: user, error: userError } = await supabase.from('users').select('id').eq('id', userId).single();
@@ -937,10 +933,6 @@ app.put('/api/payees/:payeeId', async (req, res) => {
     if (requires_otp !== undefined) updateData.requires_otp = requires_otp;
     if (user_id !== undefined) updateData.user_id = user_id;
     if (is_staff !== undefined) updateData.is_staff = is_staff;
-
-    if (is_staff && !user_id) {
-      return res.status(400).json({ error: 'Staff payees must be linked to an existing user_id' });
-    }
 
     if (user_id) {
       const { data: user, error: userError } = await supabase.from('users').select('id').eq('id', user_id).single();
