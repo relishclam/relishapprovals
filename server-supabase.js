@@ -2318,22 +2318,35 @@ app.get('/api/vouchers/:voucherId/document', async (req, res) => {
 
 // Create suspense voucher
 app.post('/api/suspense-vouchers', async (req, res) => {
-  const { companyId, staffUserId, advanceAmount, purpose, narration, paymentMode, createdBy } = req.body;
-  if (!companyId || !staffUserId || !advanceAmount || !purpose || !createdBy) {
-    return res.status(400).json({ error: 'Missing required fields' });
+  const { companyId, staffPayeeId, staffUserId, advanceAmount, purpose, narration, paymentMode, createdBy } = req.body;
+  if (!companyId || !staffPayeeId || !advanceAmount || !purpose || !createdBy) {
+    return res.status(400).json({ error: 'companyId, staffPayeeId, advanceAmount, purpose and createdBy are required' });
   }
   try {
     const actor = await getActorRole(createdBy);
     if (actor.role !== 'accounts' && !actor.is_super_admin) {
       return res.status(403).json({ error: 'Unauthorized: Only Accounts users or Super Admin can create suspense vouchers' });
     }
+
+    // Validate the staff payee exists and belongs to this company
+    const { data: payee, error: payeeErr } = await supabase.from('payees')
+      .select('id, name, mobile, user_id, is_staff')
+      .eq('id', staffPayeeId)
+      .eq('company_id', companyId)
+      .eq('is_staff', true)
+      .single();
+    if (payeeErr || !payee) {
+      return res.status(400).json({ error: 'Staff payee not found. Please add the staff member in Payees Management and mark them as a Staff Payee first.' });
+    }
+
     const { data: serialData, error: serialError } = await supabase.rpc('get_next_suspense_number', { p_company_id: companyId });
     if (serialError) throw serialError;
 
     const { data: sv, error } = await supabase.from('suspense_vouchers').insert({
       company_id: companyId,
       serial_number: serialData,
-      staff_user_id: staffUserId,
+      staff_user_id: payee.user_id || null,
+      staff_payee_id: payee.id,
       advance_amount: advanceAmount,
       balance_amount: advanceAmount,
       purpose,
@@ -2371,7 +2384,7 @@ app.get('/api/companies/:companyId/suspense-vouchers', async (req, res) => {
   const { status, staffUserId } = req.query;
   try {
     let query = supabase.from('suspense_vouchers')
-      .select(`*, staff:users!staff_user_id(id,name,first_name), creator:users!created_by(id,name), approver:users!approved_by(id,name)`)
+      .select(`*, staff:users!staff_user_id(id,name,first_name), staff_payee:payees!staff_payee_id(id,name,mobile), creator:users!created_by(id,name), approver:users!approved_by(id,name)`)
       .eq('company_id', req.params.companyId)
       .order('created_at', { ascending: false });
     if (status) query = query.eq('status', status);
@@ -2388,7 +2401,7 @@ app.get('/api/companies/:companyId/suspense-vouchers', async (req, res) => {
 app.get('/api/suspense-vouchers/:id', async (req, res) => {
   try {
     const { data: sv, error } = await supabase.from('suspense_vouchers')
-      .select(`*, staff:users!staff_user_id(id,name,first_name,mobile), creator:users!created_by(id,name), approver:users!approved_by(id,name)`)
+      .select(`*, staff:users!staff_user_id(id,name,first_name,mobile), staff_payee:payees!staff_payee_id(id,name,mobile), creator:users!created_by(id,name), approver:users!approved_by(id,name)`)
       .eq('id', req.params.id)
       .single();
     if (error || !sv) return res.status(404).json({ error: 'Suspense voucher not found' });
@@ -2426,12 +2439,11 @@ app.post('/api/suspense-vouchers/:id/approve', async (req, res) => {
 
     const { data: payee, error: payeeError } = await supabase.from('payees')
       .select('id, mobile, name, user_id, is_staff')
-      .eq('company_id', sv.company_id)
-      .eq('user_id', sv.staff_user_id)
+      .eq('id', sv.staff_payee_id)
       .single();
 
     if (payeeError || !payee || !payee.is_staff) {
-      return res.status(400).json({ error: 'The suspense staff member must be designated as a staff payee before approval.' });
+      return res.status(400).json({ error: 'The suspense staff payee is missing. Please update the voucher or set up the staff payee first.' });
     }
 
     const settlementToken = generateSettlementToken();
@@ -2512,8 +2524,7 @@ app.post('/api/suspense-vouchers/:id/resend-settlement-link', async (req, res) =
     }
     const { data: payee, error: payeeError } = await supabase.from('payees')
       .select('id, mobile, name, user_id, is_staff')
-      .eq('company_id', sv.company_id)
-      .eq('user_id', sv.staff_user_id)
+      .eq('id', sv.staff_payee_id)
       .eq('is_staff', true)
       .single();
     if (payeeError || !payee) {
@@ -2646,8 +2657,9 @@ app.post('/api/settlement-sessions/:token/settlements', async (req, res) => {
       return res.status(400).json({ error: 'Cannot submit settlement: the suspense voucher is not open for settlement' });
     }
 
-    const submittedBy = session.payee.user_id;
-    if (!submittedBy) return res.status(400).json({ error: 'Payee is not linked to a user account' });
+    const submittedBy = session.payee.user_id || null;
+    // submittedBy may be null if the staff payee has no system account — that is fine.
+    // Identity is tracked via session.payee (payee record) not a user login.
 
     const { data: settlement, error: sErr } = await supabase.from('suspense_settlements').insert({
       suspense_id: session.suspense.id,
@@ -2658,6 +2670,7 @@ app.post('/api/settlement-sessions/:token/settlements', async (req, res) => {
       head_of_account: headOfAccount || null,
       reference_number: referenceNumber || null,
       submitted_by: submittedBy,
+      settlement_payee_id: session.payee.id,
       requires_invoice: requiresInvoice !== undefined ? requiresInvoice : true,
       invoice_missing_reason: invoiceMissingReason || null,
       status: 'pending_review'
@@ -2695,7 +2708,7 @@ app.post('/api/settlement-sessions/:token/settlements', async (req, res) => {
 app.get('/api/suspense-vouchers/:id/settlements', async (req, res) => {
   try {
     const { data, error } = await supabase.from('suspense_settlements')
-      .select(`*, submitter:users!submitted_by(id,name)`)
+      .select(`*, submitter:users!submitted_by(id,name), payee:payees!settlement_payee_id(id,name,mobile)`)
       .eq('suspense_id', req.params.id)
       .order('created_at', { ascending: true });
     if (error) throw error;
@@ -2730,9 +2743,8 @@ app.post('/api/suspense-settlements/:settlementId/approve', async (req, res) => 
     if (svError || !sv) return res.status(404).json({ error: 'Suspense voucher not found' });
 
     const { data: payee } = await supabase.from('payees')
-      .select('id,user_id')
-      .eq('company_id', sv.company_id)
-      .eq('user_id', sv.staff_user_id)
+      .select('id,user_id,name,mobile')
+      .eq('id', sv.staff_payee_id)
       .single();
     if (!payee) return res.status(400).json({ error: 'No designated staff payee found for this suspense voucher' });
 

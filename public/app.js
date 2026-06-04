@@ -4407,12 +4407,12 @@ const PayeesManagement = () => {
                 </label>
                 {newPayee.isStaff && (
                   <div style={{marginTop: '0.75rem'}}>
-                    <label className="form-label">Link to System User <span style={{color: '#ef4444'}}>*</span></label>
+                    <label className="form-label">Link to System User <span style={{fontSize: '0.78rem', color: '#6b7280', fontWeight: 400}}>(optional)</span></label>
                     <select className="form-select" value={newPayee.userId} onChange={e => setNewPayee({...newPayee, userId: e.target.value})}>
-                      <option value="">Select user account…</option>
+                      <option value="">— Not a system user —</option>
                       {companyUsers.map(u => <option key={u.id} value={u.id}>{u.name} ({u.role})</option>)}
                     </select>
-                    <p style={{fontSize: '0.8rem', color: '#166534', marginTop: '0.5rem'}}>Required for suspense advance disbursements and settlement link delivery.</p>
+                    <p style={{fontSize: '0.8rem', color: '#166534', marginTop: '0.5rem'}}>Leave blank if the staff member doesn't have a system account. They'll still receive the SMS settlement link via their mobile number.</p>
                   </div>
                 )}
               </div>
@@ -4473,12 +4473,12 @@ const PayeesManagement = () => {
                 </label>
                 {editPayee.is_staff && (
                   <div style={{marginTop: '0.75rem'}}>
-                    <label className="form-label">Linked System User <span style={{color: '#ef4444'}}>*</span></label>
+                    <label className="form-label">Linked System User <span style={{fontSize: '0.78rem', color: '#6b7280', fontWeight: 400}}>(optional)</span></label>
                     <select className="form-select" value={editPayee.user_id || ''} onChange={e => setEditPayee({...editPayee, user_id: e.target.value})}>
-                      <option value="">Select user account…</option>
+                      <option value="">— Not a system user —</option>
                       {companyUsers.map(u => <option key={u.id} value={u.id}>{u.name} ({u.role})</option>)}
                     </select>
-                    <p style={{fontSize: '0.8rem', color: '#166534', marginTop: '0.5rem'}}>Required for suspense advance disbursements and settlement link delivery.</p>
+                    <p style={{fontSize: '0.8rem', color: '#166534', marginTop: '0.5rem'}}>Leave blank if the staff member doesn't have a system account. They'll still receive the SMS settlement link via their mobile number.</p>
                   </div>
                 )}
               </div>
@@ -5555,23 +5555,18 @@ const BillAttachmentPanel = ({ voucherId, voucherType = 'regular', suspenseId, s
 // ─────────────────────────────────────────────────────────────────────────────
 const SuspenseVoucherForm = ({ onCreated }) => {
   const { user, addToast } = useApp();
-  const [staffUsers, setStaffUsers] = useState([]);
-  const [payees, setPayees] = useState([]);
-  const [staffPayeeWarning, setStaffPayeeWarning] = useState('');
-  const [form, setForm] = useState({ staffUserId: '', purpose: '', advanceAmount: '', paymentMode: 'Cash', narration: '' });
+  const [staffPayees, setStaffPayees] = useState([]);
+  const [form, setForm] = useState({ staffPayeeId: '', purpose: '', advanceAmount: '', paymentMode: 'Cash', narration: '' });
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    api.getCompanyUsers(user.company.id).then(data => {
-      if (Array.isArray(data)) setStaffUsers(data);
-    });
     api.getPayees(user.company.id).then(data => {
-      if (Array.isArray(data)) setPayees(data);
+      if (Array.isArray(data)) setStaffPayees(data.filter(p => p.is_staff && p.company_id === user.company.id));
     });
   }, [user.company.id]);
 
   const handleSubmit = async () => {
-    if (!form.staffUserId || !form.purpose || !form.advanceAmount) {
+    if (!form.staffPayeeId || !form.purpose || !form.advanceAmount) {
       addToast('Staff member, purpose and advance amount are required', 'error');
       return;
     }
@@ -5583,7 +5578,7 @@ const SuspenseVoucherForm = ({ onCreated }) => {
     try {
       const result = await api.createSuspenseVoucher({
         companyId: user.company.id,
-        staffUserId: form.staffUserId,
+        staffPayeeId: form.staffPayeeId,
         advanceAmount: parseFloat(form.advanceAmount),
         purpose: form.purpose,
         narration: form.narration || null,
@@ -5611,20 +5606,16 @@ const SuspenseVoucherForm = ({ onCreated }) => {
         <div className="card-body">
           <div className="form-group">
             <label className="form-label">Staff Member *</label>
-            <select className="form-select" value={form.staffUserId} onChange={e => {
-              const uid = e.target.value;
-              setForm(f => ({ ...f, staffUserId: uid }));
-              if (uid) {
-                const linked = payees.find(p => p.user_id === uid && p.is_staff);
-                setStaffPayeeWarning(linked ? '' : '⚠️ No staff payee is linked to this user. Please set one up in Payees Management before the admin can approve this voucher.');
-              } else {
-                setStaffPayeeWarning('');
-              }
-            }}>
-              <option value="">Select staff member</option>
-              {staffUsers.map(u => <option key={u.id} value={u.id}>{u.name} ({u.role})</option>)}
-            </select>
-            {staffPayeeWarning && <div style={{ background: '#fef3c7', border: '1px solid #f59e0b', borderRadius: '6px', padding: '0.75rem', marginTop: '0.5rem', fontSize: '0.85rem', color: '#92400e' }}>{staffPayeeWarning}</div>}
+            {staffPayees.length === 0 ? (
+              <div style={{ background: '#fef3c7', border: '1px solid #f59e0b', borderRadius: '8px', padding: '0.85rem', fontSize: '0.88rem', color: '#92400e' }}>
+                ⚠️ No staff payees found. Please go to <strong>Manage Payees</strong>, add the staff member, and check <strong>Staff Payee</strong> on their record first.
+              </div>
+            ) : (
+              <select className="form-select" value={form.staffPayeeId} onChange={e => setForm(f => ({ ...f, staffPayeeId: e.target.value }))}>
+                <option value="">Select staff member</option>
+                {staffPayees.map(p => <option key={p.id} value={p.id}>{p.name}{p.mobile ? ` · ${p.mobile}` : ''}</option>)}
+              </select>
+            )}
           </div>
           <div className="form-group">
             <label className="form-label">Purpose *</label>
@@ -5718,7 +5709,7 @@ const SuspenseVoucherList = ({ onViewDetail }) => {
                   <div style={{ fontWeight: 700, fontSize: '1rem', color: '#f5841f' }}>{sv.serial_number}</div>
                   <div style={{ fontSize: '0.9rem', fontWeight: 500, marginTop: '2px' }}>{sv.purpose}</div>
                   <div style={{ fontSize: '0.8rem', color: '#666', marginTop: '2px' }}>
-                    Staff: {sv.staff?.name || 'Unknown'} · Created by: {sv.creator?.name || 'Unknown'}
+                    Staff: {sv.staff_payee?.name || sv.staff?.name || 'Unknown'} · Created by: {sv.creator?.name || 'Unknown'}
                   </div>
                   <div style={{ fontSize: '0.75rem', color: '#999', marginTop: '2px' }}>{new Date(sv.created_at).toLocaleDateString('en-IN')}</div>
                 </div>
@@ -5931,7 +5922,7 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
 
       <div className="card" style={{ marginBottom: '1rem' }}>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem' }}>
-          <div><div style={{ fontSize: '0.75rem', color: '#999', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Staff Member</div><div style={{ fontWeight: 600, marginTop: '2px' }}>{sv.staff?.name || 'Unknown'}</div></div>
+          <div><div style={{ fontSize: '0.75rem', color: '#999', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Staff Member</div><div style={{ fontWeight: 600, marginTop: '2px' }}>{sv.staff_payee?.name || sv.staff?.name || 'Unknown'}{sv.staff_payee?.mobile && <span style={{ fontWeight: 400, color: '#6b7280', fontSize: '0.85rem', marginLeft: '0.4rem' }}>· {sv.staff_payee.mobile}</span>}</div></div>
           <div><div style={{ fontSize: '0.75rem', color: '#999', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Purpose</div><div style={{ fontWeight: 600, marginTop: '2px' }}>{sv.purpose}</div></div>
           <div><div style={{ fontSize: '0.75rem', color: '#999', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Advance Amount</div><div style={{ fontWeight: 700, fontSize: '1.1rem', color: '#f5841f', marginTop: '2px' }}>{formatRupees(sv.advance_amount)}</div></div>
           <div><div style={{ fontSize: '0.75rem', color: '#999', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Balance</div><div style={{ fontWeight: 700, fontSize: '1.1rem', color: '#3b82f6', marginTop: '2px' }}>{formatRupees(sv.balance_amount ?? sv.advance_amount)}</div></div>
@@ -5964,7 +5955,7 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
                     <td style={{ padding: '8px 12px', borderBottom: '1px solid #f0f0f0' }}>{new Date(s.created_at).toLocaleDateString('en-IN')}</td>
                     <td style={{ padding: '8px 12px', borderBottom: '1px solid #f0f0f0' }}><span style={{ color: entryTypeColor(s.entry_type), fontWeight: 600, fontSize: '0.8rem' }}>{entryTypeLabel(s.entry_type)}</span></td>
                     <td style={{ padding: '8px 12px', borderBottom: '1px solid #f0f0f0' }}>{s.description}{s.head_of_account && <span style={{ color: '#888', fontSize: '0.75rem' }}> · {s.head_of_account}</span>}</td>
-                    <td style={{ padding: '8px 12px', borderBottom: '1px solid #f0f0f0', color: '#666' }}>{s.submitter?.name || '—'}</td>
+                    <td style={{ padding: '8px 12px', borderBottom: '1px solid #f0f0f0', color: '#666' }}>{s.payee?.name || s.submitter?.name || '—'}</td>
                     <td style={{ padding: '8px 12px', borderBottom: '1px solid #f0f0f0', textAlign: 'right', fontWeight: 600, color: entryTypeColor(s.entry_type) }}>{formatRupees(s.amount)}</td>
                     <td style={{ padding: '8px 12px', borderBottom: '1px solid #f0f0f0' }}>{settlementStatusBadge(s.status)}</td>
                     <td style={{ padding: '8px 12px', borderBottom: '1px solid #f0f0f0', textAlign: 'center' }}>
