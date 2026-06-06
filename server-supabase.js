@@ -2907,26 +2907,41 @@ app.post('/api/suspense-settlements/:settlementId/approve', async (req, res) => 
       const amount = settlement.amount;
       const paymentMode = voucherData?.paymentMode || sv.payment_mode || 'UPI';
       const invoiceReference = voucherData?.invoiceReference || settlement.reference_number || null;
+      // Narration must clearly record that payment was already disbursed as suspense advance
+      const narrationWithRef = `[Pre-paid via Suspense ${sv.serial_number}] ${narration}`;
+      // Synthetic signature proving this voucher was settled through the suspense system
+      const suspenseSignature = Buffer.from(
+        `suspense:${sv.serial_number}:${settlement.id}:${approvedBy}:${Date.now()}`
+      ).toString('base64');
 
       const serialNumber = await getNextVoucherNumber(sv.company_id);
+      const now = new Date().toISOString();
       const { data: createdVoucher, error: createVoucherError } = await supabase.from('vouchers').insert({
         company_id: sv.company_id,
         serial_number: serialNumber,
         head_of_account: headOfAccount,
         sub_head_of_account: subHeadOfAccount,
-        narration,
+        narration: narrationWithRef,
         amount,
         payment_mode: paymentMode,
         payee_id: payee.id,
         prepared_by: approvedBy,
-        status: 'pending',
-        submitted_at: new Date().toISOString(),
+        // Voucher is immediately completed — payment was already made as suspense advance.
+        // It must NOT re-enter the pending → approval → OTP payment flow.
+        status: 'completed',
+        approved_by: approvedBy,
+        approved_at: now,
+        payee_otp_verified: true,
+        payee_signature: suspenseSignature,
+        completed_at: now,
+        submitted_at: now,
         invoice_reference: invoiceReference,
         settlement_id: settlement.id
       }).select().single();
       if (createVoucherError) throw createVoucherError;
       voucher = createdVoucher;
 
+      // Copy all attachments from the settlement entry to the linked voucher for traceability
       await supabase.from('voucher_attachments')
         .update({ voucher_id: voucher.id })
         .eq('settlement_id', settlement.id);
@@ -2968,8 +2983,9 @@ app.post('/api/suspense-settlements/:settlementId/approve', async (req, res) => 
 // Upload attachment (supports regular vouchers, suspense vouchers, settlements)
 app.post('/api/attachments/upload', async (req, res) => {
   const { fileData, mimeType, fileName, voucherId, voucherType, suspenseId, settlementId, captureSessionId, uploadedBy, companyId } = req.body;
-  if (!fileData || !uploadedBy || !companyId) {
-    return res.status(400).json({ error: 'fileData, uploadedBy and companyId are required' });
+  // uploadedBy is optional for settlement uploads — SMS-only payees have no system user ID
+  if (!fileData || !companyId) {
+    return res.status(400).json({ error: 'fileData and companyId are required' });
   }
   try {
     const base64Data = fileData.replace(/^data:.*?;base64,/, '');

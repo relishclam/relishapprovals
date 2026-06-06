@@ -5940,7 +5940,7 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
       createVoucher: approveForm.createVoucher,
       voucherData: approveForm.createVoucher ? { headOfAccount: approveForm.headOfAccount, subHeadOfAccount: approveForm.subHeadOfAccount || null, narration: approveForm.narration, invoiceReference: approveForm.invoiceReference || null, paymentMode: approveForm.paymentMode } : null
     });
-    if (result.success) { addToast('Settlement entry approved' + (result.voucher ? ' · voucher created' : ''), 'success'); setShowApproveModal(false); load(); }
+    if (result.success) { addToast('Settlement entry approved' + (result.voucher ? ` · Voucher ${result.voucher.serial_number} created (completed)` : ''), 'success'); setShowApproveModal(false); load(); }
     else addToast(result.error || 'Approval failed', 'error');
     setActionLoading(false);
   };
@@ -6177,7 +6177,9 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
                   <input type="checkbox" checked={approveForm.createVoucher} onChange={e => setApproveForm(f => ({...f, createVoucher: e.target.checked}))} style={{ width: '18px', height: '18px' }} />
                   <span style={{ fontWeight: 600 }}>📋 Create Payment Voucher from this entry</span>
                 </label>
-                <p style={{ fontSize: '0.8rem', color: '#166534', marginTop: '0.5rem', marginLeft: '2rem' }}>A formal voucher will be created and sent through the regular approval flow.</p>
+                <p style={{ fontSize: '0.8rem', color: '#166534', marginTop: '0.5rem', marginLeft: '2rem' }}>
+                  A voucher will be created and marked <strong>Completed</strong> immediately — payment was already disbursed as the suspense advance. Bills attached by the staff member will be copied to this voucher for traceability.
+                </p>
               </div>
               {approveForm.createVoucher && (
                 <>
