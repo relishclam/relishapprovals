@@ -6228,6 +6228,113 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // SETTLEMENT SESSION PAGE (public — no auth)
 // ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// SETTLEMENT INSTALL BANNER
+// Shown inside the settlement page to nudge staff to install the PWA.
+// Handles Android (beforeinstallprompt) and iOS (manual share instructions).
+// ─────────────────────────────────────────────────────────────────────────────
+const SettlementInstallBanner = () => {
+  const [deferredPrompt, setDeferredPrompt] = useState(null);
+  const [show, setShow] = useState(false);
+  const [mode, setMode] = useState(null); // 'android' | 'ios' | null
+  const [iosExpanded, setIosExpanded] = useState(false);
+
+  useEffect(() => {
+    // Already installed as standalone PWA — don't show
+    if (window.matchMedia('(display-mode: standalone)').matches) return;
+    // User dismissed before — don't show
+    if (localStorage.getItem('settlement-install-dismissed')) return;
+
+    const isIos = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+    const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+
+    if (isIos && isSafari) {
+      setMode('ios');
+      setShow(true);
+      return;
+    }
+
+    // Android / desktop Chrome: listen for beforeinstallprompt
+    const handler = (e) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+      setMode('android');
+      setShow(true);
+    };
+    window.addEventListener('beforeinstallprompt', handler);
+    return () => window.removeEventListener('beforeinstallprompt', handler);
+  }, []);
+
+  const handleInstall = async () => {
+    if (!deferredPrompt) return;
+    deferredPrompt.prompt();
+    const { outcome } = await deferredPrompt.userChoice;
+    setDeferredPrompt(null);
+    setShow(false);
+    if (outcome === 'accepted') localStorage.setItem('settlement-install-dismissed', '1');
+  };
+
+  const handleDismiss = () => {
+    localStorage.setItem('settlement-install-dismissed', '1');
+    setShow(false);
+  };
+
+  if (!show) return null;
+
+  const bannerStyle = {
+    background: 'linear-gradient(135deg, #1e3a5f 0%, #1d4ed8 100%)',
+    borderRadius: '12px', padding: '1rem', marginBottom: '1.5rem',
+    color: 'white', textAlign: 'left', position: 'relative'
+  };
+  const dismissBtn = {
+    position: 'absolute', top: '0.6rem', right: '0.75rem',
+    background: 'none', border: 'none', color: 'rgba(255,255,255,0.7)',
+    fontSize: '1.1rem', cursor: 'pointer', lineHeight: 1, padding: '0.2rem 0.4rem'
+  };
+
+  if (mode === 'android') return (
+    <div style={bannerStyle}>
+      <button style={dismissBtn} onClick={handleDismiss} aria-label="Dismiss">✕</button>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.75rem' }}>
+        <span style={{ fontSize: '1.6rem' }}>📲</span>
+        <div>
+          <div style={{ fontWeight: 700, fontSize: '0.95rem' }}>Install Relish Approvals</div>
+          <div style={{ fontSize: '0.82rem', opacity: 0.85 }}>Add to your home screen for quick access — no App Store needed.</div>
+        </div>
+      </div>
+      <button onClick={handleInstall} style={{ background: '#f5841f', color: 'white', border: 'none', borderRadius: '8px', padding: '0.65rem 1.25rem', fontWeight: 700, cursor: 'pointer', fontSize: '0.9rem', width: '100%' }}>
+        ➕ Add to Home Screen
+      </button>
+    </div>
+  );
+
+  if (mode === 'ios') return (
+    <div style={bannerStyle}>
+      <button style={dismissBtn} onClick={handleDismiss} aria-label="Dismiss">✕</button>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.75rem' }}>
+        <span style={{ fontSize: '1.6rem' }}>📲</span>
+        <div>
+          <div style={{ fontWeight: 700, fontSize: '0.95rem' }}>Install Relish Approvals</div>
+          <div style={{ fontSize: '0.82rem', opacity: 0.85 }}>Save this form to your home screen for instant access.</div>
+        </div>
+      </div>
+      {!iosExpanded ? (
+        <button onClick={() => setIosExpanded(true)} style={{ background: '#f5841f', color: 'white', border: 'none', borderRadius: '8px', padding: '0.65rem 1.25rem', fontWeight: 700, cursor: 'pointer', fontSize: '0.9rem', width: '100%' }}>
+          Show me how
+        </button>
+      ) : (
+        <ol style={{ margin: '0', paddingLeft: '1.25rem', fontSize: '0.88rem', lineHeight: 1.7, opacity: 0.95 }}>
+          <li>Tap the <strong>Share</strong> button <span style={{ fontSize: '1rem' }}>⎙</span> at the bottom of Safari</li>
+          <li>Scroll down and tap <strong>"Add to Home Screen"</strong></li>
+          <li>Tap <strong>Add</strong> — done! Open it like any app.</li>
+        </ol>
+      )}
+    </div>
+  );
+
+  return null;
+};
+
 const SettlementSessionPage = ({ token }) => {
   const [session, setSession] = useState(null);
   const [status, setStatus] = useState('loading'); // loading | ready | submitting | submitted | error | expired | used
@@ -6458,6 +6565,7 @@ const SettlementSessionPage = ({ token }) => {
   return (
     <div style={containerStyle}>
       <div style={cardStyle}>
+        <SettlementInstallBanner />
         <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>🧾 Submit Settlement Details</div>
         <p style={{ color: '#666', fontSize: '0.95rem', marginBottom: '1.5rem' }}>
           Hello {session.payee?.name || 'staff payee'}, please provide the required settlement details for suspense voucher <strong>{session.suspense.serial_number}</strong>.
