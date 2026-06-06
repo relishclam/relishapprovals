@@ -122,7 +122,7 @@ const api = {
   getPayees: (companyId) => fetch(`${API_BASE}/companies/${companyId}/payees`).then(r => r.json()),
   updatePayee: (payeeId, data) => fetch(`${API_BASE}/payees/${payeeId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
   deletePayee: (payeeId) => fetch(`${API_BASE}/payees/${payeeId}`, { method: 'DELETE' }).then(r => r.json()),
-  createStaffLogin: (payeeId, requesterId) => fetch(`${API_BASE}/payees/${payeeId}/create-staff-login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ requesterId }) }).then(async r => { const d = await r.json(); if (!r.ok) throw new Error(d.error || 'Request failed'); return d; }),
+  createStaffLogin: (payeeId, requesterId) => fetch(`${API_BASE}/payees/${payeeId}/create-staff-login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ requesterId }) }).then(async r => { const d = await r.json(); if (!r.ok) throw new Error(d.error || d.details || 'Request failed'); return d; }),
   createVoucher: (data) => fetch(`${API_BASE}/vouchers`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
   getVouchers: (companyId) => fetch(`${API_BASE}/companies/${companyId}/vouchers`).then(r => r.json()),
   getVoucher: (voucherId) => fetch(`${API_BASE}/vouchers/${voucherId}`).then(r => r.json()),

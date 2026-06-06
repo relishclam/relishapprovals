@@ -1048,6 +1048,9 @@ app.post('/api/payees/:payeeId/create-staff-login', async (req, res) => {
       if (insertError.code === '23505') {
         return res.status(400).json({ error: `Username "${username}" is already taken. The payee may already have a login.` });
       }
+      if (insertError.code === '23514') {
+        return res.status(500).json({ error: 'Database migration required: please run migration 016_add_staff_role.sql in your Supabase SQL editor to enable the staff role.' });
+      }
       throw insertError;
     }
 
