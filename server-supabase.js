@@ -1220,7 +1220,11 @@ app.get('/api/vouchers/:voucherId', async (req, res) => {
         payee:payees(name, alias, mobile, bank_account, ifsc, upi_id),
         preparer:users!vouchers_prepared_by_fkey(name, username),
         approver:users!vouchers_approved_by_fkey(name, username),
-        company:companies(name, address, gst)
+        company:companies(name, address, gst),
+        settlement:suspense_settlements(
+          id,
+          suspense_voucher:suspense_vouchers(serial_number)
+        )
       `)
       .eq('id', req.params.voucherId)
       .single();
@@ -1238,7 +1242,8 @@ app.get('/api/vouchers/:voucherId', async (req, res) => {
       approver_username: voucher.approver?.username,
       company_name: voucher.company?.name,
       company_address: voucher.company?.address,
-      company_gst: voucher.company?.gst
+      company_gst: voucher.company?.gst,
+      suspense_serial: voucher.settlement?.suspense_voucher?.serial_number || null
     });
   } catch (error) {
     res.status(500).json({ error: error.message });

@@ -688,6 +688,7 @@ const VoucherPreview = ({ voucher }) => {
         <div className="voucher-meta-item"><span className="voucher-meta-label">Payee:</span><span className="voucher-meta-value">{voucher.payee_name} {voucher.payee_alias && `(${voucher.payee_alias})`}</span></div>
         <div className="voucher-meta-item"><span className="voucher-meta-label">Mode:</span><span className="voucher-meta-value">{voucher.payment_mode}</span></div>
         {voucher.invoice_reference && <div className="voucher-meta-item"><span className="voucher-meta-label">Invoice Ref:</span><span className="voucher-meta-value">{voucher.invoice_reference}</span></div>}
+        {voucher.suspense_serial && <div className="voucher-meta-item" style={{background:'#fffbeb',borderRadius:'4px',padding:'2px 6px'}}><span className="voucher-meta-label">Suspense Ref:</span><span className="voucher-meta-value" style={{fontWeight:700,color:'#92400e'}}>{voucher.suspense_serial}</span></div>}
       </div>
       <div className="voucher-meta-item mb-1"><span className="voucher-meta-label">Head:</span><span className="voucher-meta-value">{voucher.head_of_account}{voucher.sub_head_of_account && ` → ${voucher.sub_head_of_account}`}</span></div>
       {voucher.narration && <div className="voucher-meta-item mb-1"><span className="voucher-meta-label">Narration:</span><span className="voucher-meta-value">{voucher.narration}</span></div>}
@@ -2374,6 +2375,11 @@ const VoucherList = ({ filter }) => {
           <div class="meta-label">Invoice Ref:</div>
           <div class="meta-value">${v.invoice_reference}</div>
         </div>` : ''}
+        ${v.suspense_serial ? `
+        <div class="meta-row" style="background:#fffbeb;border-radius:4px;padding:2px 4px">
+          <div class="meta-label" style="color:#92400e">Suspense Ref:</div>
+          <div class="meta-value" style="font-weight:700;color:#92400e">${v.suspense_serial}</div>
+        </div>` : ''}
         <div class="meta-row">
           <div class="meta-label">Head of Account:</div>
           <div class="meta-value">${v.head_of_account}</div>
@@ -2571,6 +2577,7 @@ const VoucherList = ({ filter }) => {
         'Payee': v.payee_name || '',
         'Narration': narrationText,
         'Invoice Ref': v.invoice_reference || '',
+        'Suspense Ref': v.suspense_serial || '',
         'Payment Mode': v.payment_mode || '',
         'Amount (₹)': v.amount || 0,
         'Status': (v.status || '').replace(/_/g, ' '),
