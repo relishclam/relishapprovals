@@ -6252,6 +6252,32 @@ const SettlementSessionPage = ({ token }) => {
   const [polling, setPolling] = useState(false);
   const [pollExpiry, setPollExpiry] = useState(null);
   const pollIntervalRef = React.useRef(null);
+  const takePhotoRef1 = React.useRef(null); // pre-submission camera input
+  const takePhotoRef2 = React.useRef(null); // post-submission camera input
+  const [cameraError, setCameraError] = useState('');
+
+  // Request camera permission explicitly, then trigger the file input.
+  // This surfaces the browser permission prompt instead of silently failing.
+  const requestCameraAndClick = async (inputRef, setErr) => {
+    setErr('');
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      // Browser doesn't support getUserMedia — fall back directly to file input
+      inputRef.current && inputRef.current.click();
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+      stream.getTracks().forEach(t => t.stop()); // permission granted — stop preview stream
+      inputRef.current && inputRef.current.click();
+    } catch (err) {
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+        setErr('Camera access was denied. Please allow camera permission in your browser/phone settings, then try again. Or use "Upload from Gallery" instead.');
+      } else {
+        // Device has no camera or other hardware error — still try the file input
+        inputRef.current && inputRef.current.click();
+      }
+    }
+  };
 
   const loadAttachments = async (settlementId) => {
     if (!settlementId) return;
@@ -6508,10 +6534,10 @@ const SettlementSessionPage = ({ token }) => {
                 </div>
               )}
               <div style={{ display: 'grid', gap: '0.5rem' }}>
-                <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', background: '#f5841f', color: 'white', padding: '0.7rem 1rem', borderRadius: '8px', cursor: 'pointer', width: '100%', justifyContent: 'center', boxSizing: 'border-box', fontSize: '0.9rem', fontWeight: 600 }}>
+                <button type="button" onClick={() => requestCameraAndClick(takePhotoRef1, setError)} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', background: '#f5841f', color: 'white', padding: '0.7rem 1rem', borderRadius: '8px', cursor: 'pointer', width: '100%', justifyContent: 'center', boxSizing: 'border-box', fontSize: '0.9rem', fontWeight: 600, border: 'none' }}>
                   📷 Take Photo of Invoice
-                  <input type="file" accept="image/*" capture="environment" style={{ display: 'none' }} onChange={handlePendingFileAdd} />
-                </label>
+                </button>
+                <input ref={takePhotoRef1} type="file" accept="image/*" capture="environment" style={{ display: 'none' }} onChange={handlePendingFileAdd} />
                 <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', background: '#1f2937', color: 'white', padding: '0.7rem 1rem', borderRadius: '8px', cursor: 'pointer', width: '100%', justifyContent: 'center', boxSizing: 'border-box', fontSize: '0.9rem', fontWeight: 600 }}>
                   {Icons.upload} Upload from Gallery / PDF
                   <input type="file" accept="image/*,.pdf" style={{ display: 'none' }} onChange={handlePendingFileAdd} />
@@ -6565,10 +6591,10 @@ const SettlementSessionPage = ({ token }) => {
                 <div style={{ color: '#6b7280', padding: '1rem 0' }}>No invoice attachments uploaded yet.</div>
               )}
               <div style={{ display: 'grid', gap: '0.75rem', marginTop: '1rem' }}>
-                <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', background: '#f5841f', color: 'white', padding: '0.8rem 1rem', borderRadius: '10px', cursor: 'pointer', width: '100%', justifyContent: 'center', boxSizing: 'border-box' }}>
+                <button type="button" onClick={() => requestCameraAndClick(takePhotoRef2, setAttachmentError)} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', background: '#f5841f', color: 'white', padding: '0.8rem 1rem', borderRadius: '10px', cursor: 'pointer', width: '100%', justifyContent: 'center', boxSizing: 'border-box', fontWeight: 600, border: 'none', fontSize: '1rem' }}>
                   {attachmentUploading ? Icons.loader : '📷'} {attachmentUploading ? 'Uploading...' : 'Take Photo of Invoice'}
-                  <input type="file" accept="image/*" capture="environment" style={{ display: 'none' }} onChange={handleFileUpload} disabled={attachmentUploading} />
-                </label>
+                </button>
+                <input ref={takePhotoRef2} type="file" accept="image/*" capture="environment" style={{ display: 'none' }} onChange={handleFileUpload} disabled={attachmentUploading} />
                 <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', background: '#1f2937', color: 'white', padding: '0.8rem 1rem', borderRadius: '10px', cursor: 'pointer', width: '100%', justifyContent: 'center', boxSizing: 'border-box' }}>
                   {Icons.upload} Upload from Gallery / PDF
                   <input type="file" accept="image/*,.pdf" style={{ display: 'none' }} onChange={handleFileUpload} disabled={attachmentUploading} />
@@ -6601,6 +6627,26 @@ const CaptureSessionPage = ({ sessionId }) => {
   const [session, setSession] = useState(null);
   const [status, setStatus] = useState('loading'); // loading | ready | uploading | success | error | expired | used
   const [error, setError] = useState('');
+  const captureInputRef = React.useRef(null);
+
+  const requestCameraAndClickCapture = async () => {
+    setError('');
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      captureInputRef.current && captureInputRef.current.click();
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+      stream.getTracks().forEach(t => t.stop());
+      captureInputRef.current && captureInputRef.current.click();
+    } catch (err) {
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+        setError('Camera access was denied. Please allow camera permission in your browser/phone settings and try again.');
+      } else {
+        captureInputRef.current && captureInputRef.current.click();
+      }
+    }
+  };
 
   useEffect(() => {
     api.getCaptureSession(sessionId).then(data => {
@@ -6657,10 +6703,11 @@ const CaptureSessionPage = ({ sessionId }) => {
         <p style={{ color: '#666', fontSize: '0.9rem', margin: '0.75rem 0 1.5rem' }}>
           Take a photo of the bill or receipt to attach it to the voucher.
         </p>
-        <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', background: '#f5841f', color: 'white', padding: '0.85rem 2rem', borderRadius: '8px', cursor: 'pointer', fontWeight: 600, fontSize: '1rem', width: '100%', justifyContent: 'center', boxSizing: 'border-box' }}>
+        <button type="button" onClick={requestCameraAndClickCapture} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', background: '#f5841f', color: 'white', padding: '0.85rem 2rem', borderRadius: '8px', cursor: 'pointer', fontWeight: 600, fontSize: '1rem', width: '100%', justifyContent: 'center', boxSizing: 'border-box', border: 'none' }}>
           📷 Take Photo / Choose File
-          <input type="file" accept="image/*" capture="environment" style={{ display: 'none' }} onChange={handleCapture} />
-        </label>
+        </button>
+        <input ref={captureInputRef} type="file" accept="image/*" capture="environment" style={{ display: 'none' }} onChange={handleCapture} />
+        {error && <p style={{ color: '#b91c1c', fontSize: '0.85rem', marginTop: '0.75rem' }}>{error}</p>}
         <p style={{ color: '#aaa', fontSize: '0.75rem', marginTop: '1rem' }}>
           Session expires: {session ? new Date(session.expires_at).toLocaleTimeString('en-IN') : ''}
         </p>
