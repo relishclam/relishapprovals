@@ -748,12 +748,12 @@ app.post('/api/users/login', async (req, res) => {
         const { data: suspense } = await supabase.from('suspense_vouchers')
           .select('id')
           .eq('staff_payee_id', payee.id)
-          .eq('status', 'settlement_pending')
+          .in('status', ['open', 'partial'])
           .order('created_at', { ascending: false })
           .limit(1)
           .single();
         if (suspense) {
-          // Get the active settlement session token
+          // Try to find an existing valid (non-expired) session
           const { data: session } = await supabase.from('settlement_sessions')
             .select('token')
             .eq('suspense_id', suspense.id)
@@ -761,7 +761,21 @@ app.post('/api/users/login', async (req, res) => {
             .order('created_at', { ascending: false })
             .limit(1)
             .single();
-          if (session) settlementToken = session.token;
+          if (session) {
+            settlementToken = session.token;
+          } else {
+            // No valid session exists (old sessions created before sentinel-date fix, or all expired)
+            // Auto-create a fresh session silently — same as Resend Link but no SMS
+            const newToken = generateSettlementToken();
+            const { data: newSession } = await supabase.from('settlement_sessions').insert({
+              suspense_id: suspense.id,
+              payee_id: payee.id,
+              token: newToken,
+              expires_at: '2099-12-31T23:59:59.000Z',
+              last_sent_at: new Date().toISOString()
+            }).select('token').single();
+            if (newSession) settlementToken = newSession.token;
+          }
         }
       }
     }
@@ -1011,12 +1025,15 @@ app.delete('/api/payees/:payeeId', async (req, res) => {
 
 // Create staff login for a staff payee — generates username Staff-{FirstName}
 app.post('/api/payees/:payeeId/create-staff-login', async (req, res) => {
-  const { requesterId } = req.body;
+  const { requesterId, aadhar } = req.body;
   try {
     // Only super admin can create logins
     const actor = await getActorRole(requesterId);
     if (!actor.is_super_admin) {
       return res.status(403).json({ error: 'Unauthorized: Super Admin access required' });
+    }
+    if (!aadhar || !aadhar.trim()) {
+      return res.status(400).json({ error: 'Aadhar number is required for staff login creation' });
     }
 
     // Fetch the payee
@@ -1039,7 +1056,7 @@ app.post('/api/payees/:payeeId/create-staff-login', async (req, res) => {
       name: payee.name,
       first_name: firstName,
       mobile: formattedMobile,
-      aadhar: '',           // staff don't have aadhar in the system
+      aadhar: aadhar.trim(),
       role: 'staff',
       username,
       mobile_verified: true  // staff don't need aadhar; treat mobile as verified via payee record
