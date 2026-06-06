@@ -123,6 +123,7 @@ const api = {
   updatePayee: (payeeId, data) => fetch(`${API_BASE}/payees/${payeeId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
   deletePayee: (payeeId) => fetch(`${API_BASE}/payees/${payeeId}`, { method: 'DELETE' }).then(r => r.json()),
   createStaffLogin: (payeeId, requesterId, aadhar) => fetch(`${API_BASE}/payees/${payeeId}/create-staff-login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ requesterId, aadhar }) }).then(async r => { const d = await r.json(); if (!r.ok) throw new Error(d.error || d.details || 'Request failed'); return d; }),
+  getSettlementEntries: (token) => fetch(`${API_BASE}/settlement-sessions/${token}/entries`).then(r => r.json()),
   createVoucher: (data) => fetch(`${API_BASE}/vouchers`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
   getVouchers: (companyId) => fetch(`${API_BASE}/companies/${companyId}/vouchers`).then(r => r.json()),
   getVoucher: (voucherId) => fetch(`${API_BASE}/vouchers/${voucherId}`).then(r => r.json()),
@@ -6426,10 +6427,27 @@ const SettlementSessionPage = ({ token }) => {
   const [showQr, setShowQr] = useState(false);
   const [polling, setPolling] = useState(false);
   const [pollExpiry, setPollExpiry] = useState(null);
+  const [history, setHistory] = useState([]); // all settlement entries for this voucher
+  const [historyLoading, setHistoryLoading] = useState(false);
   const pollIntervalRef = React.useRef(null);
   const takePhotoRef1 = React.useRef(null); // pre-submission camera input
   const takePhotoRef2 = React.useRef(null); // post-submission camera input
   const [cameraError, setCameraError] = useState('');
+
+  // Detect if this page was reached via an authenticated staff login (not a raw SMS link)
+  const isStaffLogin = (() => {
+    try { const s = localStorage.getItem('relish_session'); if (!s) return false; const u = JSON.parse(s); return u?.role === 'staff'; } catch { return false; }
+  })();
+  const handleStaffLogout = () => {
+    try { localStorage.removeItem('relish_session'); localStorage.removeItem('relish_settlement_token'); localStorage.removeItem('relish_page'); } catch {}
+    window.location.reload();
+  };
+
+  const loadHistory = async () => {
+    setHistoryLoading(true);
+    try { const data = await api.getSettlementEntries(token); setHistory(data.entries || []); } catch {}
+    setHistoryLoading(false);
+  };
 
   // Request camera permission explicitly, then trigger the file input.
   // This surfaces the browser permission prompt instead of silently failing.
@@ -6566,6 +6584,8 @@ const SettlementSessionPage = ({ token }) => {
         setStatus('ready');
         // Persist token so PWA launched from home screen (start_url='/') can restore it
         try { localStorage.setItem('relish_settlement_token', token); } catch {}
+        // Load expense history for this voucher
+        loadHistory();
       } else {
         setError(data.error || 'Settlement session not found');
         setStatus('error');
@@ -6638,6 +6658,13 @@ const SettlementSessionPage = ({ token }) => {
     <div style={containerStyle}>
       <div style={cardStyle}>
         <SettlementInstallBanner />
+        {isStaffLogin && (
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '0.5rem' }}>
+            <button onClick={handleStaffLogout} style={{ background: 'none', border: '1px solid #d1d5db', borderRadius: '6px', padding: '0.35rem 0.8rem', cursor: 'pointer', fontSize: '0.8rem', color: '#6b7280', fontWeight: 500 }}>
+              ↩ Sign Out
+            </button>
+          </div>
+        )}
         <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>🧾 Submit Settlement Details</div>
         <p style={{ color: '#666', fontSize: '0.95rem', marginBottom: '1.5rem' }}>
           Hello {session.payee?.name || 'staff payee'}, please provide the required settlement details for suspense voucher <strong>{session.suspense.serial_number}</strong>.
@@ -6737,6 +6764,7 @@ const SettlementSessionPage = ({ token }) => {
                 setSettlement(null); setAmount(''); setDescription(''); setHeadOfAccount(''); setReferenceNumber(''); setRequiresInvoice(true); setInvoiceMissingReason(''); setPendingFiles([]);
                 const data = await api.getSettlementSession(token);
                 if (data.settlementSession) setSession(data.settlementSession);
+                await loadHistory();
                 setStatus('ready');
               }} style={{ marginTop: '0.75rem', background: '#1d4ed8', color: 'white', border: 'none', borderRadius: '8px', padding: '0.6rem 1.25rem', fontWeight: 600, cursor: 'pointer', fontSize: '0.9rem' }}>
                 ➕ Submit Another Entry
@@ -6793,6 +6821,48 @@ const SettlementSessionPage = ({ token }) => {
               )}
               {attachmentError && <div style={{ color: '#b91c1c', marginTop: '1rem' }}>{attachmentError}</div>}
             </div>
+          </div>
+        )}
+
+        {/* Expense History — read-only list of all entries for this voucher */}
+        {history.length > 0 && (
+          <div style={{ marginTop: '2rem', textAlign: 'left' }}>
+            <div style={{ fontWeight: 700, fontSize: '1rem', color: '#1f2937', marginBottom: '0.75rem', borderTop: '1px solid #e5e7eb', paddingTop: '1.25rem' }}>
+              📋 My Submitted Expenses
+            </div>
+            {historyLoading ? <div style={{ color: '#6b7280', textAlign: 'center', padding: '1rem' }}>Loading...</div> : (
+              <div style={{ display: 'grid', gap: '0.6rem' }}>
+                {history.map(h => (
+                  <div key={h.id} style={{ background: h.status === 'approved' ? '#f0fdf4' : h.status === 'rejected' ? '#fef2f2' : '#fafafa', border: `1px solid ${h.status === 'approved' ? '#bbf7d0' : h.status === 'rejected' ? '#fecaca' : '#e5e7eb'}`, borderRadius: '10px', padding: '0.75rem 1rem' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '0.5rem' }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontWeight: 600, fontSize: '0.9rem', color: '#1f2937', marginBottom: '0.2rem' }}>{h.description}</div>
+                        {h.head_of_account && <div style={{ fontSize: '0.78rem', color: '#6b7280' }}>{h.head_of_account}</div>}
+                        {h.reference_number && <div style={{ fontSize: '0.78rem', color: '#9ca3af' }}>Ref: {h.reference_number}</div>}
+                        <div style={{ fontSize: '0.75rem', color: '#9ca3af', marginTop: '0.2rem' }}>{new Date(h.created_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}</div>
+                        {h.attachments && h.attachments.length > 0 && (
+                          <div style={{ display: 'flex', gap: '0.4rem', marginTop: '0.4rem', flexWrap: 'wrap' }}>
+                            {h.attachments.map(att => (
+                              <a key={att.id} href={att.public_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: '0.75rem', background: '#dbeafe', color: '#1d4ed8', padding: '2px 8px', borderRadius: '4px', textDecoration: 'none' }}>
+                                {att.mime_type?.includes('pdf') ? '📄' : '🖼️'} {att.file_name || 'Bill'}
+                              </a>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                        <div style={{ fontWeight: 700, color: h.entry_type === 'refund' ? '#059669' : '#dc2626', fontSize: '0.95rem' }}>
+                          {h.entry_type === 'refund' ? '+' : '−'}₹{parseFloat(h.amount).toFixed(2)}
+                        </div>
+                        <div style={{ fontSize: '0.72rem', marginTop: '0.2rem', padding: '2px 6px', borderRadius: '4px', fontWeight: 600, background: h.status === 'approved' ? '#dcfce7' : h.status === 'rejected' ? '#fee2e2' : '#fef9c3', color: h.status === 'approved' ? '#15803d' : h.status === 'rejected' ? '#dc2626' : '#a16207' }}>
+                          {h.status === 'approved' ? '✅ Approved' : h.status === 'rejected' ? '❌ Rejected' : '⏳ Pending'}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </div>

@@ -2905,6 +2905,28 @@ app.get('/api/settlement-sessions/:token', async (req, res) => {
   }
 });
 
+// Get all settlement entries for the voucher linked to this token (for staff history view)
+app.get('/api/settlement-sessions/:token/entries', async (req, res) => {
+  try {
+    const { data: session, error: sessionError } = await supabase.from('settlement_sessions')
+      .select('suspense_id, payee_id')
+      .eq('token', req.params.token)
+      .single();
+    if (sessionError || !session) return res.status(404).json({ error: 'Session not found' });
+
+    const { data: entries, error: entriesError } = await supabase.from('suspense_settlements')
+      .select(`id, entry_type, amount, description, head_of_account, reference_number, status, created_at,
+               attachments:voucher_attachments(id, public_url, file_name, mime_type)`)
+      .eq('suspense_id', session.suspense_id)
+      .order('created_at', { ascending: false });
+
+    if (entriesError) throw entriesError;
+    res.json({ entries: entries || [] });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.post('/api/settlement-sessions/:token/settlements', async (req, res) => {
   const { entryType, amount, description, headOfAccount, referenceNumber, requiresInvoice, invoiceMissingReason } = req.body;
   if (!entryType || !amount || !description) {
