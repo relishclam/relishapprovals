@@ -7202,7 +7202,7 @@ const App = () => {
     // Staff users go directly to their settlement page — no app access
     if (userData.role === 'staff' && staffSettlementToken) {
       try { localStorage.setItem('relish_settlement_token', staffSettlementToken); } catch {}
-      setSettlementToken(staffSettlementToken);
+      window.location.reload();  // reload so useState initializer picks up the token from localStorage
       return;
     }
     if (userData.role === 'staff') {
