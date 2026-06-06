@@ -413,7 +413,7 @@ app.post('/api/users/:userId/verify-mobile', async (req, res) => {
 app.put('/api/users/:userId', async (req, res) => {
   const { name, mobile, aadhar, role, requesterId } = req.body;
   
-  if (!name || !mobile || !role || (role !== 'auditor' && !aadhar)) {
+  if (!name || !mobile || !role || (role !== 'auditor' && role !== 'staff' && !aadhar)) {
     return res.status(400).json({ error: 'All fields are required' });
   }
   

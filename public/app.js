@@ -122,7 +122,7 @@ const api = {
   getPayees: (companyId) => fetch(`${API_BASE}/companies/${companyId}/payees`).then(r => r.json()),
   updatePayee: (payeeId, data) => fetch(`${API_BASE}/payees/${payeeId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
   deletePayee: (payeeId) => fetch(`${API_BASE}/payees/${payeeId}`, { method: 'DELETE' }).then(r => r.json()),
-  createStaffLogin: (payeeId, requesterId) => fetch(`${API_BASE}/payees/${payeeId}/create-staff-login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ requesterId }) }).then(async r => { const d = await r.json(); if (!r.ok) throw new Error(d.error || d.details || 'Request failed'); return d; }),
+  createStaffLogin: (payeeId, requesterId, aadhar) => fetch(`${API_BASE}/payees/${payeeId}/create-staff-login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ requesterId, aadhar }) }).then(async r => { const d = await r.json(); if (!r.ok) throw new Error(d.error || d.details || 'Request failed'); return d; }),
   createVoucher: (data) => fetch(`${API_BASE}/vouchers`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
   getVouchers: (companyId) => fetch(`${API_BASE}/companies/${companyId}/vouchers`).then(r => r.json()),
   getVoucher: (voucherId) => fetch(`${API_BASE}/vouchers/${voucherId}`).then(r => r.json()),
@@ -3165,7 +3165,7 @@ const UsersManagement = () => {
   };
   
   const handleOnboardSubmit = async () => {
-    if (!newUser.name?.trim() || !newUser.mobile?.trim() || (newUser.role !== 'auditor' && !newUser.aadhar?.trim())) {
+    if (!newUser.name?.trim() || !newUser.mobile?.trim() || (newUser.role !== 'auditor' && newUser.role !== 'staff' && !newUser.aadhar?.trim())) {
       addToast('All fields are required', 'error');
       console.log('Validation failed:', newUser);
       return;
@@ -3391,7 +3391,7 @@ const UsersManagement = () => {
   };
   
   const handleUpdateUser = async () => {
-    if (!editUser.name?.trim() || !editUser.mobile?.trim() || (editUser.role !== 'auditor' && !editUser.aadhar?.trim())) {
+    if (!editUser.name?.trim() || !editUser.mobile?.trim() || (editUser.role !== 'auditor' && editUser.role !== 'staff' && !editUser.aadhar?.trim())) {
       addToast('All fields are required', 'error');
       return;
     }
@@ -3714,7 +3714,7 @@ const UsersManagement = () => {
                   <button 
                     className="btn btn-primary" 
                     onClick={handleOnboardSubmit} 
-                    disabled={submitting || !newUser.name || !newUser.mobile || (newUser.role !== 'auditor' && !newUser.aadhar) || newUser.companyAccess.length === 0}
+                    disabled={submitting || !newUser.name || !newUser.mobile || (newUser.role !== 'auditor' && newUser.role !== 'staff' && !newUser.aadhar) || newUser.companyAccess.length === 0}
                   >
                     {submitting && Icons.loader}
                     {Icons.send} Create User & Send OTP
@@ -4020,6 +4020,9 @@ const PayeesManagement = () => {
   const [showEditModal, setShowEditModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [showStaffLoginModal, setShowStaffLoginModal] = useState(false);
+  const [staffLoginPayee, setStaffLoginPayee] = useState(null);
+  const [staffLoginAadhar, setStaffLoginAadhar] = useState('');
   const [newPayee, setNewPayee] = useState({ name: '', alias: '', mobile: '', bankAccount: '', ifsc: '', upiId: '', isGlobal: false, payeeType: 'registered', requiresOtp: true, isStaff: false, userId: '' });
   const [editPayee, setEditPayee] = useState({ id: '', name: '', alias: '', mobile: '', bankAccount: '', ifsc: '', upiId: '', is_global: false, payee_type: 'registered', requires_otp: true, is_staff: false, user_id: '' });
   const [importData, setImportData] = useState('');
@@ -4083,15 +4086,26 @@ const PayeesManagement = () => {
     }
   };
 
-  const handleCreateStaffLogin = async (payee) => {
+  const handleCreateStaffLogin = (payee) => {
     if (!user.isSuperAdmin) { addToast('Only Super Admin can create staff logins', 'error'); return; }
-    if (!confirm(`Create app login for ${payee.name}?\n\nUsername will be: Staff-${payee.name.split(' ')[0]}\nThey can log in with this username + SMS OTP.`)) return;
+    setStaffLoginPayee(payee);
+    setStaffLoginAadhar('');
+    setShowStaffLoginModal(true);
+  };
+
+  const handleConfirmStaffLogin = async () => {
+    if (!staffLoginAadhar.trim()) { addToast('Aadhar number is required', 'error'); return; }
+    setSubmitting(true);
     try {
-      const result = await api.createStaffLogin(payee.id, user.id);
+      const result = await api.createStaffLogin(staffLoginPayee.id, user.id, staffLoginAadhar.trim());
       addToast(`Login created! Username: ${result.username}`, 'success');
+      setShowStaffLoginModal(false);
+      setStaffLoginPayee(null);
       refreshPayees();
     } catch (error) {
       addToast('Failed to create login: ' + error.message, 'error');
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -4363,6 +4377,34 @@ const PayeesManagement = () => {
           </div>
         </div>
       </div>
+
+      {showStaffLoginModal && staffLoginPayee && (
+        <div className="modal-overlay" onClick={() => setShowStaffLoginModal(false)}>
+          <div className="modal" style={{maxWidth: '420px'}} onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3 className="modal-title">🔑 Create Staff Login</h3>
+              <button className="modal-close" onClick={() => setShowStaffLoginModal(false)}>×</button>
+            </div>
+            <div className="modal-body">
+              <p style={{marginBottom: '1rem', color: '#374151'}}>Creating app login for <strong>{staffLoginPayee.name}</strong></p>
+              <div style={{background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: '8px', padding: '0.75rem', marginBottom: '1.25rem', fontSize: '0.85rem', color: '#0369a1'}}>
+                Username will be: <strong>Staff-{staffLoginPayee.name.split(' ')[0]}</strong><br/>
+                Staff can log in with this username + SMS OTP on first use.
+              </div>
+              <div className="form-group">
+                <label className="form-label">Aadhar Number *</label>
+                <input className="form-control" type="text" maxLength={12} placeholder="12-digit Aadhar number" value={staffLoginAadhar} onChange={e => setStaffLoginAadhar(e.target.value.replace(/\D/g, ''))} autoFocus />
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setShowStaffLoginModal(false)}>Cancel</button>
+              <button className="btn btn-primary" onClick={handleConfirmStaffLogin} disabled={submitting || staffLoginAadhar.length < 12}>
+                {submitting ? 'Creating...' : 'Create Login'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showAddModal && (
         <div className="modal-overlay" onClick={() => setShowAddModal(false)}>
