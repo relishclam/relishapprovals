@@ -2579,11 +2579,10 @@ app.post('/api/suspense-vouchers/:id/resend-settlement-link', async (req, res) =
     if (!payee) {
       return res.status(400).json({ error: 'No designated staff payee found. Please set up the staff payee in Payees Management first.' });
     }
-    // Expire ALL existing sessions for this voucher (null or future) so only the new link is active
+    // Expire ALL existing sessions for this voucher so only the new link is active
     await supabase.from('settlement_sessions')
       .update({ expires_at: new Date().toISOString() })
-      .eq('suspense_id', sv.id)
-      .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`);
+      .eq('suspense_id', sv.id);
 
     const settlementToken = generateSettlementToken();
     // No fixed expiry — valid until voucher is closed or a new link is sent
@@ -2951,8 +2950,7 @@ app.post('/api/suspense-settlements/:settlementId/approve', async (req, res) => 
     if (newStatus === 'closed') {
       await supabase.from('settlement_sessions')
         .update({ expires_at: new Date().toISOString() })
-        .eq('suspense_id', sv.id)
-        .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`);
+        .eq('suspense_id', sv.id);
     }
 
     res.json({ success: true, settlement: approvedSettlement, voucher });
