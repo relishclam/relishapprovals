@@ -6510,7 +6510,7 @@ const SettlementSessionPage = ({ token }) => {
               <div style={{ display: 'grid', gap: '0.5rem' }}>
                 <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', background: '#f5841f', color: 'white', padding: '0.7rem 1rem', borderRadius: '8px', cursor: 'pointer', width: '100%', justifyContent: 'center', boxSizing: 'border-box', fontSize: '0.9rem', fontWeight: 600 }}>
                   📷 Take Photo of Invoice
-                  <input type="file" accept="image/*" capture="environment" style={{ display: 'none' }} onChange={handlePendingFileAdd} />
+                  <input type="file" accept="image/*" style={{ display: 'none' }} onChange={handlePendingFileAdd} />
                 </label>
                 <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', background: '#1f2937', color: 'white', padding: '0.7rem 1rem', borderRadius: '8px', cursor: 'pointer', width: '100%', justifyContent: 'center', boxSizing: 'border-box', fontSize: '0.9rem', fontWeight: 600 }}>
                   {Icons.upload} Upload from Gallery / PDF
@@ -6567,7 +6567,7 @@ const SettlementSessionPage = ({ token }) => {
               <div style={{ display: 'grid', gap: '0.75rem', marginTop: '1rem' }}>
                 <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', background: '#f5841f', color: 'white', padding: '0.8rem 1rem', borderRadius: '10px', cursor: 'pointer', width: '100%', justifyContent: 'center', boxSizing: 'border-box' }}>
                   {attachmentUploading ? Icons.loader : '📷'} {attachmentUploading ? 'Uploading...' : 'Take Photo of Invoice'}
-                  <input type="file" accept="image/*" capture="environment" style={{ display: 'none' }} onChange={handleFileUpload} disabled={attachmentUploading} />
+                  <input type="file" accept="image/*" style={{ display: 'none' }} onChange={handleFileUpload} disabled={attachmentUploading} />
                 </label>
                 <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', background: '#1f2937', color: 'white', padding: '0.8rem 1rem', borderRadius: '10px', cursor: 'pointer', width: '100%', justifyContent: 'center', boxSizing: 'border-box' }}>
                   {Icons.upload} Upload from Gallery / PDF
@@ -6659,7 +6659,7 @@ const CaptureSessionPage = ({ sessionId }) => {
         </p>
         <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', background: '#f5841f', color: 'white', padding: '0.85rem 2rem', borderRadius: '8px', cursor: 'pointer', fontWeight: 600, fontSize: '1rem', width: '100%', justifyContent: 'center', boxSizing: 'border-box' }}>
           📷 Take Photo / Choose File
-          <input type="file" accept="image/*" capture="environment" style={{ display: 'none' }} onChange={handleCapture} />
+          <input type="file" accept="image/*" style={{ display: 'none' }} onChange={handleCapture} />
         </label>
         <p style={{ color: '#aaa', fontSize: '0.75rem', marginTop: '1rem' }}>
           Session expires: {session ? new Date(session.expires_at).toLocaleTimeString('en-IN') : ''}
