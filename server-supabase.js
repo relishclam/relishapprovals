@@ -1039,6 +1039,7 @@ app.post('/api/payees/:payeeId/create-staff-login', async (req, res) => {
       name: payee.name,
       first_name: firstName,
       mobile: formattedMobile,
+      aadhar: '',           // staff don't have aadhar in the system
       role: 'staff',
       username,
       mobile_verified: true  // staff don't need aadhar; treat mobile as verified via payee record
@@ -1070,6 +1071,7 @@ app.post('/api/payees/:payeeId/create-staff-login', async (req, res) => {
 
     res.json({ success: true, username, userId: newUser.id });
   } catch (error) {
+    console.error('create-staff-login error:', error);
     res.status(500).json({ error: 'Failed to create staff login', details: error.message });
   }
 });
