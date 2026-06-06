@@ -329,7 +329,7 @@ app.post('/api/otp/verify', async (req, res) => {
 // Admin-only: Onboard new user
 app.post('/api/admin/onboard-user', async (req, res) => {
   const { adminMobile, companyId, name, mobile, aadhar, role, companyAccess } = req.body;
-  if (!adminMobile || !companyId || !name || !mobile || !role || (role !== 'auditor' && !aadhar)) {
+  if (!adminMobile || !companyId || !name || !mobile || !role || (role !== 'auditor' && role !== 'staff' && !aadhar)) {
     return res.status(400).json({ error: 'All fields are required' });
   }
   
@@ -341,7 +341,7 @@ app.post('/api/admin/onboard-user', async (req, res) => {
     }
     
     const firstName = name.split(' ')[0];
-    const rolePrefix = role === 'admin' ? 'Approve' : role === 'auditor' ? 'Audit' : 'Accounts';
+    const rolePrefix = role === 'admin' ? 'Approve' : role === 'auditor' ? 'Audit' : role === 'staff' ? 'Staff' : 'Accounts';
     const username = `${rolePrefix}-${firstName}`;
     const formattedMobile = formatMobile(mobile);
     
@@ -424,7 +424,7 @@ app.put('/api/users/:userId', async (req, res) => {
     }
     
     const firstName = name.split(' ')[0];
-    const rolePrefix = role === 'admin' ? 'Approve' : role === 'auditor' ? 'Audit' : 'Accounts';
+    const rolePrefix = role === 'admin' ? 'Approve' : role === 'auditor' ? 'Audit' : role === 'staff' ? 'Staff' : 'Accounts';
     const username = `${rolePrefix}-${firstName}`;
     const formattedMobile = formatMobile(mobile);
     
@@ -648,7 +648,8 @@ app.post('/api/users/login', async (req, res) => {
     }
     
     // Always require company selection if no company selected yet
-    if (!companyId) {
+    // EXCEPT for staff users — they only have one company and go straight to their settlement page
+    if (!companyId && user.role !== 'staff') {
       return res.json({
         requiresCompanySelection: true,
         companies: companies.map(uc => ({
@@ -662,13 +663,21 @@ app.post('/api/users/login', async (req, res) => {
     }
     
     // Determine which company to log into
-    // User must have selected a company at this point
-    const match = companies.find(uc => uc.company_id === companyId);
-    if (!match) {
-      return res.status(403).json({ error: 'User does not have access to this company' });
+    // Staff users auto-select their single company; others must have sent companyId
+    let selectedCompany, selectedRole;
+    if (user.role === 'staff') {
+      const primaryMatch = companies.find(uc => uc.is_primary) || companies[0];
+      if (!primaryMatch) return res.status(400).json({ error: 'Staff user has no company access' });
+      selectedCompany = primaryMatch.companies;
+      selectedRole = primaryMatch.role;
+    } else {
+      const match = companies.find(uc => uc.company_id === companyId);
+      if (!match) {
+        return res.status(403).json({ error: 'User does not have access to this company' });
+      }
+      selectedCompany = match.companies;
+      selectedRole = match.role;
     }
-    const selectedCompany = match.companies;
-    const selectedRole = match.role;
     
     // First login requires OTP
     if (!user.last_login) {
@@ -725,6 +734,37 @@ app.post('/api/users/login', async (req, res) => {
       .select('*', { count: 'exact', head: true })
       .eq('user_id', user.id)
       .eq('read', false);
+
+    // For staff users: look up their active settlement token
+    let settlementToken = null;
+    if (user.role === 'staff') {
+      // Find the payee record linked to this user
+      const { data: payee } = await supabase.from('payees')
+        .select('id')
+        .eq('user_id', user.id)
+        .single();
+      if (payee) {
+        // Get most recent active suspense voucher for this payee
+        const { data: suspense } = await supabase.from('suspense_vouchers')
+          .select('id')
+          .eq('staff_payee_id', payee.id)
+          .eq('status', 'settlement_pending')
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .single();
+        if (suspense) {
+          // Get the active settlement session token
+          const { data: session } = await supabase.from('settlement_sessions')
+            .select('token')
+            .eq('suspense_id', suspense.id)
+            .gt('expires_at', new Date().toISOString())
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .single();
+          if (session) settlementToken = session.token;
+        }
+      }
+    }
     
     res.json({
       success: true,
@@ -743,7 +783,8 @@ app.post('/api/users/login', async (req, res) => {
           isPrimary: uc.is_primary
         })),
         unreadNotifications: count || 0
-      }
+      },
+      ...(settlementToken && { settlementToken })
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -965,6 +1006,68 @@ app.delete('/api/payees/:payeeId', async (req, res) => {
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
+  }
+});
+
+// Create staff login for a staff payee — generates username Staff-{FirstName}
+app.post('/api/payees/:payeeId/create-staff-login', async (req, res) => {
+  const { requesterId } = req.body;
+  try {
+    // Only super admin can create logins
+    const actor = await getActorRole(requesterId);
+    if (!actor.is_super_admin) {
+      return res.status(403).json({ error: 'Unauthorized: Super Admin access required' });
+    }
+
+    // Fetch the payee
+    const { data: payee, error: payeeError } = await supabase
+      .from('payees')
+      .select('*')
+      .eq('id', req.params.payeeId)
+      .single();
+    if (payeeError || !payee) return res.status(404).json({ error: 'Payee not found' });
+    if (!payee.is_staff) return res.status(400).json({ error: 'This payee is not marked as a staff payee' });
+    if (payee.user_id) return res.status(400).json({ error: 'This staff payee already has a login account' });
+
+    const firstName = payee.name.split(' ')[0];
+    const username = `Staff-${firstName}`;
+    const formattedMobile = formatMobile(payee.mobile);
+
+    // Create the user with role='staff'
+    const { data: newUser, error: insertError } = await supabase.from('users').insert({
+      company_id: payee.company_id,
+      name: payee.name,
+      first_name: firstName,
+      mobile: formattedMobile,
+      role: 'staff',
+      username,
+      mobile_verified: true  // staff don't need aadhar; treat mobile as verified via payee record
+    }).select().single();
+
+    if (insertError) {
+      if (insertError.code === '23505') {
+        return res.status(400).json({ error: `Username "${username}" is already taken. The payee may already have a login.` });
+      }
+      throw insertError;
+    }
+
+    // Add user_companies entry
+    await supabase.from('user_companies').insert({
+      user_id: newUser.id,
+      company_id: payee.company_id,
+      role: 'staff',
+      is_primary: true
+    });
+
+    // Link payee → user
+    const { error: linkError } = await supabase.from('payees')
+      .update({ user_id: newUser.id })
+      .eq('id', payee.id);
+    if (linkError) throw linkError;
+
+    res.json({ success: true, username, userId: newUser.id });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to create staff login', details: error.message });
   }
 });
 

@@ -122,6 +122,7 @@ const api = {
   getPayees: (companyId) => fetch(`${API_BASE}/companies/${companyId}/payees`).then(r => r.json()),
   updatePayee: (payeeId, data) => fetch(`${API_BASE}/payees/${payeeId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
   deletePayee: (payeeId) => fetch(`${API_BASE}/payees/${payeeId}`, { method: 'DELETE' }).then(r => r.json()),
+  createStaffLogin: (payeeId, requesterId) => fetch(`${API_BASE}/payees/${payeeId}/create-staff-login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ requesterId }) }).then(async r => { const d = await r.json(); if (!r.ok) throw new Error(d.error || 'Request failed'); return d; }),
   createVoucher: (data) => fetch(`${API_BASE}/vouchers`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
   getVouchers: (companyId) => fetch(`${API_BASE}/companies/${companyId}/vouchers`).then(r => r.json()),
   getVoucher: (voucherId) => fetch(`${API_BASE}/vouchers/${voucherId}`).then(r => r.json()),
@@ -773,7 +774,7 @@ const LoginPage = ({ onLogin }) => {
       } else if (result.requiresOtp) {
         setRequiresOtp(true);
       } else if (result.success) {
-        onLogin(result.user);
+        onLogin(result.user, result.settlementToken || null);
       } else {
         setError(result.error || 'Login failed');
       }
@@ -787,7 +788,7 @@ const LoginPage = ({ onLogin }) => {
     try {
       const result = await api.login({ username, companyId });
       if (result.success) {
-        onLogin(result.user);
+        onLogin(result.user, result.settlementToken || null);
       } else if (result.requiresOtp) {
         // First-time login: server already sent OTP — go back to login form with OTP input
         setRequiresCompanySelection(false);
@@ -4082,6 +4083,18 @@ const PayeesManagement = () => {
     }
   };
 
+  const handleCreateStaffLogin = async (payee) => {
+    if (!user.isSuperAdmin) { addToast('Only Super Admin can create staff logins', 'error'); return; }
+    if (!confirm(`Create app login for ${payee.name}?\n\nUsername will be: Staff-${payee.name.split(' ')[0]}\nThey can log in with this username + SMS OTP.`)) return;
+    try {
+      const result = await api.createStaffLogin(payee.id, user.id);
+      addToast(`Login created! Username: ${result.username}`, 'success');
+      refreshPayees();
+    } catch (error) {
+      addToast('Failed to create login: ' + error.message, 'error');
+    }
+  };
+
   const handleImport = async () => {
     if (!importData.trim()) {
       addToast('Please paste CSV data to import', 'error');
@@ -4313,6 +4326,7 @@ const PayeesManagement = () => {
                         {p.is_global && <span style={{marginLeft: '0.5rem', fontSize: '0.7rem', background: '#3b82f6', color: 'white', padding: '2px 6px', borderRadius: '4px'}}>🌐 Global</span>}
                         {p.is_global && p.company_id !== user.company.id && <span style={{marginLeft: '0.25rem', fontSize: '0.65rem', color: '#666'}}>(from other company)</span>}
                         {p.is_staff && <span style={{marginLeft: '0.5rem', fontSize: '0.7rem', background: '#10b981', color: 'white', padding: '2px 6px', borderRadius: '4px'}}>👤 Staff</span>}
+                        {p.is_staff && p.user_id && <span style={{marginLeft: '0.25rem', fontSize: '0.65rem', background: '#dbeafe', color: '#1e40af', padding: '2px 6px', borderRadius: '4px'}}>🔑 Staff-{p.name.split(' ')[0]}</span>}
                         {p.alias && <div style={{fontSize: '0.75rem', color: '#6b7280', fontWeight: 400, marginTop: '1px'}}>{p.alias}</div>}
                       </td>
                       <td>
@@ -4330,7 +4344,10 @@ const PayeesManagement = () => {
                       </td>
                       <td style={{textAlign: 'center'}}>
                         {p.company_id === user.company.id ? (
-                          <div style={{display: 'flex', gap: '0.5rem', justifyContent: 'center'}}>
+                          <div style={{display: 'flex', gap: '0.5rem', justifyContent: 'center', flexWrap: 'wrap'}}>
+                            {p.is_staff && !p.user_id && user.isSuperAdmin && (
+                              <button className="btn btn-sm" style={{background: '#2563eb', color: 'white', fontSize: '0.7rem'}} onClick={() => handleCreateStaffLogin(p)} title={`Create app login: Staff-${p.name.split(' ')[0]}`}>🔑 Login</button>
+                            )}
                             <button className="btn btn-sm btn-secondary" onClick={() => { setEditPayee(p); setShowEditModal(true); }}>✏️</button>
                             <button className="btn btn-sm btn-danger" onClick={() => handleDeletePayee(p.id)}>🗑️</button>
                           </div>
@@ -6442,7 +6459,7 @@ const SettlementSessionPage = ({ token }) => {
     setAttachmentError('');
     try {
       const { data, mimeType, name } = await compressAndEncode(file);
-      const result = await api.uploadAttachment({ fileData: data, mimeType, fileName: name, settlementId: settlement.id, uploadedBy: session.payee?.user_id || null, companyId: session.suspense.company_id });
+      const result = await api.uploadAttachment({ fileData: data, mimeType, fileName: name, settlementId: settlement.id, suspenseId: session.suspense.id, uploadedBy: session.payee?.user_id || null, companyId: session.suspense.company_id });
       if (result.success) {
         setAttachmentError('');
         await loadAttachments(settlement.id);
@@ -6460,7 +6477,7 @@ const SettlementSessionPage = ({ token }) => {
     if (!settlement) return;
     setShowQr(false);
     try {
-      const result = await api.createCaptureSession({ companyId: session.suspense.company_id, createdBy: session.payee?.user_id || null, voucherId: null, suspenseId: null, settlementId: settlement.id, contextType: 'settlement' });
+      const result = await api.createCaptureSession({ companyId: session.suspense.company_id, createdBy: session.payee?.user_id || null, voucherId: null, suspenseId: session.suspense.id, settlementId: settlement.id, contextType: 'settlement' });
       if (!result.success) { setAttachmentError('Failed to create session'); return; }
       const newSession = result.session;
       setCaptureSession(newSession);
@@ -6505,9 +6522,13 @@ const SettlementSessionPage = ({ token }) => {
       if (data.settlementSession) {
         setSession(data.settlementSession);
         setStatus('ready');
+        // Persist token so PWA launched from home screen (start_url='/') can restore it
+        try { localStorage.setItem('relish_settlement_token', token); } catch {}
       } else {
         setError(data.error || 'Settlement session not found');
         setStatus('error');
+        // If session is expired/invalid, clear any saved token
+        try { localStorage.removeItem('relish_settlement_token'); } catch {}
       }
     }).catch(() => { setError('Failed to load settlement session'); setStatus('error'); });
   }, [token]);
@@ -6538,7 +6559,7 @@ const SettlementSessionPage = ({ token }) => {
           setPendingUploading(true);
           for (const pf of pendingFiles) {
             try {
-              await api.uploadAttachment({ fileData: pf.data, mimeType: pf.mimeType, fileName: pf.name, settlementId: result.settlement.id, uploadedBy: session.payee?.user_id || null, companyId: session.suspense.company_id });
+              await api.uploadAttachment({ fileData: pf.data, mimeType: pf.mimeType, fileName: pf.name, settlementId: result.settlement.id, suspenseId: session.suspense.id, uploadedBy: session.payee?.user_id || null, companyId: session.suspense.company_id });
             } catch {}
           }
           setPendingFiles([]);
@@ -6899,7 +6920,16 @@ const App = () => {
   const [toasts, setToasts] = useState([]);
   const [pushEnabled, setPushEnabled] = useState(false);
   const [suspenseDetailId, setSuspenseDetailId] = useState(null);
-  const [settlementToken] = useState(() => { const m = window.location.pathname.match(/^\/settlement\/([^/]+)/); return m ? m[1] : null; });
+  const [settlementToken] = useState(() => {
+    const m = window.location.pathname.match(/^\/settlement\/([^/]+)/);
+    if (m) return m[1];
+    // PWA launched from home screen has start_url='/'; restore saved settlement token
+    try {
+      const saved = localStorage.getItem('relish_settlement_token');
+      if (saved && window.location.pathname === '/') return saved;
+    } catch {}
+    return null;
+  });
   const [captureSessionId] = useState(() => { const m = window.location.pathname.match(/^\/capture\/([^/]+)/); return m ? m[1] : null; });
   const lastNotificationCount = React.useRef(0);
 
@@ -7126,7 +7156,17 @@ const App = () => {
 
   useEffect(() => { if (user) { refreshVouchers(); refreshNotifications(); const interval = setInterval(() => { refreshVouchers(); refreshNotifications(); }, 30000); return () => clearInterval(interval); } }, [user, refreshVouchers, refreshNotifications]);
 
-  const handleLogin = async (userData) => {
+  const handleLogin = async (userData, staffSettlementToken) => {
+    // Staff users go directly to their settlement page — no app access
+    if (userData.role === 'staff' && staffSettlementToken) {
+      try { localStorage.setItem('relish_settlement_token', staffSettlementToken); } catch {}
+      setSettlementToken(staffSettlementToken);
+      return;
+    }
+    if (userData.role === 'staff') {
+      // Staff user but no active voucher right now
+      // We still set the user so we can show a meaningful message below
+    }
     try { localStorage.setItem('relish_session', JSON.stringify(userData)); } catch {}
     const defaultPage = userData.role === 'auditor' ? 'completed' : 'dashboard';
     try { localStorage.setItem('relish_page', defaultPage); } catch {}
@@ -7215,6 +7255,20 @@ const App = () => {
   if (captureSessionId) return <CaptureSessionPage sessionId={captureSessionId} />;
 
   if (!user) return <LoginPage onLogin={handleLogin} />;
+
+  // Staff users should only ever land here if they have no active suspense voucher
+  if (user.role === 'staff') {
+    return (
+      <div style={{minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: '#f9fafb', padding: '2rem'}}>
+        <div style={{textAlign: 'center', maxWidth: '360px'}}>
+          <div style={{fontSize: '3rem', marginBottom: '1rem'}}>🕐</div>
+          <h2 style={{fontWeight: 700, color: '#1f2937', marginBottom: '0.5rem'}}>No Active Advance</h2>
+          <p style={{color: '#6b7280', marginBottom: '1.5rem'}}>Hi {user.name.split(' ')[0]}! You don't have an active suspense advance right now. Your accounts team will send you an SMS when a new one is raised.</p>
+          <button className="btn btn-secondary" onClick={handleLogout} style={{width: '100%'}}>Sign Out</button>
+        </div>
+      </div>
+    );
+  }
 
   const contextValue = { user, vouchers, notifications, addToast, refreshVouchers, refreshNotifications };
   const renderPage = () => {
