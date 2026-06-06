@@ -6239,7 +6239,8 @@ const SettlementSessionPage = ({ token }) => {
   const [referenceNumber, setReferenceNumber] = useState('');
   const [requiresInvoice, setRequiresInvoice] = useState(true);
   const [invoiceMissingReason, setInvoiceMissingReason] = useState('');
-  const [uploadNow, setUploadNow] = useState(false);
+  const [pendingFiles, setPendingFiles] = useState([]); // files staged before submission
+  const [pendingUploading, setPendingUploading] = useState(false);
   const [settlement, setSettlement] = useState(null);
   const [attachments, setAttachments] = useState([]);
   const [attachmentLoading, setAttachmentLoading] = useState(false);
@@ -6277,6 +6278,18 @@ const SettlementSessionPage = ({ token }) => {
       reader.onerror = reject;
       reader.readAsDataURL(processedFile);
     });
+  };
+
+  const handlePendingFileAdd = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 10 * 1024 * 1024) { setError('File too large (max 10 MB)'); return; }
+    try {
+      const { data, mimeType, name } = await compressAndEncode(file);
+      const previewUrl = file.type.startsWith('image/') ? data : null;
+      setPendingFiles(prev => [...prev, { data, mimeType, name, previewUrl }]);
+    } catch { setError('Failed to process file'); }
+    e.target.value = '';
   };
 
   const handleFileUpload = async (e) => {
@@ -6378,13 +6391,22 @@ const SettlementSessionPage = ({ token }) => {
       if (result.success) {
         setSettlement(result.settlement);
         setStatus('submitted');
-        await loadAttachments(result.settlement.id);
-        if (uploadNow) {
-          setTimeout(() => {
-            const el = document.getElementById('attachment-panel');
-            if (el) el.scrollIntoView({ behavior: 'smooth' });
-          }, 250);
+        // Upload any files staged inside the form
+        if (pendingFiles.length > 0) {
+          setPendingUploading(true);
+          for (const pf of pendingFiles) {
+            try {
+              await api.uploadAttachment({ fileData: pf.data, mimeType: pf.mimeType, fileName: pf.name, settlementId: result.settlement.id, uploadedBy: session.payee?.user_id || null, companyId: session.suspense.company_id });
+            } catch {}
+          }
+          setPendingFiles([]);
+          setPendingUploading(false);
         }
+        await loadAttachments(result.settlement.id);
+        setTimeout(() => {
+          const el = document.getElementById('attachment-panel');
+          if (el) el.scrollIntoView({ behavior: 'smooth' });
+        }, 250);
       } else {
         setError(result.error || 'Failed to submit settlement entry');
         setStatus('error');
@@ -6405,7 +6427,7 @@ const SettlementSessionPage = ({ token }) => {
   if (status === 'loading') return <div style={containerStyle}><div style={cardStyle}>{Icons.loader}<p style={{ marginTop: '1rem', color: '#666' }}>Loading settlement session...</p></div></div>;
   if (status === 'error') return <div style={containerStyle}><div style={cardStyle}><div style={{ fontSize: '3rem' }}>❌</div><h2 style={{ marginTop: '1rem' }}>Session Error</h2><p style={{ color: '#666', marginTop: '0.5rem' }}>{error}</p></div></div>;
   if (!session) return null;
-  if (new Date(session.expires_at) < new Date()) return <div style={containerStyle}><div style={cardStyle}><div style={{ fontSize: '3rem' }}>⏰</div><h2 style={{ marginTop: '1rem' }}>Link Expired</h2><p style={{ color: '#666', marginTop: '0.5rem' }}>This settlement link has expired. Ask your approver to generate a new link.</p></div></div>;
+  if (session.expires_at !== null && new Date(session.expires_at) < new Date()) return <div style={containerStyle}><div style={cardStyle}><div style={{ fontSize: '3rem' }}>⏰</div><h2 style={{ marginTop: '1rem' }}>Link Expired</h2><p style={{ color: '#666', marginTop: '0.5rem' }}>This settlement link has expired. Ask your approver to generate a new link.</p></div></div>;
 
   return (
     <div style={containerStyle}>
@@ -6429,7 +6451,7 @@ const SettlementSessionPage = ({ token }) => {
           </div>
           <div style={{ display: 'grid', gap: '0.35rem' }}>
             <span style={labelStyle}>Expires At</span>
-            <div style={{ color: '#6b7280' }}>{new Date(session.expires_at).toLocaleString('en-IN')}</div>
+            <div style={{ color: '#6b7280' }}>{session.expires_at ? new Date(session.expires_at).toLocaleString('en-IN') : 'Active until voucher is closed'}</div>
           </div>
         </div>
         {status !== 'submitted' ? (
@@ -6472,11 +6494,32 @@ const SettlementSessionPage = ({ token }) => {
               </div>
             )}
             {error && <div style={{ color: '#b91c1c', marginBottom: '1rem' }}>{error}</div>}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
-              <input id="uploadNow" type="checkbox" checked={uploadNow} onChange={e => setUploadNow(e.target.checked)} />
-              <label htmlFor="uploadNow" style={{ fontSize: '0.92rem', color: '#374151' }}>Show upload options immediately after submitting</label>
+            <div style={{ ...fieldStyle, background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '1rem' }}>
+              <div style={{ fontWeight: 600, color: '#374151', marginBottom: '0.75rem' }}>📎 Attach Invoice / Receipt</div>
+              {pendingFiles.length > 0 && (
+                <div style={{ display: 'grid', gap: '0.5rem', marginBottom: '0.75rem' }}>
+                  {pendingFiles.map((pf, idx) => (
+                    <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', background: 'white', borderRadius: '8px', border: '1px solid #e2e8f0', padding: '0.5rem 0.75rem' }}>
+                      {pf.previewUrl ? <img src={pf.previewUrl} alt="" style={{ width: 40, height: 40, objectFit: 'cover', borderRadius: 6 }} /> : <span style={{ fontSize: '1.4rem' }}>📄</span>}
+                      <span style={{ flex: 1, fontSize: '0.85rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{pf.name}</span>
+                      <button type="button" onClick={() => setPendingFiles(prev => prev.filter((_, i) => i !== idx))} style={{ background: 'none', border: 'none', color: '#b91c1c', cursor: 'pointer', fontWeight: 700, fontSize: '1.1rem', lineHeight: 1 }}>✕</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div style={{ display: 'grid', gap: '0.5rem' }}>
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', background: '#f5841f', color: 'white', padding: '0.7rem 1rem', borderRadius: '8px', cursor: 'pointer', width: '100%', justifyContent: 'center', boxSizing: 'border-box', fontSize: '0.9rem', fontWeight: 600 }}>
+                  📷 Take Photo of Invoice
+                  <input type="file" accept="image/*" capture="environment" style={{ display: 'none' }} onChange={handlePendingFileAdd} />
+                </label>
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', background: '#1f2937', color: 'white', padding: '0.7rem 1rem', borderRadius: '8px', cursor: 'pointer', width: '100%', justifyContent: 'center', boxSizing: 'border-box', fontSize: '0.9rem', fontWeight: 600 }}>
+                  {Icons.upload} Upload from Gallery / PDF
+                  <input type="file" accept="image/*,.pdf" style={{ display: 'none' }} onChange={handlePendingFileAdd} />
+                </label>
+              </div>
+              <div style={{ fontSize: '0.8rem', color: '#9ca3af', marginTop: '0.5rem' }}>Optional — you can also add more attachments after submitting.</div>
             </div>
-            <button style={buttonStyle} type="submit" disabled={status === 'submitting'}>{status === 'submitting' ? 'Submitting...' : 'Submit Settlement'}</button>
+            <button style={buttonStyle} type="submit" disabled={status === 'submitting' || pendingUploading}>{pendingUploading ? 'Uploading attachments...' : status === 'submitting' ? 'Submitting...' : 'Submit Settlement'}</button>
           </form>
           ) : null}
         {settlement && (
@@ -6485,7 +6528,7 @@ const SettlementSessionPage = ({ token }) => {
               <div style={{ fontWeight: 700, marginBottom: '0.25rem' }}>✅ Settlement Submitted</div>
               <div style={{ color: '#064e3b', fontSize: '0.95rem' }}>You can now attach the invoice or receipt for this settlement.</div>
               <button type="button" onClick={async () => {
-                setSettlement(null); setAmount(''); setDescription(''); setHeadOfAccount(''); setReferenceNumber(''); setRequiresInvoice(true); setInvoiceMissingReason('');
+                setSettlement(null); setAmount(''); setDescription(''); setHeadOfAccount(''); setReferenceNumber(''); setRequiresInvoice(true); setInvoiceMissingReason(''); setPendingFiles([]);
                 const data = await api.getSettlementSession(token);
                 if (data.settlementSession) setSession(data.settlementSession);
                 setStatus('ready');

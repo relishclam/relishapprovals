@@ -2472,12 +2472,13 @@ app.post('/api/suspense-vouchers/:id/approve', async (req, res) => {
     }
 
     const settlementToken = generateSettlementToken();
-    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(); // 24-hour session window
+    // No fixed expiry — the session remains valid as long as the voucher is open/partial.
+    // It is only invalidated explicitly (resend expires old sessions, or voucher closes).
     const { data: session, error: sessionError } = await supabase.from('settlement_sessions').insert({
       suspense_id: sv.id,
       payee_id: payee.id,
       token: settlementToken,
-      expires_at: expiresAt,
+      expires_at: null,
       last_sent_at: new Date().toISOString()
     }).select().single();
     if (sessionError) throw sessionError;
@@ -2578,19 +2579,19 @@ app.post('/api/suspense-vouchers/:id/resend-settlement-link', async (req, res) =
     if (!payee) {
       return res.status(400).json({ error: 'No designated staff payee found. Please set up the staff payee in Payees Management first.' });
     }
-    // Expire all existing active sessions for this voucher
+    // Expire ALL existing sessions for this voucher (null or future) so only the new link is active
     await supabase.from('settlement_sessions')
       .update({ expires_at: new Date().toISOString() })
       .eq('suspense_id', sv.id)
-      .gt('expires_at', new Date().toISOString());
+      .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`);
 
     const settlementToken = generateSettlementToken();
-    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    // No fixed expiry — valid until voucher is closed or a new link is sent
     const { data: session, error: sessionError } = await supabase.from('settlement_sessions').insert({
       suspense_id: sv.id,
       payee_id: payee.id,
       token: settlementToken,
-      expires_at: expiresAt,
+      expires_at: null,
       last_sent_at: new Date().toISOString()
     }).select().single();
     if (sessionError) throw sessionError;
@@ -2759,7 +2760,10 @@ app.get('/api/settlement-sessions/:token', async (req, res) => {
       .single();
 
     if (error || !session) return res.status(404).json({ error: 'Settlement session not found' });
-    if (new Date(session.expires_at) < new Date()) return res.status(400).json({ error: 'Settlement session has expired' });
+    // Session is expired only if explicitly invalidated (expires_at set to a past date)
+    if (session.expires_at !== null && new Date(session.expires_at) < new Date()) {
+      return res.status(400).json({ error: 'Settlement session has expired' });
+    }
     if (!session.payee || !session.payee.is_staff) {
       return res.status(400).json({ error: 'Settlement session is not valid for a staff payee' });
     }
@@ -2782,7 +2786,10 @@ app.post('/api/settlement-sessions/:token/settlements', async (req, res) => {
       .eq('token', req.params.token)
       .single();
     if (sessionError || !session) return res.status(404).json({ error: 'Settlement session not found' });
-    if (new Date(session.expires_at) < new Date()) return res.status(400).json({ error: 'Settlement session has expired' });
+    // Session is expired only if explicitly invalidated (expires_at set to a past date)
+    if (session.expires_at !== null && new Date(session.expires_at) < new Date()) {
+      return res.status(400).json({ error: 'Settlement session has expired' });
+    }
     if (!session.payee || !session.payee.is_staff) {
       return res.status(400).json({ error: 'Settlement session is not valid for a staff payee' });
     }
@@ -2939,6 +2946,14 @@ app.post('/api/suspense-settlements/:settlementId/approve', async (req, res) => 
     await supabase.from('suspense_vouchers')
       .update({ balance_amount: Math.max(0, balance), status: newStatus, ...(newStatus === 'closed' ? { closed_at: new Date().toISOString() } : {}) })
       .eq('id', sv.id);
+
+    // When the voucher closes, invalidate all its settlement sessions so the SMS link stops working
+    if (newStatus === 'closed') {
+      await supabase.from('settlement_sessions')
+        .update({ expires_at: new Date().toISOString() })
+        .eq('suspense_id', sv.id)
+        .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`);
+    }
 
     res.json({ success: true, settlement: approvedSettlement, voucher });
   } catch (error) {
