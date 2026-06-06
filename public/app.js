@@ -6427,7 +6427,7 @@ const SettlementSessionPage = ({ token }) => {
   if (status === 'loading') return <div style={containerStyle}><div style={cardStyle}>{Icons.loader}<p style={{ marginTop: '1rem', color: '#666' }}>Loading settlement session...</p></div></div>;
   if (status === 'error') return <div style={containerStyle}><div style={cardStyle}><div style={{ fontSize: '3rem' }}>❌</div><h2 style={{ marginTop: '1rem' }}>Session Error</h2><p style={{ color: '#666', marginTop: '0.5rem' }}>{error}</p></div></div>;
   if (!session) return null;
-  if (session.expires_at !== null && new Date(session.expires_at) < new Date()) return <div style={containerStyle}><div style={cardStyle}><div style={{ fontSize: '3rem' }}>⏰</div><h2 style={{ marginTop: '1rem' }}>Link Expired</h2><p style={{ color: '#666', marginTop: '0.5rem' }}>This settlement link has expired. Ask your approver to generate a new link.</p></div></div>;
+  if (new Date(session.expires_at) < new Date()) return <div style={containerStyle}><div style={cardStyle}><div style={{ fontSize: '3rem' }}>⏰</div><h2 style={{ marginTop: '1rem' }}>Link Expired</h2><p style={{ color: '#666', marginTop: '0.5rem' }}>This settlement link has expired. Ask your approver to generate a new link.</p></div></div>;
 
   return (
     <div style={containerStyle}>
@@ -6451,7 +6451,7 @@ const SettlementSessionPage = ({ token }) => {
           </div>
           <div style={{ display: 'grid', gap: '0.35rem' }}>
             <span style={labelStyle}>Expires At</span>
-            <div style={{ color: '#6b7280' }}>{session.expires_at ? new Date(session.expires_at).toLocaleString('en-IN') : 'Active until voucher is closed'}</div>
+            <div style={{ color: '#6b7280' }}>{new Date(session.expires_at).getFullYear() >= 2099 ? 'Active until voucher is closed' : new Date(session.expires_at).toLocaleString('en-IN')}</div>
           </div>
         </div>
         {status !== 'submitted' ? (

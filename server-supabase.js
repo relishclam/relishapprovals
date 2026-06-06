@@ -2472,13 +2472,14 @@ app.post('/api/suspense-vouchers/:id/approve', async (req, res) => {
     }
 
     const settlementToken = generateSettlementToken();
-    // No fixed expiry — the session remains valid as long as the voucher is open/partial.
-    // It is only invalidated explicitly (resend expires old sessions, or voucher closes).
+    // No fixed expiry — use a far-future sentinel date; expires_at is updated explicitly
+    // on resend (new link issued) or when the voucher closes.
+    const farFuture = '2099-12-31T23:59:59.000Z';
     const { data: session, error: sessionError } = await supabase.from('settlement_sessions').insert({
       suspense_id: sv.id,
       payee_id: payee.id,
       token: settlementToken,
-      expires_at: null,
+      expires_at: farFuture,
       last_sent_at: new Date().toISOString()
     }).select().single();
     if (sessionError) throw sessionError;
@@ -2585,12 +2586,13 @@ app.post('/api/suspense-vouchers/:id/resend-settlement-link', async (req, res) =
       .eq('suspense_id', sv.id);
 
     const settlementToken = generateSettlementToken();
-    // No fixed expiry — valid until voucher is closed or a new link is sent
+    // No fixed expiry — use a far-future sentinel date
+    const farFuture = '2099-12-31T23:59:59.000Z';
     const { data: session, error: sessionError } = await supabase.from('settlement_sessions').insert({
       suspense_id: sv.id,
       payee_id: payee.id,
       token: settlementToken,
-      expires_at: null,
+      expires_at: farFuture,
       last_sent_at: new Date().toISOString()
     }).select().single();
     if (sessionError) throw sessionError;
@@ -2760,7 +2762,7 @@ app.get('/api/settlement-sessions/:token', async (req, res) => {
 
     if (error || !session) return res.status(404).json({ error: 'Settlement session not found' });
     // Session is expired only if explicitly invalidated (expires_at set to a past date)
-    if (session.expires_at !== null && new Date(session.expires_at) < new Date()) {
+    if (new Date(session.expires_at) < new Date()) {
       return res.status(400).json({ error: 'Settlement session has expired' });
     }
     if (!session.payee || !session.payee.is_staff) {
@@ -2786,7 +2788,7 @@ app.post('/api/settlement-sessions/:token/settlements', async (req, res) => {
       .single();
     if (sessionError || !session) return res.status(404).json({ error: 'Settlement session not found' });
     // Session is expired only if explicitly invalidated (expires_at set to a past date)
-    if (session.expires_at !== null && new Date(session.expires_at) < new Date()) {
+    if (new Date(session.expires_at) < new Date()) {
       return res.status(400).json({ error: 'Settlement session has expired' });
     }
     if (!session.payee || !session.payee.is_staff) {
