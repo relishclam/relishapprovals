@@ -120,9 +120,10 @@ INSERT INTO companies (id, name, address, gst) VALUES
 ON CONFLICT (id) DO UPDATE SET address = EXCLUDED.address, gst = EXCLUDED.gst;
 
 -- Initialize Voucher Series for Companies
+-- financial_year is computed dynamically by get_next_voucher_number; seed value is informational only
 INSERT INTO voucher_series (company_id, current_number, prefix, financial_year) VALUES 
-('relish-foods', 0, 'VCH', '2025-26'),
-('relish-hhc', 0, 'VCH', '2025-26')
+('relish-foods', 0, 'VCH', '2026-27'),
+('relish-hhc', 0, 'VCH', '2026-27')
 ON CONFLICT (company_id) DO NOTHING;
 
 -- Create indexes for better performance
@@ -174,25 +175,41 @@ CREATE POLICY "Allow all operations for service role" ON otp_sessions FOR ALL US
 CREATE POLICY "Allow all operations for service role" ON narration_items FOR ALL USING (true);
 
 -- Function to get next voucher number
+-- Financial year is computed dynamically from CURRENT_DATE (Indian FY: Apr 1 – Mar 31)
 CREATE OR REPLACE FUNCTION get_next_voucher_number(p_company_id TEXT)
 RETURNS TEXT AS $$
 DECLARE
-    v_series RECORD;
+    v_series      RECORD;
     v_next_number INTEGER;
-    v_serial TEXT;
+    v_serial      TEXT;
+    v_current_fy  TEXT;
 BEGIN
+    -- Compute current Indian Financial Year
+    v_current_fy := CASE
+        WHEN EXTRACT(MONTH FROM CURRENT_DATE) >= 4
+        THEN EXTRACT(YEAR FROM CURRENT_DATE)::TEXT
+             || '-'
+             || LPAD(((EXTRACT(YEAR FROM CURRENT_DATE)::INT + 1) % 100)::TEXT, 2, '0')
+        ELSE (EXTRACT(YEAR FROM CURRENT_DATE)::INT - 1)::TEXT
+             || '-'
+             || LPAD((EXTRACT(YEAR FROM CURRENT_DATE)::INT % 100)::TEXT, 2, '0')
+    END;
+
     -- Get and lock the series row
     SELECT * INTO v_series FROM voucher_series WHERE company_id = p_company_id FOR UPDATE;
-    
+
     -- Increment the number
     v_next_number := v_series.current_number + 1;
-    
-    -- Update the series
-    UPDATE voucher_series SET current_number = v_next_number WHERE company_id = p_company_id;
-    
-    -- Format the serial number
-    v_serial := v_series.prefix || '-' || v_series.financial_year || '-' || LPAD(v_next_number::TEXT, 5, '0');
-    
+
+    -- Update the series and keep financial_year in sync
+    UPDATE voucher_series
+    SET current_number = v_next_number,
+        financial_year = v_current_fy
+    WHERE company_id = p_company_id;
+
+    -- Format: VCH-2026-27-00532
+    v_serial := v_series.prefix || '-' || v_current_fy || '-' || LPAD(v_next_number::TEXT, 5, '0');
+
     RETURN v_serial;
 END;
 $$ LANGUAGE plpgsql;

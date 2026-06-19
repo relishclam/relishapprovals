@@ -12,7 +12,7 @@ A **Suspense Voucher** is an advance payment given to a staff member to cover ex
 |---|---|
 | **Accounts** | Creates the voucher, adds top-ups, adds entries on behalf of staff, reviews and approves all entries |
 | **Admin / Super Admin** | Approves or rejects the voucher before it is activated |
-| **Staff / Payee** | Receives an SMS link, submits expense entries and attaches bills — no system login required |
+| **Staff / Payee** | Receives an SMS/WhatsApp (Manual) link, submits expense entries and attaches bills — no system login required |
 | **Auditor** | Read-only access to view all records |
 
 ---
