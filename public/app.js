@@ -7070,6 +7070,8 @@ const App = () => {
     }
   }, []);
 
+  const addToast = useCallback((message, type = 'info', duration = 4000) => { const id = Date.now(); setToasts(prev => [...prev, { id, message, type }]); setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), duration); }, []);
+
   // Request push notification permission and subscribe to push
   const requestPushPermission = useCallback(async () => {
     if (!('Notification' in window) || !('serviceWorker' in navigator)) {
@@ -7210,7 +7212,6 @@ const App = () => {
     }
   }, []);
 
-  const addToast = useCallback((message, type = 'info', duration = 4000) => { const id = Date.now(); setToasts(prev => [...prev, { id, message, type }]); setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), duration); }, []);
   const refreshVouchers = useCallback(async () => { if (user) { const data = await api.getVouchers(user.company.id); setVouchers(data); } }, [user]);
   const refreshNotifications = useCallback(async () => { 
     if (user) { 
