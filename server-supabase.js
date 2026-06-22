@@ -1094,6 +1094,40 @@ app.post('/api/payees/:payeeId/create-staff-login', async (req, res) => {
   }
 });
 
+// Copy suspense-level transfer receipts to a final payment voucher.
+// Accounts upload bank/UPI transfer receipts at the suspense voucher level as proof of
+// disbursement. Every final expense voucher created from that suspense must carry copies
+// of those receipts so the voucher independently proves both WHAT was spent (entry bills)
+// AND HOW the funds reached the staff member (transfer receipts). The originals remain
+// on the suspense voucher; fresh records are inserted for the new voucher.
+const copyTransferReceiptsToVoucher = async (suspenseId, voucherId) => {
+  const { data: receipts } = await supabase.from('voucher_attachments')
+    .select('company_id,file_name,storage_path,public_url,mime_type,file_size_bytes,uploaded_by,uploaded_at,suspense_id,attachment_category')
+    .eq('suspense_id', suspenseId)
+    .eq('attachment_category', 'transfer_receipt')  // only disbursement proofs, never expense bills
+
+  if (!receipts?.length) return;
+
+  const copies = receipts.map(r => ({
+    company_id: r.company_id,
+    voucher_id: voucherId,
+    voucher_type: 'regular',
+    suspense_id: r.suspense_id,   // retain provenance — links back to source suspense
+    settlement_id: null,
+    file_name: r.file_name,
+    storage_path: r.storage_path,
+    public_url: r.public_url,
+    mime_type: r.mime_type,
+    file_size_bytes: r.file_size_bytes,
+    uploaded_by: r.uploaded_by,
+    uploaded_at: r.uploaded_at,
+    attachment_category: 'transfer_receipt'
+  }));
+
+  const { error } = await supabase.from('voucher_attachments').insert(copies);
+  if (error) console.error('copyTransferReceiptsToVoucher error:', error.message);
+};
+
 // Get next voucher number
 const getNextVoucherNumber = async (companyId) => {
   const { data, error } = await supabase.rpc('get_next_voucher_number', { p_company_id: companyId });
@@ -3269,6 +3303,11 @@ app.post('/api/suspense-settlements/:settlementId/approve', async (req, res) => 
       await supabase.from('voucher_attachments')
         .update({ voucher_id: voucher.id })
         .eq('settlement_id', settlement.id);
+
+      // Copy the suspense-level transfer receipts (uploaded by Accounts as proof of disbursement).
+      // These are inserted as fresh records so the voucher carries an independent audit trail
+      // showing BOTH what was spent (entry bill above) AND how funds reached the staff member.
+      await copyTransferReceiptsToVoucher(sv.id, voucher.id);
     }
 
     const { data: approvedSettlements } = await supabase.from('suspense_settlements')
@@ -3410,6 +3449,11 @@ app.post('/api/suspense-vouchers/:suspenseId/combine-settlements', async (req, r
         .update({ voucher_id: voucher.id })
         .eq('settlement_id', id);
     }
+
+    // Copy the suspense-level transfer receipts (uploaded by Accounts as proof of disbursement).
+    // These are inserted as fresh records so the combined voucher independently proves
+    // BOTH what was spent (all entry bills above) AND how funds reached the staff member.
+    await copyTransferReceiptsToVoucher(req.params.suspenseId, voucher.id);
 
     // Recalculate suspense voucher balance
     const { data: approvedSettlements } = await supabase.from('suspense_settlements')
@@ -3579,7 +3623,7 @@ app.post('/api/suspense-settlements/:settlementId/reject-topup', async (req, res
 
 // Upload attachment (supports regular vouchers, suspense vouchers, settlements)
 app.post('/api/attachments/upload', async (req, res) => {
-  const { fileData, mimeType, fileName, voucherId, voucherType, suspenseId, settlementId, captureSessionId, uploadedBy, companyId } = req.body;
+  const { fileData, mimeType, fileName, voucherId, voucherType, suspenseId, settlementId, captureSessionId, uploadedBy, companyId, attachmentCategory } = req.body;
   // uploadedBy is optional for settlement uploads — SMS-only payees have no system user ID
   if (!fileData || !companyId) {
     return res.status(400).json({ error: 'fileData and companyId are required' });
@@ -3613,7 +3657,8 @@ app.post('/api/attachments/upload', async (req, res) => {
       mime_type: mimeType || 'image/jpeg',
       file_size_bytes: buffer.length,
       capture_session_id: captureSessionId || null,
-      uploaded_by: uploadedBy
+      uploaded_by: uploadedBy,
+      attachment_category: attachmentCategory || null
     }).select().single();
     if (dbErr) throw dbErr;
 
@@ -3689,7 +3734,7 @@ app.delete('/api/attachments/:id', async (req, res) => {
 
 // Create capture session
 app.post('/api/capture-sessions', async (req, res) => {
-  const { companyId, createdBy, voucherId, suspenseId, settlementId, contextType } = req.body;
+  const { companyId, createdBy, voucherId, suspenseId, settlementId, contextType, attachmentCategory } = req.body;
   if (!companyId || !createdBy) return res.status(400).json({ error: 'companyId and createdBy required' });
   try {
     const { data: session, error } = await supabase.from('capture_sessions').insert({
@@ -3699,7 +3744,8 @@ app.post('/api/capture-sessions', async (req, res) => {
       suspense_id: suspenseId || null,
       settlement_id: settlementId || null,
       context_type: contextType || (suspenseId ? 'suspense' : 'regular'),
-      expires_at: new Date(Date.now() + 15 * 60 * 1000).toISOString()
+      expires_at: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+      attachment_category: attachmentCategory || null
     }).select().single();
     if (error) throw error;
     res.json({ success: true, session });
@@ -3769,7 +3815,9 @@ app.post('/api/capture-sessions/:id/upload', async (req, res) => {
       mime_type: mimeType || 'image/jpeg',
       file_size_bytes: buffer.length,
       capture_session_id: req.params.id,
-      uploaded_by: session.created_by
+      uploaded_by: session.created_by,
+      // Inherit category from the session so QR-relay uploads are classified correctly
+      attachment_category: session.attachment_category || null
     }).select().single();
     if (dbErr) throw dbErr;
 

@@ -111,6 +111,10 @@ This step proves the staff member has physically received the advance payment.
 - The voucher balance is recalculated automatically.
 - If balance reaches zero → voucher status changes to **Closed** and the SMS link is deactivated.
 
+**What the created Payment Voucher contains:**
+- The expense bill(s) uploaded by staff for that specific entry.
+- Copies of all **transfer receipts** uploaded at the suspense voucher level (e.g. NEFT/UPI payment confirmation) — so the voucher independently proves both *what* was spent and *how* the funds reached the staff member.
+
 ---
 
 ### 4a. Accounts — Combining Multiple Entries into One Voucher *(optional)*
@@ -130,6 +134,7 @@ If a staff member has submitted several small expenses that belong under the sam
 - All selected entries are approved simultaneously.
 - One payment voucher is created with **amount = sum of all selected entries**.
 - Every bill / attachment uploaded against each selected entry is carried over to the new voucher — no attachment is lost.
+- Copies of the suspense-level **transfer receipts** (NEFT/UPI disbursement proof) are also added to the voucher, giving it a complete standalone audit trail.
 - Each entry records a back-link to the combined voucher for full traceability.
 - The new voucher enters **Pending** status for Admin approval.
 
@@ -295,5 +300,6 @@ If you have spent all your advance and need more funds, ask your accounts team t
 4. **The SMS link is permanent** until explicitly revoked — staff can use it any time the voucher is open.
 5. **All entries go through review** — no expense is finalised until an Accounts user approves it.
 6. **Payment vouchers follow the normal approval flow** — vouchers created from settlement entries enter Pending status and require Admin approval. After Admin approval they are immediately completed (no new OTP) because the advance was already OTP-verified at disbursement.
+   Each final voucher automatically carries: (a) the expense bills uploaded by staff for that entry, and (b) copies of the suspense-level transfer receipts uploaded by Accounts — so every voucher is independently auditable.
 7. **Combine saves work** — multiple small expenses under the same Head of Account can be combined into one voucher. All bills from every combined entry are preserved.
 8. **Balance is always auto-calculated** — Expenses reduce the balance; Refunds and Top-ups increase it.

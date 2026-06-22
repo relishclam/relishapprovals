@@ -5349,6 +5349,9 @@ const BillAttachmentPanel = ({ voucherId, voucherType = 'regular', suspenseId, s
   const canvasRef = React.useRef(null);
   const pollIntervalRef = React.useRef(null);
   const [confirmDeleteId, setConfirmDeleteId] = React.useState(null);
+  // Category required when uploading directly to a suspense voucher (not to an entry)
+  const [attachmentCategory, setAttachmentCategory] = React.useState(null);
+  const needsCategory = voucherType === 'suspense' && !settlementId;
 
   const loadAttachments = async () => {
     setLoading(true);
@@ -5394,8 +5397,8 @@ const BillAttachmentPanel = ({ voucherId, voucherType = 'regular', suspenseId, s
     setUploading(true);
     try {
       const { data, mimeType, name } = await compressAndEncode(file);
-      const result = await api.uploadAttachment({ fileData: data, mimeType, fileName: name, voucherId, voucherType, suspenseId, settlementId, uploadedBy: user.id, companyId });
-      if (result.success) { addToast('Attachment uploaded', 'success'); loadAttachments(); }
+      const result = await api.uploadAttachment({ fileData: data, mimeType, fileName: name, voucherId, voucherType, suspenseId, settlementId, uploadedBy: user.id, companyId, attachmentCategory: needsCategory ? attachmentCategory : undefined });
+      if (result.success) { addToast('Attachment uploaded', 'success'); loadAttachments(); if (needsCategory) setAttachmentCategory(null); }
       else addToast(result.error || 'Upload failed', 'error');
     } catch { addToast('Upload failed', 'error'); }
     setUploading(false);
@@ -5446,8 +5449,8 @@ const BillAttachmentPanel = ({ voucherId, voucherType = 'regular', suspenseId, s
       try {
         const file = new File([blob], `scan_${Date.now()}.jpg`, { type: 'image/jpeg' });
         const { data, mimeType, name } = await compressAndEncode(file);
-        const result = await api.uploadAttachment({ fileData: data, mimeType, fileName: name, voucherId, voucherType, suspenseId, settlementId, uploadedBy: user.id, companyId });
-        if (result.success) { addToast('Photo captured and uploaded', 'success'); loadAttachments(); }
+        const result = await api.uploadAttachment({ fileData: data, mimeType, fileName: name, voucherId, voucherType, suspenseId, settlementId, uploadedBy: user.id, companyId, attachmentCategory: needsCategory ? attachmentCategory : undefined });
+        if (result.success) { addToast('Photo captured and uploaded', 'success'); loadAttachments(); if (needsCategory) setAttachmentCategory(null); }
         else addToast(result.error || 'Upload failed', 'error');
       } catch { addToast('Upload failed', 'error'); }
       setUploading(false);
@@ -5457,7 +5460,7 @@ const BillAttachmentPanel = ({ voucherId, voucherType = 'regular', suspenseId, s
   // ── SEND TO PHONE (QR relay) ──────────────────────────────────────────────
   const startQRCapture = async () => {
     try {
-      const result = await api.createCaptureSession({ companyId, createdBy: user.id, voucherId, suspenseId, settlementId, contextType: voucherType });
+      const result = await api.createCaptureSession({ companyId, createdBy: user.id, voucherId, suspenseId, settlementId, contextType: voucherType, attachmentCategory: needsCategory ? attachmentCategory : undefined });
       if (!result.success) { addToast('Failed to create session', 'error'); return; }
       const session = result.session;
       setCaptureSession(session);
@@ -5534,6 +5537,12 @@ const BillAttachmentPanel = ({ voucherId, voucherType = 'regular', suspenseId, s
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontWeight: 500, fontSize: '0.85rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{att.file_name}</div>
                 <div style={{ fontSize: '0.75rem', color: '#888' }}>by {att.uploader?.name || 'Unknown'} · {new Date(att.uploaded_at).toLocaleDateString('en-IN')}</div>
+                {att.attachment_category === 'transfer_receipt' && (
+                  <span style={{ display: 'inline-block', marginTop: '2px', background: '#dbeafe', color: '#1d4ed8', fontSize: '0.65rem', padding: '1px 5px', borderRadius: '3px', fontWeight: 600 }}>🏦 Transfer Receipt</span>
+                )}
+                {att.attachment_category === 'expense_bill' && (
+                  <span style={{ display: 'inline-block', marginTop: '2px', background: '#d1fae5', color: '#065f46', fontSize: '0.65rem', padding: '1px 5px', borderRadius: '3px', fontWeight: 600 }}>🧾 Expense Bill</span>
+                )}
               </div>
               {confirmDeleteId !== att.id && (
                 <a href={att.public_url} target="_blank" rel="noopener noreferrer" className="btn btn-sm btn-secondary" style={{ padding: '4px 8px', fontSize: '0.75rem' }}>{Icons.eye}</a>
@@ -5603,19 +5612,37 @@ const BillAttachmentPanel = ({ voucherId, voucherType = 'regular', suspenseId, s
         </div>
       )}
 
+      {/* ── CATEGORY SELECTOR — required for suspense-level uploads ── */}
+      {!mode && user.role !== 'auditor' && needsCategory && (
+        <div style={{ background: '#fffbeb', border: '1px solid #fde68a', borderRadius: '8px', padding: '0.75rem', marginBottom: '0.75rem' }}>
+          <div style={{ fontSize: '0.8rem', fontWeight: 700, color: '#92400e', marginBottom: '0.5rem' }}>What are you uploading? *</div>
+          <div style={{ display: 'flex', gap: '0.5rem' }}>
+            <button
+              onClick={() => setAttachmentCategory('transfer_receipt')}
+              style={{ flex: 1, padding: '6px 8px', fontSize: '0.78rem', fontWeight: 600, borderRadius: '6px', border: attachmentCategory === 'transfer_receipt' ? '2px solid #1d4ed8' : '1px solid #d1d5db', background: attachmentCategory === 'transfer_receipt' ? '#dbeafe' : 'white', color: attachmentCategory === 'transfer_receipt' ? '#1d4ed8' : '#374151', cursor: 'pointer' }}
+            >🏦 Transfer Receipt</button>
+            <button
+              onClick={() => setAttachmentCategory('expense_bill')}
+              style={{ flex: 1, padding: '6px 8px', fontSize: '0.78rem', fontWeight: 600, borderRadius: '6px', border: attachmentCategory === 'expense_bill' ? '2px solid #065f46' : '1px solid #d1d5db', background: attachmentCategory === 'expense_bill' ? '#d1fae5' : 'white', color: attachmentCategory === 'expense_bill' ? '#065f46' : '#374151', cursor: 'pointer' }}
+            >🧾 Expense Bill</button>
+          </div>
+          {!attachmentCategory && <p style={{ fontSize: '0.72rem', color: '#9ca3af', margin: '0.4rem 0 0' }}>Select the document type before uploading.</p>}
+        </div>
+      )}
+
       {/* ── ACTION BUTTONS (shown when no mode active) ── */}
       {!mode && user.role !== 'auditor' && (
         <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-          <label className="btn btn-sm btn-secondary" style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+          <label className="btn btn-sm btn-secondary" style={{ cursor: needsCategory && !attachmentCategory ? 'not-allowed' : 'pointer', display: 'inline-flex', alignItems: 'center', gap: '4px', opacity: needsCategory && !attachmentCategory ? 0.45 : 1 }}>
             {uploading ? Icons.loader : Icons.upload} {uploading ? 'Uploading...' : 'Upload File'}
-            <input type="file" accept="image/*,.pdf" style={{ display: 'none' }} onChange={handleFileUpload} disabled={uploading} />
+            <input type="file" accept="image/*,.pdf" style={{ display: 'none' }} onChange={handleFileUpload} disabled={uploading || (needsCategory && !attachmentCategory)} />
           </label>
           {isMobile && (
-            <button className="btn btn-sm btn-secondary" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }} onClick={startCamera}>
+            <button className="btn btn-sm btn-secondary" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', opacity: needsCategory && !attachmentCategory ? 0.45 : 1 }} onClick={needsCategory && !attachmentCategory ? undefined : startCamera} disabled={needsCategory && !attachmentCategory}>
               {Icons.camera} Use Camera
             </button>
           )}
-          <button className="btn btn-sm btn-secondary" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }} onClick={startQRCapture}>
+          <button className="btn btn-sm btn-secondary" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', opacity: needsCategory && !attachmentCategory ? 0.45 : 1 }} onClick={needsCategory && !attachmentCategory ? undefined : startQRCapture} disabled={needsCategory && !attachmentCategory}>
             {Icons.qrCode} Send to Phone
           </button>
         </div>
