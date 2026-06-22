@@ -26,8 +26,12 @@ Created by Accounts
         ↓
    Admin Approves
         ↓
-      open  ←──────────────────── Top-Up added to a closed voucher
+  awaiting_payee_otp  (OTP sent to staff — advance receipt must be confirmed)
         ↓
+   Accounts/Admin verifies OTP collected from staff
+        ↓
+      open  ←──────────────────── Top-Up added to a closed voucher
+        ↓                         (reopens if was closed)
   (Staff/Accounts add entries, entries get approved)
         ↓
      partial   (some entries approved, balance > 0)
@@ -61,9 +65,29 @@ Created by Accounts
 3. Click **Approve** or **Reject** (with a reason).
 
 **On Approval:**
+- Voucher status changes to **Awaiting Payee OTP** (not yet open).
+- An **OTP is sent to the staff member's mobile** to confirm they have received the advance.
+- The Accounts creator is notified that OTP verification is pending.
+
+> ⚠️ The settlement form link is **not sent yet**. It is only activated after OTP is verified in Step 2a below.
+
+---
+
+### 2a. Accounts / Admin — Verifying the Advance OTP
+
+This step proves the staff member has physically received the advance payment.
+
+1. Contact the staff member and ask them to share the OTP they just received by SMS.
+2. Open the voucher in the app — a **🔐 Verify Advance OTP** button will appear.
+3. Enter the 6-digit OTP in the prompt and click **Verify & Activate**.
+   - If the OTP has expired, click **🔄 Resend OTP** to send a new one.
+
+**On successful verification:**
 - Voucher status changes to **Open**.
-- An SMS is automatically sent to the staff member's registered mobile number with a unique settlement link.
-- Accounts users and the creator are notified.
+- The settlement form SMS link is sent to the staff member.
+- The verification timestamp is recorded for audit.
+
+> ℹ️ This OTP step is why expense vouchers created from settlement entries skip the payee OTP step — the advance disbursement was already OTP-confirmed here.
 
 ---
 
@@ -80,12 +104,36 @@ Created by Accounts
 3. Verify the description, amount, and any attached bills.
 4. Choose one of two actions:
    - **Approve entry only** — the entry is approved and the balance is recalculated.
-   - **Approve and create a Payment Voucher** — additionally generates a linked payment voucher (for Head of Account tracking) which enters the regular approval flow.
-5. Click **Approve**.
+   - **Approve and create a Payment Voucher** — generates a linked payment voucher (for Head of Account tracking) in **Pending** status, which enters the standard Admin approval flow.
+5. Select the **Head of Account** (required) and any other voucher details, then click **Approve**.
 
 **After every approval:**
 - The voucher balance is recalculated automatically.
 - If balance reaches zero → voucher status changes to **Closed** and the SMS link is deactivated.
+
+---
+
+### 4a. Accounts — Combining Multiple Entries into One Voucher *(optional)*
+
+If a staff member has submitted several small expenses that belong under the same Head of Account, Accounts can combine them into a single payment voucher instead of creating one voucher per entry.
+
+1. In the **Settlement Entries** table, tick the **checkbox** next to each `Pending Review` expense entry to combine (minimum 2).
+2. A blue action bar appears showing the number of selected entries and their combined total.
+3. Click **🔗 Combine into One Voucher**.
+4. In the modal:
+   - Select the **Head of Account** (required — applies to all combined entries).
+   - Review or edit the **Narration** (pre-filled from each entry's description, joined by ` | `).
+   - Set Payment Mode and Invoice Reference as needed.
+5. Click **Combine & Create Voucher**.
+
+**What happens:**
+- All selected entries are approved simultaneously.
+- One payment voucher is created with **amount = sum of all selected entries**.
+- Every bill / attachment uploaded against each selected entry is carried over to the new voucher — no attachment is lost.
+- Each entry records a back-link to the combined voucher for full traceability.
+- The new voucher enters **Pending** status for Admin approval.
+
+> ℹ️ Only `Pending Review` expense entries can be combined. Top-ups and refunds are excluded.
 
 ---
 
@@ -121,9 +169,19 @@ The entry goes into the same review queue as staff-submitted entries.
 
 ---
 
-### Step 1 — Receive Your Settlement Link
+### Step 1 — Confirm You Received the Advance (OTP)
 
-Once your advance is approved, you will receive an **SMS** on your registered mobile number. It will look like:
+Once your advance is approved by the Admin, you will first receive an **OTP SMS** on your registered mobile number. It will look like:
+
+> *"Your OTP is XXXXXX. Use this to confirm receipt of your advance for [Voucher]."*
+
+**Share this OTP with the Accounts team member** who is processing your advance. They will enter it into the system to confirm that you have received the funds. This is a one-time step — you do not need to enter it anywhere yourself.
+
+---
+
+### Step 1a — Receive Your Settlement Link
+
+Once the Accounts team has verified your OTP, you will receive a **second SMS** with your settlement form link:
 
 > *"Your settlement form for suspense voucher SUS-2025-26-00001 is ready. Open it here: https://relishvoucher.vercel.app/settlement/..."*
 
@@ -215,12 +273,16 @@ If you have spent all your advance and need more funds, ask your accounts team t
 |---|:---:|:---:|:---:|
 | Create suspense voucher | ✅ | — | — |
 | Approve / reject voucher | — | ✅ | — |
+| Share advance receipt OTP | — | — | ✅ |
+| Verify advance OTP (activate link) | ✅ | ✅ | — |
 | Submit expense entry | ✅ | — | ✅ |
 | Attach bill photo | ✅ | — | ✅ |
-| Review & approve entries | ✅ | ✅ | — |
+| Review & approve entries | ✅ | — | — |
+| Combine entries into one voucher | ✅ | — | — |
+| Approve payment voucher | — | ✅ | — |
 | Add top-up | ✅ | — | — |
-| Resend SMS link | ✅ | — | — |
-| Create linked payment voucher | ✅ | — | — |
+| Resend SMS link | ✅ | ✅ | — |
+| Close voucher | ✅ | — | — |
 | View / audit all records | ✅ | ✅ | — |
 
 ---
@@ -228,7 +290,10 @@ If you have spent all your advance and need more funds, ask your accounts team t
 ## Key Rules to Remember
 
 1. **One active voucher per staff member** — a new one cannot be created until the current one is closed or rejected.
-2. **Top-ups reopen a closed voucher** — if a voucher was closed and a top-up is added, it becomes active again.
-3. **The SMS link is permanent** until explicitly revoked — staff can use it any time the voucher is open.
-4. **All entries go through review** — no expense is finalised until an accounts user approves it.
-5. **Balance is always auto-calculated** — Expenses reduce the balance; Refunds and Top-ups increase it.
+2. **OTP is mandatory before activation** — the settlement link is only sent after the staff member's advance receipt is confirmed by OTP. This ensures every disbursement is verified.
+3. **Top-ups reopen a closed voucher** — if a voucher was closed and a top-up is added, it becomes active again.
+4. **The SMS link is permanent** until explicitly revoked — staff can use it any time the voucher is open.
+5. **All entries go through review** — no expense is finalised until an Accounts user approves it.
+6. **Payment vouchers follow the normal approval flow** — vouchers created from settlement entries enter Pending status and require Admin approval. After Admin approval they are immediately completed (no new OTP) because the advance was already OTP-verified at disbursement.
+7. **Combine saves work** — multiple small expenses under the same Head of Account can be combined into one voucher. All bills from every combined entry are preserved.
+8. **Balance is always auto-calculated** — Expenses reduce the balance; Refunds and Top-ups increase it.
