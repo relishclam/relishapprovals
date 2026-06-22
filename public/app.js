@@ -48,6 +48,7 @@ const Icons = {
 
 // Number to Words Converter for Indian Rupees
 const numberToWordsIndian = (num) => {
+  if (num === undefined || num === null || isNaN(num)) return '';
   if (num === 0) return 'Rupees Zero Only';
   
   const ones = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine'];
@@ -2055,7 +2056,12 @@ const VoucherList = ({ filter }) => {
     return true;
   });
   
-  const openVoucher = async (v) => { const full = await api.getVoucher(v.id); setSelectedVoucher(full); setShowModal(true); };
+  const openVoucher = async (v) => {
+    const full = await api.getVoucher(v.id);
+    if (full?.error) { addToast(full.error || 'Failed to load voucher', 'error'); return; }
+    setSelectedVoucher(full);
+    setShowModal(true);
+  };
 
   const handleEditDraft = (voucher) => {
     const narrationItems = typeof voucher.narration_items === 'string' 

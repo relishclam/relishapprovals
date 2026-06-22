@@ -1381,15 +1381,26 @@ app.get('/api/vouchers/:voucherId', async (req, res) => {
         preparer:users!vouchers_prepared_by_fkey(name, username),
         approver:users!vouchers_approved_by_fkey(name, username),
         company:companies(name, address, gst),
-        settlement:suspense_settlements(
-          id,
-          suspense_voucher:suspense_vouchers(serial_number)
-        )
+        settlement:suspense_settlements(id, suspense_id)
       `)
       .eq('id', req.params.voucherId)
       .single();
     
     if (error) throw error;
+
+    // Resolve the suspense voucher serial number separately — avoids a nested
+    // PostgREST join that can fail when the schema cache is stale or the FK
+    // column name (suspense_id) doesn’t match PostgREST’s resolution heuristic.
+    let suspenseSerial = null;
+    if (voucher.settlement) {
+      const settlements = Array.isArray(voucher.settlement) ? voucher.settlement : [voucher.settlement];
+      const suspenseId = settlements[0]?.suspense_id;
+      if (suspenseId) {
+        const { data: sv } = await supabase.from('suspense_vouchers')
+          .select('serial_number').eq('id', suspenseId).single();
+        suspenseSerial = sv?.serial_number || null;
+      }
+    }
     
     res.json({
       ...voucher,
@@ -1403,7 +1414,7 @@ app.get('/api/vouchers/:voucherId', async (req, res) => {
       company_name: voucher.company?.name,
       company_address: voucher.company?.address,
       company_gst: voucher.company?.gst,
-      suspense_serial: voucher.settlement?.suspense_voucher?.serial_number || null
+      suspense_serial: suspenseSerial
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
