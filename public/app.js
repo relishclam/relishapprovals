@@ -6576,7 +6576,7 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
             </div>
             <div className="modal-body">
               <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '8px', padding: '0.75rem', marginBottom: '1rem', fontSize: '0.85rem', color: '#166534' }}>
-                Current balance: <strong>{formatRupees(sv.balance_amount ?? sv.advance_amount)}</strong> · The top-up request will be sent to Admin for approval. Funds will be credited to the staff member only after Admin approves.
+                Current balance: <strong>{formatRupees(sv.balance_amount ?? sv.advance_amount)}</strong> · The top-up request will be sent to Admin for approval. Funds will be credited to the staff member only after Admin approves &amp; OTP is successfully verified.
               </div>
               <div className="form-group">
                 <label className="form-label">Top-up Amount (₹) *</label>
