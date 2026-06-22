@@ -2784,7 +2784,7 @@ app.post('/api/suspense-vouchers/:id/topup', async (req, res) => {
       return res.status(400).json({ error: `Cannot top up a voucher in "${sv.status}" state` });
     }
 
-    // Insert as auto-approved topup (accounts added it — no review needed)
+    // Insert top-up as pending_approval — Admin/Super Admin must authorise before funds are credited
     const { data: settlement, error: sErr } = await supabase.from('suspense_settlements').insert({
       suspense_id: sv.id,
       company_id: sv.company_id,
@@ -2794,52 +2794,28 @@ app.post('/api/suspense-vouchers/:id/topup', async (req, res) => {
       submitted_by: addedBy,
       settlement_payee_id: sv.staff_payee_id || null,
       requires_invoice: false,
-      status: 'approved',
-      reviewed_by: addedBy,
-      reviewed_at: new Date().toISOString()
+      status: 'pending_approval'
     }).select().single();
     if (sErr) throw sErr;
 
-    // Recalculate balance from all approved entries
-    const { data: approvedSettlements } = await supabase.from('suspense_settlements')
-      .select('entry_type, amount')
-      .eq('suspense_id', sv.id)
-      .eq('status', 'approved');
-
-    let balance = parseFloat(sv.advance_amount);
-    for (const s of (approvedSettlements || [])) {
-      if (s.entry_type === 'expense') balance -= parseFloat(s.amount);
-      else if (s.entry_type === 'refund' || s.entry_type === 'topup') balance += parseFloat(s.amount);
-    }
-    // Top-up: reopen closed voucher; never auto-close (only Accounts can manually close)
-    const reopened = sv.status === 'closed';
-    const newStatus = reopened ? 'partial' : (sv.status === 'open' ? 'open' : sv.status);
-    await supabase.from('suspense_vouchers')
-      .update({ balance_amount: balance, status: newStatus, ...(reopened ? { closed_at: null } : {}) })
-      .eq('id', sv.id);
-
-    // SMS notification to staff
-    if (sv.staff_payee_id) {
-      const { data: payee } = await supabase.from('payees').select('name, mobile').eq('id', sv.staff_payee_id).single();
-      if (payee?.mobile) {
-        const { data: adder } = await supabase.from('users').select('name').eq('id', addedBy).single();
-        const smsMessage = `Hi ${payee.name}, your suspense account ${sv.serial_number} has been topped up by ₹${parseFloat(amount).toFixed(2)}. New balance: ₹${Math.max(0, balance).toFixed(2)}. - ${adder?.name || 'Accounts'}`;
-        await send2FactorSms(payee.mobile, smsMessage);
+    // Notify all admins in the company
+    const { data: adder } = await supabase.from('users').select('name').eq('id', addedBy).single();
+    const { data: adminEntries } = await supabase.from('user_companies')
+      .select('user_id').eq('company_id', sv.company_id).eq('role', 'admin');
+    if (adminEntries && adminEntries.length > 0) {
+      const notifications = adminEntries.map(a => ({
+        user_id: a.user_id,
+        title: 'Suspense Top-Up Pending Approval',
+        message: `₹${parseFloat(amount).toFixed(2)} top-up for ${sv.serial_number} submitted by ${adder?.name || 'Accounts'} requires your approval.`,
+        type: 'approval_required'
+      }));
+      await supabase.from('notifications').insert(notifications);
+      for (const admin of adminEntries) {
+        sendPushNotification(admin.user_id, '💰 Top-Up Pending Approval', `₹${parseFloat(amount).toFixed(2)} for ${sv.serial_number} needs your approval.`, '/');
       }
     }
 
-    // In-app notification to voucher creator
-    if (sv.created_by) {
-      const { data: adder } = await supabase.from('users').select('name').eq('id', addedBy).single();
-      await supabase.from('notifications').insert({
-        user_id: sv.created_by,
-        title: 'Suspense Voucher Topped Up',
-        message: `₹${parseFloat(amount).toFixed(2)} added to ${sv.serial_number} by ${adder?.name || 'Accounts'}. New balance: ₹${Math.max(0, balance).toFixed(2)}.`,
-        type: 'info'
-      });
-    }
-
-    res.json({ success: true, settlement, newBalance: Math.max(0, balance), newStatus, reopened });
+    res.json({ success: true, settlement, pendingApproval: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -3179,6 +3155,114 @@ app.post('/api/suspense-vouchers/:id/close', async (req, res) => {
     await supabase.from('settlement_sessions')
       .update({ expires_at: new Date().toISOString() })
       .eq('suspense_id', sv.id);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Admin approves a pending top-up — credits funds and notifies staff
+app.post('/api/suspense-settlements/:settlementId/approve-topup', async (req, res) => {
+  const { approvedBy } = req.body;
+  if (!approvedBy) return res.status(400).json({ error: 'approvedBy is required' });
+  try {
+    const actor = await getActorRole(approvedBy);
+    if (actor.role !== 'admin' && !actor.is_super_admin) {
+      return res.status(403).json({ error: 'Only Admin or Super Admin can approve a top-up' });
+    }
+
+    const { data: settlement, error: sErr } = await supabase.from('suspense_settlements')
+      .select('*').eq('id', req.params.settlementId).single();
+    if (sErr || !settlement) return res.status(404).json({ error: 'Settlement entry not found' });
+    if (settlement.entry_type !== 'topup') return res.status(400).json({ error: 'Entry is not a top-up' });
+    if (settlement.status !== 'pending_approval') return res.status(400).json({ error: 'Top-up is not pending approval' });
+
+    const { data: sv } = await supabase.from('suspense_vouchers').select('*').eq('id', settlement.suspense_id).single();
+    if (!sv) return res.status(404).json({ error: 'Suspense voucher not found' });
+
+    // Approve the settlement entry
+    await supabase.from('suspense_settlements')
+      .update({ status: 'approved', reviewed_by: approvedBy, reviewed_at: new Date().toISOString() })
+      .eq('id', settlement.id);
+
+    // Recalculate balance
+    const { data: approvedSettlements } = await supabase.from('suspense_settlements')
+      .select('entry_type, amount').eq('suspense_id', sv.id).eq('status', 'approved');
+    let balance = parseFloat(sv.advance_amount);
+    for (const s of (approvedSettlements || [])) {
+      if (s.entry_type === 'expense') balance -= parseFloat(s.amount);
+      else if (s.entry_type === 'refund' || s.entry_type === 'topup') balance += parseFloat(s.amount);
+    }
+    // Also include this just-approved entry
+    balance += parseFloat(settlement.amount);
+    const reopened = sv.status === 'closed';
+    const newStatus = reopened ? 'partial' : (sv.status === 'open' ? 'open' : sv.status);
+    await supabase.from('suspense_vouchers')
+      .update({ balance_amount: balance, status: newStatus, ...(reopened ? { closed_at: null } : {}) })
+      .eq('id', sv.id);
+
+    // Notify staff via SMS
+    if (sv.staff_payee_id) {
+      const { data: payee } = await supabase.from('payees').select('name, mobile').eq('id', sv.staff_payee_id).single();
+      if (payee?.mobile) {
+        const { data: approver } = await supabase.from('users').select('name').eq('id', approvedBy).single();
+        const smsMessage = `Hi ${payee.name}, your suspense account ${sv.serial_number} has been topped up by ₹${parseFloat(settlement.amount).toFixed(2)}. New balance: ₹${balance.toFixed(2)}. - ${approver?.name || 'Admin'}`;
+        await send2FactorSms(payee.mobile, smsMessage);
+      }
+    }
+
+    // Notify voucher creator and the Accounts user who requested the top-up
+    const { data: approver } = await supabase.from('users').select('name').eq('id', approvedBy).single();
+    const notifyUsers = [...new Set([sv.created_by, settlement.submitted_by].filter(Boolean))];
+    for (const uid of notifyUsers) {
+      await supabase.from('notifications').insert({
+        user_id: uid,
+        title: 'Top-Up Approved',
+        message: `₹${parseFloat(settlement.amount).toFixed(2)} top-up for ${sv.serial_number} approved by ${approver?.name || 'Admin'}. New balance: ₹${balance.toFixed(2)}.`,
+        type: 'info'
+      });
+    }
+
+    res.json({ success: true, newBalance: balance, newStatus, reopened });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Admin rejects a pending top-up
+app.post('/api/suspense-settlements/:settlementId/reject-topup', async (req, res) => {
+  const { rejectedBy, reason } = req.body;
+  if (!rejectedBy) return res.status(400).json({ error: 'rejectedBy is required' });
+  try {
+    const actor = await getActorRole(rejectedBy);
+    if (actor.role !== 'admin' && !actor.is_super_admin) {
+      return res.status(403).json({ error: 'Only Admin or Super Admin can reject a top-up' });
+    }
+
+    const { data: settlement, error: sErr } = await supabase.from('suspense_settlements')
+      .select('*').eq('id', req.params.settlementId).single();
+    if (sErr || !settlement) return res.status(404).json({ error: 'Settlement entry not found' });
+    if (settlement.entry_type !== 'topup') return res.status(400).json({ error: 'Entry is not a top-up' });
+    if (settlement.status !== 'pending_approval') return res.status(400).json({ error: 'Top-up is not pending approval' });
+
+    const { data: sv } = await supabase.from('suspense_vouchers').select('id, serial_number, created_by').eq('id', settlement.suspense_id).single();
+
+    await supabase.from('suspense_settlements')
+      .update({ status: 'rejected', reviewed_by: rejectedBy, reviewed_at: new Date().toISOString(), ...(reason ? { description: `${settlement.description} [Rejected: ${reason}]` } : {}) })
+      .eq('id', settlement.id);
+
+    // Notify Accounts user who submitted it and the voucher creator
+    const { data: rejector } = await supabase.from('users').select('name').eq('id', rejectedBy).single();
+    const notifyUsers = [...new Set([sv?.created_by, settlement.submitted_by].filter(Boolean))];
+    for (const uid of notifyUsers) {
+      await supabase.from('notifications').insert({
+        user_id: uid,
+        title: 'Top-Up Rejected',
+        message: `₹${parseFloat(settlement.amount).toFixed(2)} top-up for ${sv?.serial_number} was rejected by ${rejector?.name || 'Admin'}.${reason ? ` Reason: ${reason}` : ''}`,
+        type: 'warning'
+      });
+    }
+
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
