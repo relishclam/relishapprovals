@@ -165,6 +165,7 @@ const api = {
   approveSettlementEntry: (settlementId, data) => fetch(`${API_BASE}/suspense-settlements/${settlementId}/approve`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
   resendSettlementLink: (suspenseId, requestedBy) => fetch(`${API_BASE}/suspense-vouchers/${suspenseId}/resend-settlement-link`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ requestedBy }) }).then(r => r.json()),
   topUpSuspenseVoucher: (suspenseId, data) => fetch(`${API_BASE}/suspense-vouchers/${suspenseId}/topup`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
+  closeSuspenseVoucher: (suspenseId, closedBy) => fetch(`${API_BASE}/suspense-vouchers/${suspenseId}/close`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ closedBy }) }).then(r => r.json()),
   // Attachments
   uploadAttachment: (data) => fetch(`${API_BASE}/attachments/upload`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
   getAttachments: (params) => fetch(`${API_BASE}/attachments?${new URLSearchParams(params)}`).then(r => r.json()),
@@ -5933,6 +5934,8 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
   const [showTopUp, setShowTopUp] = useState(false);
   const [topUpForm, setTopUpForm] = useState({ amount: '', description: '' });
   const [topUpLoading, setTopUpLoading] = useState(false);
+  const [closeLoading, setCloseLoading] = useState(false);
+  const [showCloseModal, setShowCloseModal] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -5990,22 +5993,31 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
     setTopUpLoading(false);
   };
 
+  const handleCloseVoucher = async () => {
+    setCloseLoading(true);
+    const result = await api.closeSuspenseVoucher(suspenseId, user.id);
+    if (result.success) {
+      addToast('Suspense voucher closed by Accounts', 'success');
+      setShowCloseModal(false);
+      load();
+    } else addToast(result.error || 'Failed to close voucher', 'error');
+    setCloseLoading(false);
+  };
+
   const openApproveModal = (entry) => {
     setApprovingEntry(entry);
-    setApproveForm({ headOfAccount: '', subHeadOfAccount: '', narration: entry.description, invoiceReference: entry.reference_number || '', paymentMode: sv?.payment_mode || 'UPI', createVoucher: true });
-    if (heads.length === 0) {
-      api.getHeadsOfAccount(user.company.id).then(data => { if (Array.isArray(data)) setHeads(data.sort((a, b) => a.name.localeCompare(b.name))); });
-    }
+    setApproveForm({ headOfAccount: entry.head_of_account || '', subHeadOfAccount: '', narration: entry.description, invoiceReference: entry.reference_number || '', paymentMode: sv?.payment_mode || 'UPI', createVoucher: true });
+    api.getHeadsOfAccount(user.company.id).then(data => { if (Array.isArray(data)) setHeads(data.sort((a, b) => a.name.localeCompare(b.name))); });
     setShowApproveModal(true);
   };
 
   const handleApproveSettlement = async () => {
-    if (approveForm.createVoucher && !approveForm.headOfAccount) { addToast('Please select a Head of Account', 'error'); return; }
+    if (!approveForm.headOfAccount) { addToast('Please select a Head of Account', 'error'); return; }
     setActionLoading(true);
     const result = await api.approveSettlementEntry(approvingEntry.id, {
       approvedBy: user.id,
       createVoucher: approveForm.createVoucher,
-      voucherData: approveForm.createVoucher ? { headOfAccount: approveForm.headOfAccount, subHeadOfAccount: approveForm.subHeadOfAccount || null, narration: approveForm.narration, invoiceReference: approveForm.invoiceReference || null, paymentMode: approveForm.paymentMode } : null
+      voucherData: { headOfAccount: approveForm.headOfAccount, subHeadOfAccount: approveForm.subHeadOfAccount || null, narration: approveForm.narration, invoiceReference: approveForm.invoiceReference || null, paymentMode: approveForm.paymentMode }
     });
     if (result.success) { addToast('Settlement entry approved' + (result.voucher ? ` · Voucher ${result.voucher.serial_number} created (completed)` : ''), 'success'); setShowApproveModal(false); load(); }
     else addToast(result.error || 'Approval failed', 'error');
@@ -6055,6 +6067,9 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
           {(user.role === 'accounts' || user.isSuperAdmin) && (sv.status === 'open' || sv.status === 'partial' || sv.status === 'closed') && sv.status !== 'pending_approval' && sv.status !== 'rejected' && (
             <button className="btn btn-sm btn-success" onClick={() => { setTopUpForm({ amount: '', description: `Additional advance for ${sv.purpose}` }); setShowTopUp(true); }}>💰 Top Up</button>
           )}
+          {(user.role === 'accounts' || user.isSuperAdmin) && (sv.status === 'open' || sv.status === 'partial') && (
+            <button className="btn btn-sm btn-danger" onClick={() => setShowCloseModal(true)}>🔒 Close Voucher</button>
+          )}
           {canSettle && <button className="btn btn-sm btn-primary" onClick={() => setShowSettlement(true)}>{Icons.plus} Add Settlement</button>}
         </div>
       </div>
@@ -6063,8 +6078,38 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem' }}>
           <div><div style={{ fontSize: '0.75rem', color: '#999', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Staff Member</div><div style={{ fontWeight: 600, marginTop: '2px', display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}><span style={{ background: '#10b981', color: 'white', fontSize: '0.68rem', padding: '2px 7px', borderRadius: '4px', fontWeight: 600 }}>👤 Staff</span>{sv.staff_payee?.name || sv.staff?.name || 'Unknown'}{sv.staff_payee?.mobile && <span style={{ fontWeight: 400, color: '#6b7280', fontSize: '0.85rem' }}>· {sv.staff_payee.mobile}</span>}</div></div>
           <div><div style={{ fontSize: '0.75rem', color: '#999', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Purpose</div><div style={{ fontWeight: 600, marginTop: '2px' }}>{sv.purpose}</div></div>
-          <div><div style={{ fontSize: '0.75rem', color: '#999', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Advance Amount</div><div style={{ fontWeight: 700, fontSize: '1.1rem', color: '#f5841f', marginTop: '2px' }}>{formatRupees(sv.advance_amount)}</div></div>
-          <div><div style={{ fontSize: '0.75rem', color: '#999', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Balance</div><div style={{ fontWeight: 700, fontSize: '1.1rem', color: '#3b82f6', marginTop: '2px' }}>{formatRupees(sv.balance_amount ?? sv.advance_amount)}</div></div>
+          <div>
+            <div style={{ fontSize: '0.75rem', color: '#999', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Total Suspense Sent</div>
+            <div style={{ fontWeight: 700, fontSize: '1.1rem', color: '#f5841f', marginTop: '2px' }}>
+              {formatRupees(sv.total_suspense_sent ?? sv.advance_amount)}
+            </div>
+            {sv.total_suspense_sent != null && sv.total_suspense_sent > parseFloat(sv.advance_amount) && (
+              <div style={{ fontSize: '0.75rem', color: '#6b7280', marginTop: '2px' }}>
+                Initial {formatRupees(sv.advance_amount)} + Top-ups {formatRupees(sv.total_suspense_sent - parseFloat(sv.advance_amount))}
+              </div>
+            )}
+          </div>
+          <div>
+            <div style={{ fontSize: '0.75rem', color: '#999', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Balance Remaining</div>
+            <div style={{ fontWeight: 700, fontSize: '1.1rem', color: parseFloat(sv.balance_amount ?? sv.advance_amount) < 0 ? '#ef4444' : '#3b82f6', marginTop: '2px' }}>
+              {formatRupees(sv.balance_amount ?? sv.advance_amount)}
+            </div>
+            {parseFloat(sv.balance_amount ?? sv.advance_amount) < 0 && (
+              <div style={{ fontSize: '0.75rem', color: '#ef4444', marginTop: '2px', fontWeight: 600 }}>⚠️ Over-spent</div>
+            )}
+          </div>
+          {sv.total_expenses_approved != null && (
+            <div>
+              <div style={{ fontSize: '0.75rem', color: '#999', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Expenses Approved</div>
+              <div style={{ fontWeight: 700, fontSize: '1.1rem', color: '#374151', marginTop: '2px' }}>{formatRupees(sv.total_expenses_approved)}</div>
+            </div>
+          )}
+          {sv.total_expenses_pending != null && sv.total_expenses_pending > 0 && (
+            <div>
+              <div style={{ fontSize: '0.75rem', color: '#999', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Expenses Pending</div>
+              <div style={{ fontWeight: 700, fontSize: '1.1rem', color: '#d97706', marginTop: '2px' }}>{formatRupees(sv.total_expenses_pending)}</div>
+            </div>
+          )}
           {sv.payment_mode && <div><div style={{ fontSize: '0.75rem', color: '#999', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Payment Mode</div><div style={{ marginTop: '2px' }}>{sv.payment_mode}</div></div>}
           <div><div style={{ fontSize: '0.75rem', color: '#999', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Created By</div><div style={{ marginTop: '2px' }}>{sv.creator?.name || 'Unknown'} · {new Date(sv.created_at).toLocaleDateString('en-IN')}</div></div>
           {sv.approver && <div><div style={{ fontSize: '0.75rem', color: '#999', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Approved By</div><div style={{ marginTop: '2px' }}>{sv.approver.name} · {new Date(sv.approved_at).toLocaleDateString('en-IN')}</div></div>}
@@ -6075,6 +6120,11 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
       {sv.settlements && sv.settlements.length > 0 && (
         <div className="card" style={{ marginBottom: '1rem' }}>
           <h3 style={{ fontWeight: 600, fontSize: '0.95rem', marginBottom: '0.75rem' }}>Settlement Entries</h3>
+          {sv.total_expenses_approved != null && sv.total_suspense_sent != null && sv.total_expenses_approved > sv.total_suspense_sent && (
+            <div style={{ background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: '8px', padding: '0.75rem 1rem', marginBottom: '0.75rem', fontSize: '0.85rem', color: '#991b1b' }}>
+              ⚠️ <strong>Over-spending detected.</strong> Total approved expenses ({formatRupees(sv.total_expenses_approved)}) exceed total suspense sent ({formatRupees(sv.total_suspense_sent)}) by <strong>{formatRupees(sv.total_expenses_approved - sv.total_suspense_sent)}</strong>. Staff may have spent from their own funds. Please review and close the voucher when settled.
+            </div>
+          )}
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
               <thead>
@@ -6155,6 +6205,36 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
             <div className="modal-footer">
               <button className="btn btn-secondary" onClick={() => setShowTopUp(false)}>Cancel</button>
               <button className="btn btn-success" onClick={handleTopUp} disabled={topUpLoading}>{topUpLoading ? Icons.loader : '💰'} Confirm Top Up</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showCloseModal && (
+        <div className="modal-overlay" onClick={() => setShowCloseModal(false)}>
+          <div className="modal" style={{ maxWidth: '440px' }} onClick={e => e.stopPropagation()}>
+            <div className="modal-header" style={{ background: '#ef4444', color: 'white' }}>
+              <h3 className="modal-title" style={{ color: 'white' }}>🔒 Close Suspense Voucher</h3>
+              <button className="modal-close" style={{ color: 'white' }} onClick={() => setShowCloseModal(false)}>×</button>
+            </div>
+            <div className="modal-body">
+              <div style={{ background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: '8px', padding: '0.85rem', marginBottom: '1rem', fontSize: '0.9rem', color: '#7f1d1d' }}>
+                This will permanently close <strong>{sv.serial_number}</strong>. The staff member's settlement link will stop working. This action is intended only for use by Accounts once all entries are verified.
+              </div>
+              {parseFloat(sv.balance_amount ?? 0) < 0 && (
+                <div style={{ background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: '8px', padding: '0.75rem', marginBottom: '0.75rem', fontSize: '0.85rem', color: '#92400e' }}>
+                  ⚠️ There is an over-spend of <strong>{formatRupees(Math.abs(parseFloat(sv.balance_amount ?? 0)))}</strong>. Ensure this has been accounted for before closing.
+                </div>
+              )}
+              {sv.settlements?.some(s => s.status === 'pending_review') && (
+                <div style={{ background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: '8px', padding: '0.75rem', marginBottom: '0.75rem', fontSize: '0.85rem', color: '#92400e' }}>
+                  ⚠️ There are still <strong>{sv.settlements.filter(s => s.status === 'pending_review').length}</strong> pending entries awaiting review. Approve or reject them before closing.
+                </div>
+              )}
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setShowCloseModal(false)}>Cancel</button>
+              <button className="btn btn-danger" onClick={handleCloseVoucher} disabled={closeLoading}>{closeLoading ? Icons.loader : '🔒'} Confirm Close</button>
             </div>
           </div>
         </div>
@@ -6244,24 +6324,27 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
                   <input type="checkbox" checked={approveForm.createVoucher} onChange={e => setApproveForm(f => ({...f, createVoucher: e.target.checked}))} style={{ width: '18px', height: '18px' }} />
                   <span style={{ fontWeight: 600 }}>📋 Create Payment Voucher from this entry</span>
                 </label>
+              {approveForm.createVoucher && (
                 <p style={{ fontSize: '0.8rem', color: '#166534', marginTop: '0.5rem', marginLeft: '2rem' }}>
                   A voucher will be created and marked <strong>Completed</strong> immediately — payment was already disbursed as the suspense advance. Bills attached by the staff member will be copied to this voucher for traceability.
                 </p>
+              )}
+              </div>
+              {/* Head of Account is ALWAYS required — Accounts must classify every expense */}
+              <div className="form-group">
+                <label className="form-label">Head of Account <span style={{ color: '#ef4444' }}>*</span></label>
+                <select className="form-select" value={approveForm.headOfAccount} onChange={e => setApproveForm(f => ({...f, headOfAccount: e.target.value}))}>
+                  <option value="">— Select Head of Account —</option>
+                  {heads.map(h => <option key={h.id} value={h.name}>{h.name}</option>)}
+                </select>
+                <p style={{ fontSize: '0.78rem', color: '#64748b', marginTop: '0.4rem' }}>ℹ️ Accounts must classify the expense head — staff cannot set this.</p>
+              </div>
+              <div className="form-group">
+                <label className="form-label">Sub-Head (optional)</label>
+                <input className="form-input" type="text" placeholder="Sub-head of account" value={approveForm.subHeadOfAccount} onChange={e => setApproveForm(f => ({...f, subHeadOfAccount: e.target.value}))} />
               </div>
               {approveForm.createVoucher && (
                 <>
-                  <div className="form-group">
-                    <label className="form-label">Head of Account <span style={{ color: '#ef4444' }}>*</span></label>
-                    <select className="form-select" value={approveForm.headOfAccount} onChange={e => setApproveForm(f => ({...f, headOfAccount: e.target.value}))}>
-                      <option value="">— Select Head of Account —</option>
-                      {heads.map(h => <option key={h.id} value={h.name}>{h.name}</option>)}
-                    </select>
-                    <p style={{ fontSize: '0.78rem', color: '#64748b', marginTop: '0.4rem' }}>ℹ️ Staff do not set this — Accounts must choose the correct expense head.</p>
-                  </div>
-                  <div className="form-group">
-                    <label className="form-label">Sub-Head (optional)</label>
-                    <input className="form-input" type="text" placeholder="Sub-head of account" value={approveForm.subHeadOfAccount} onChange={e => setApproveForm(f => ({...f, subHeadOfAccount: e.target.value}))} />
-                  </div>
                   <div className="form-group">
                     <label className="form-label">Narration</label>
                     <textarea className="form-input" rows={2} value={approveForm.narration} onChange={e => setApproveForm(f => ({...f, narration: e.target.value}))} />
@@ -6704,10 +6787,6 @@ const SettlementSessionPage = ({ token }) => {
             <div style={fieldStyle}>
               <label style={labelStyle}>Description / Purpose</label>
               <textarea style={{ ...inputStyle, minHeight: '110px' }} value={description} onChange={e => setDescription(e.target.value)} placeholder="Describe the expense or adjustment" />
-            </div>
-            <div style={fieldStyle}>
-              <label style={labelStyle}>Head of Account (optional)</label>
-              <input style={inputStyle} type="text" value={headOfAccount} onChange={e => setHeadOfAccount(e.target.value)} placeholder="E.g. Travel, Office supplies" />
             </div>
             <div style={fieldStyle}>
               <label style={labelStyle}>Reference Number (optional)</label>

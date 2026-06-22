@@ -2551,7 +2551,28 @@ app.get('/api/suspense-vouchers/:id', async (req, res) => {
     const { data: attachments } = await supabase.from('voucher_attachments')
       .select('*').eq('suspense_id', req.params.id).order('uploaded_at', { ascending: false });
 
-    res.json({ suspenseVoucher: { ...sv, settlements: settlements || [], attachments: attachments || [] } });
+    // Compute total suspense sent (initial advance + all approved top-ups)
+    const approvedTopups = (settlements || []).filter(s => s.entry_type === 'topup' && s.status === 'approved');
+    const totalSuspenseSent = parseFloat(sv.advance_amount) + approvedTopups.reduce((sum, s) => sum + parseFloat(s.amount), 0);
+
+    // Compute total approved expenses (may exceed totalSuspenseSent — overspend)
+    const approvedExpenses = (settlements || []).filter(s => s.entry_type === 'expense' && s.status === 'approved');
+    const totalExpensesApproved = approvedExpenses.reduce((sum, s) => sum + parseFloat(s.amount), 0);
+
+    // Pending expenses (submitted but not yet approved)
+    const pendingExpenses = (settlements || []).filter(s => s.entry_type === 'expense' && s.status === 'pending_review');
+    const totalExpensesPending = pendingExpenses.reduce((sum, s) => sum + parseFloat(s.amount), 0);
+
+    res.json({
+      suspenseVoucher: {
+        ...sv,
+        total_suspense_sent: totalSuspenseSent,
+        total_expenses_approved: totalExpensesApproved,
+        total_expenses_pending: totalExpensesPending,
+        settlements: settlements || [],
+        attachments: attachments || []
+      }
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -2790,10 +2811,11 @@ app.post('/api/suspense-vouchers/:id/topup', async (req, res) => {
       if (s.entry_type === 'expense') balance -= parseFloat(s.amount);
       else if (s.entry_type === 'refund' || s.entry_type === 'topup') balance += parseFloat(s.amount);
     }
-    const newStatus = balance <= 0 ? 'closed' : (sv.status === 'open' ? 'open' : 'partial');
+    // Top-up: reopen closed voucher; never auto-close (only Accounts can manually close)
     const reopened = sv.status === 'closed';
+    const newStatus = reopened ? 'partial' : (sv.status === 'open' ? 'open' : sv.status);
     await supabase.from('suspense_vouchers')
-      .update({ balance_amount: Math.max(0, balance), status: newStatus, ...(reopened ? { closed_at: null } : {}) })
+      .update({ balance_amount: balance, status: newStatus, ...(reopened ? { closed_at: null } : {}) })
       .eq('id', sv.id);
 
     // SMS notification to staff
@@ -3041,8 +3063,20 @@ app.post('/api/suspense-settlements/:settlementId/approve', async (req, res) => 
       .single();
     if (!payee) return res.status(400).json({ error: 'No designated staff payee found for this suspense voucher' });
 
+    // HoA is always required at approval so that every expense is properly categorised
+    if (!voucherData?.headOfAccount) {
+      return res.status(400).json({ error: 'Head of Account is required at the time of approval' });
+    }
+
+    // Update settlement entry status and stamp the Accounts-selected Head of Account on it
     const { data: approvedSettlement, error: updateError } = await supabase.from('suspense_settlements')
-      .update({ status: 'approved', reviewed_by: approvedBy, reviewed_at: new Date().toISOString() })
+      .update({
+        status: 'approved',
+        reviewed_by: approvedBy,
+        reviewed_at: new Date().toISOString(),
+        head_of_account: voucherData.headOfAccount,
+        ...(voucherData.subHeadOfAccount ? { sub_head_of_account: voucherData.subHeadOfAccount } : {})
+      })
       .eq('id', req.params.settlementId)
       .select()
       .single();
@@ -3050,9 +3084,6 @@ app.post('/api/suspense-settlements/:settlementId/approve', async (req, res) => 
 
     let voucher = null;
     if (createVoucher) {
-      if (!voucherData?.headOfAccount) {
-        return res.status(400).json({ error: 'headOfAccount is required in voucherData when creating a voucher — please select the correct expense head' });
-      }
       const headOfAccount = voucherData.headOfAccount;
       const subHeadOfAccount = voucherData?.subHeadOfAccount || null;
       const narration = voucherData?.narration || settlement.description;
@@ -3110,19 +3141,45 @@ app.post('/api/suspense-settlements/:settlementId/approve', async (req, res) => 
       else if (s.entry_type === 'refund') balance += parseFloat(s.amount);
       else if (s.entry_type === 'topup') balance += parseFloat(s.amount);
     }
-    const newStatus = balance <= 0 ? 'closed' : 'partial';
+    // Never auto-close: balance can go negative (overspend). Only Accounts can manually close.
+    // Keep existing status unless it was still 'open' (move to 'partial' once entries exist)
+    const newStatus = sv.status === 'open' ? 'partial' : sv.status;
     await supabase.from('suspense_vouchers')
-      .update({ balance_amount: Math.max(0, balance), status: newStatus, ...(newStatus === 'closed' ? { closed_at: new Date().toISOString() } : {}) })
+      .update({ balance_amount: balance, status: newStatus })
       .eq('id', sv.id);
 
-    // When the voucher closes, invalidate all its settlement sessions so the SMS link stops working
-    if (newStatus === 'closed') {
-      await supabase.from('settlement_sessions')
-        .update({ expires_at: new Date().toISOString() })
-        .eq('suspense_id', sv.id);
-    }
-
     res.json({ success: true, settlement: approvedSettlement, voucher });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Manually close a suspense voucher (Accounts only)
+app.post('/api/suspense-vouchers/:id/close', async (req, res) => {
+  const { closedBy } = req.body;
+  if (!closedBy) return res.status(400).json({ error: 'closedBy is required' });
+  try {
+    const actor = await getActorRole(closedBy);
+    if (actor.role !== 'accounts' && !actor.is_super_admin) {
+      return res.status(403).json({ error: 'Unauthorized: Only Accounts users can close a suspense voucher' });
+    }
+    const { data: sv, error } = await supabase.from('suspense_vouchers')
+      .select('id, status, serial_number')
+      .eq('id', req.params.id)
+      .single();
+    if (error || !sv) return res.status(404).json({ error: 'Suspense voucher not found' });
+    if (sv.status === 'closed') return res.status(400).json({ error: 'Voucher is already closed' });
+    if (sv.status === 'pending_approval' || sv.status === 'rejected') {
+      return res.status(400).json({ error: `Cannot close a voucher in "${sv.status}" state` });
+    }
+    await supabase.from('suspense_vouchers')
+      .update({ status: 'closed', closed_at: new Date().toISOString() })
+      .eq('id', sv.id);
+    // Invalidate all active settlement sessions so SMS links stop working
+    await supabase.from('settlement_sessions')
+      .update({ expires_at: new Date().toISOString() })
+      .eq('suspense_id', sv.id);
+    res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
