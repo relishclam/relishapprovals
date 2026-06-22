@@ -49,7 +49,7 @@ if (VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY) {
 
 // Store OTP sessions in Supabase (for serverless compatibility)
 // Helper functions for OTP session management
-const saveOtpSession = async (mobile, sessionId, purpose, voucherId = null) => {
+const saveOtpSession = async (mobile, sessionId, purpose, voucherId = null, suspenseId = null) => {
   // Delete any existing session for this mobile
   await supabase.from('otp_sessions').delete().eq('mobile', mobile);
   
@@ -58,7 +58,8 @@ const saveOtpSession = async (mobile, sessionId, purpose, voucherId = null) => {
     mobile,
     session_id: sessionId,
     purpose,
-    voucher_id: voucherId
+    voucher_id: voucherId,
+    ...(suspenseId ? { suspense_id: suspenseId } : {})
   });
   
   if (error) console.error('Error saving OTP session:', error);
@@ -1407,7 +1408,36 @@ app.post('/api/vouchers/:voucherId/approve', async (req, res) => {
       console.log(`   ❌ Voucher is not pending, status: ${voucher.status}`);
       return res.status(400).json({ error: 'Voucher is not pending' });
     }
-    
+
+    // ── Suspense-settlement fast path ──────────────────────────────────────────
+    // Vouchers created from suspense settlement entries are pre-paid — the cash
+    // was already disbursed as the suspense advance.  After Admin approval they
+    // are immediately marked completed; no OTP or document step is triggered.
+    if (voucher.is_suspense_settlement) {
+      const now = new Date().toISOString();
+      await supabase.from('vouchers')
+        .update({
+          status: 'completed',
+          approved_by: approvedBy,
+          approved_at: now,
+          payee_otp_verified: true,
+          completed_at: now
+        })
+        .eq('id', req.params.voucherId);
+
+      // Notify the Accounts user who prepared the voucher
+      await supabase.from('notifications').insert({
+        user_id: voucher.prepared_by,
+        title: 'Suspense Voucher Approved & Completed',
+        message: `Voucher ${voucher.serial_number} (suspense settlement) has been approved and marked completed.`,
+        type: 'info',
+        voucher_id: req.params.voucherId
+      });
+
+      return res.json({ success: true, suspenseSettlement: true, message: 'Suspense-settlement voucher approved and completed.' });
+    }
+    // ──────────────────────────────────────────────────────────────────────────
+
     // Check if this payee requires OTP or document verification
     const requiresOtp = voucher.payee?.requires_otp !== false;
     const payeeType = voucher.payee?.payee_type || 'registered';
@@ -2604,7 +2634,7 @@ app.post('/api/suspense-vouchers/:id/approve', async (req, res) => {
       return res.status(403).json({ error: 'Unauthorized: Only admins can approve' });
     }
     const { data: sv, error } = await supabase.from('suspense_vouchers')
-      .update({ status: 'open', approved_by: approvedBy, approved_at: new Date().toISOString() })
+      .update({ status: 'awaiting_payee_otp', approved_by: approvedBy, approved_at: new Date().toISOString() })
       .eq('id', req.params.id)
       .eq('status', 'pending_approval')
       .select().single();
@@ -2637,46 +2667,165 @@ app.post('/api/suspense-vouchers/:id/approve', async (req, res) => {
     if (!payee) {
       return res.status(400).json({ error: 'The suspense staff payee is missing. Please update the voucher or set up the staff payee first.' });
     }
+    if (!payee.mobile) {
+      return res.status(400).json({ error: 'Staff payee has no registered mobile number. OTP cannot be sent.' });
+    }
 
+    // Send OTP to the staff payee so they can confirm receipt of the advance.
+    // The settlement form link is only activated AFTER OTP is verified.
+    const formattedMobile = formatMobile(payee.mobile);
+    const otpResponse = await fetch(
+      `${TWOFACTOR_BASE_URL}/${TWOFACTOR_API_KEY}/SMS/${formattedMobile}/AUTOGEN/${TWOFACTOR_TEMPLATE_NAME}`
+    );
+    const otpData = await otpResponse.json();
+    if (otpData.Status !== 'Success') {
+      // Roll back status so Admin can retry
+      await supabase.from('suspense_vouchers').update({ status: 'pending_approval', approved_by: null, approved_at: null }).eq('id', sv.id);
+      return res.status(500).json({ error: 'Failed to send OTP to payee', details: otpData.Details });
+    }
+    await saveOtpSession(formattedMobile, otpData.Details, 'suspense_advance', null, sv.id);
+
+    // Notify Accounts creator that OTP has been sent and is awaiting verification
+    const { data: approver } = await supabase.from('users').select('name').eq('id', approvedBy).single();
+    await supabase.from('notifications').insert({
+      user_id: sv.created_by,
+      title: 'Suspense Voucher Approved — OTP Sent',
+      message: `${sv.serial_number} approved by ${approver?.name || 'Admin'}. OTP sent to ${payee.name} (${payee.mobile.replace(/\d(?=\d{4})/g, '*')}) to confirm advance receipt. Please verify the OTP to activate the settlement link.`,
+      type: 'info'
+    });
+
+    res.json({
+      success: true,
+      requiresOtp: true,
+      payeeName: payee.name,
+      payeeMobile: payee.mobile.replace(/\d(?=\d{4})/g, '*'),
+      suspenseVoucher: sv
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Verify advance OTP — confirms payee received the suspense advance.
+// On success the voucher moves to 'open' and the settlement SMS link is activated.
+app.post('/api/suspense-vouchers/:id/verify-advance-otp', async (req, res) => {
+  const { otp, verifiedBy } = req.body;
+  if (!otp) return res.status(400).json({ error: 'otp is required' });
+  if (!verifiedBy) return res.status(400).json({ error: 'verifiedBy is required' });
+  try {
+    const actor = await getActorRole(verifiedBy);
+    if (actor.role !== 'accounts' && actor.role !== 'admin' && !actor.is_super_admin) {
+      return res.status(403).json({ error: 'Unauthorized' });
+    }
+
+    const { data: sv, error: svErr } = await supabase.from('suspense_vouchers')
+      .select('*, payees!suspense_vouchers_staff_payee_id_fkey(id, mobile, name, user_id, is_staff)')
+      .eq('id', req.params.id)
+      .single();
+    if (svErr || !sv) return res.status(404).json({ error: 'Suspense voucher not found' });
+    if (sv.status !== 'awaiting_payee_otp') {
+      return res.status(400).json({ error: `Voucher is not awaiting OTP (status: ${sv.status})` });
+    }
+
+    const payee = sv.payees;
+    if (!payee?.mobile) return res.status(400).json({ error: 'Payee mobile not found' });
+
+    // Verify OTP via 2Factor
+    const formattedMobile = formatMobile(payee.mobile);
+    const session = await getOtpSession(formattedMobile);
+    if (!session) {
+      return res.status(400).json({ error: 'No active OTP session found. Please resend OTP first.' });
+    }
+    const result = await call2FactorAPI(
+      `/SMS/VERIFY/${session.sessionId}/${otp}`,
+      `Verify advance OTP for suspense ${sv.serial_number}`
+    );
+    if (!result.success || result.data.Details !== 'OTP Matched') {
+      return res.status(400).json({ error: 'Invalid OTP', details: result.data?.Details });
+    }
+
+    // Mark voucher as open and stamp the verification timestamp
+    const now = new Date().toISOString();
+    await supabase.from('suspense_vouchers')
+      .update({ status: 'open', advance_otp_verified_at: now })
+      .eq('id', sv.id);
+
+    // Now create the settlement session and send the SMS link
     const settlementToken = generateSettlementToken();
-    // No fixed expiry — use a far-future sentinel date; expires_at is updated explicitly
-    // on resend (new link issued) or when the voucher closes.
     const farFuture = '2099-12-31T23:59:59.000Z';
-    const { data: session, error: sessionError } = await supabase.from('settlement_sessions').insert({
+    const { data: session_data, error: sessionError } = await supabase.from('settlement_sessions').insert({
       suspense_id: sv.id,
       payee_id: payee.id,
       token: settlementToken,
       expires_at: farFuture,
-      last_sent_at: new Date().toISOString()
+      last_sent_at: now
     }).select().single();
     if (sessionError) throw sessionError;
 
     const baseUrl = process.env.APP_BASE_URL || `${req.protocol}://${req.get('host')}`;
     const settlementUrl = `${baseUrl}/settlement/${settlementToken}`;
     const smsMessage = `Your settlement form for suspense voucher ${sv.serial_number} is ready. Open it here: ${settlementUrl}`;
-    await send2FactorSms(payee.mobile, smsMessage);
+    const smsSent = await send2FactorSms(payee.mobile, smsMessage);
 
-    // Notify creator and payee (payee may not be an app user — skip in-app notification if so)
-    const { data: approver } = await supabase.from('users').select('name').eq('id', approvedBy).single();
-    const approvalNotifications = [
+    // Notify creator + payee (if a system user)
+    const { data: verifier } = await supabase.from('users').select('name').eq('id', verifiedBy).single();
+    const notifications = [
       {
         user_id: sv.created_by,
-        title: 'Suspense Voucher Approved',
-        message: `Suspense voucher ${sv.serial_number} has been approved by ${approver?.name || 'Admin'}.`,
+        title: 'Suspense Voucher Active',
+        message: `${sv.serial_number} is now open. ${payee.name} confirmed advance receipt via OTP. Settlement link has been sent.`,
         type: 'info'
       }
     ];
     if (payee.user_id) {
-      approvalNotifications.push({
+      notifications.push({
         user_id: payee.user_id,
         title: 'Settlement Form Ready',
-        message: `Your settlement form for ${sv.serial_number} is ready. Please submit your entries.`,
+        message: `Your settlement form for ${sv.serial_number} is ready. Please submit your expense entries.`,
         type: 'info'
       });
     }
-    await supabase.from('notifications').insert(approvalNotifications);
+    await supabase.from('notifications').insert(notifications);
 
-    res.json({ success: true, suspenseVoucher: sv, settlementSession: session, settlementUrl });
+    res.json({ success: true, settlementUrl, smsSent: smsSent !== false });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Resend advance OTP for a suspense voucher that is awaiting payee confirmation
+app.post('/api/suspense-vouchers/:id/resend-advance-otp', async (req, res) => {
+  const { requestedBy } = req.body;
+  if (!requestedBy) return res.status(400).json({ error: 'requestedBy is required' });
+  try {
+    const actor = await getActorRole(requestedBy);
+    if (actor.role !== 'accounts' && actor.role !== 'admin' && !actor.is_super_admin) {
+      return res.status(403).json({ error: 'Unauthorized' });
+    }
+
+    const { data: sv, error: svErr } = await supabase.from('suspense_vouchers')
+      .select('*, payees!suspense_vouchers_staff_payee_id_fkey(id, mobile, name)')
+      .eq('id', req.params.id)
+      .single();
+    if (svErr || !sv) return res.status(404).json({ error: 'Suspense voucher not found' });
+    if (sv.status !== 'awaiting_payee_otp') {
+      return res.status(400).json({ error: `Voucher is not awaiting OTP (status: ${sv.status})` });
+    }
+
+    const payee = sv.payees;
+    if (!payee?.mobile) return res.status(400).json({ error: 'Payee mobile not found' });
+
+    const formattedMobile = formatMobile(payee.mobile);
+    const otpResponse = await fetch(
+      `${TWOFACTOR_BASE_URL}/${TWOFACTOR_API_KEY}/SMS/${formattedMobile}/AUTOGEN/${TWOFACTOR_TEMPLATE_NAME}`
+    );
+    const otpData = await otpResponse.json();
+    if (otpData.Status !== 'Success') {
+      return res.status(500).json({ error: 'Failed to resend OTP', details: otpData.Details });
+    }
+    await saveOtpSession(formattedMobile, otpData.Details, 'suspense_advance', null, sv.id);
+
+    res.json({ success: true, payeeMobile: payee.mobile.replace(/\d(?=\d{4})/g, '*') });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -3101,22 +3250,22 @@ app.post('/api/suspense-settlements/:settlementId/approve', async (req, res) => 
         payment_mode: paymentMode,
         payee_id: payee.id,
         prepared_by: approvedBy,
-        // Voucher is immediately completed — payment was already made as suspense advance.
-        // It must NOT re-enter the pending → approval → OTP payment flow.
-        status: 'completed',
-        approved_by: approvedBy,
-        approved_at: now,
-        payee_otp_verified: true,
-        payee_signature: suspenseSignature,
-        completed_at: now,
+        // Enter normal pending → Admin approval flow.
+        // After Admin approval the endpoint detects is_suspense_settlement and
+        // completes the voucher immediately (no OTP — payment was already disbursed).
+        status: 'pending',
         submitted_at: now,
+        // Audit trail: proves this voucher originates from a suspense settlement.
+        is_suspense_settlement: true,
+        payee_signature: suspenseSignature,
         invoice_reference: invoiceReference,
         settlement_id: settlement.id
       }).select().single();
       if (createVoucherError) throw createVoucherError;
       voucher = createdVoucher;
 
-      // Copy all attachments from the settlement entry to the linked voucher for traceability
+      // Copy only the attachments that staff uploaded against THIS expense entry.
+      // (Filtered strictly by settlement_id — no other entry's or suspense-level attachments are included.)
       await supabase.from('voucher_attachments')
         .update({ voucher_id: voucher.id })
         .eq('settlement_id', settlement.id);
@@ -3141,6 +3290,145 @@ app.post('/api/suspense-settlements/:settlementId/approve', async (req, res) => 
       .eq('id', sv.id);
 
     res.json({ success: true, settlement: approvedSettlement, voucher });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Combine multiple pending_review expense entries into one payment voucher (Accounts only)
+app.post('/api/suspense-vouchers/:suspenseId/combine-settlements', async (req, res) => {
+  const { approvedBy, settlementIds, voucherData } = req.body;
+  if (!approvedBy) return res.status(400).json({ error: 'approvedBy is required' });
+  if (!Array.isArray(settlementIds) || settlementIds.length < 2) {
+    return res.status(400).json({ error: 'At least 2 settlement entries must be selected to combine' });
+  }
+  if (!voucherData?.headOfAccount) {
+    return res.status(400).json({ error: 'Head of Account is required' });
+  }
+
+  try {
+    const actor = await getActorRole(approvedBy);
+    if (actor.role !== 'accounts' && !actor.is_super_admin) {
+      return res.status(403).json({ error: 'Unauthorized: Only Accounts users or Super Admin can combine settlement entries' });
+    }
+
+    // Fetch the suspense voucher
+    const { data: sv, error: svError } = await supabase.from('suspense_vouchers')
+      .select('*')
+      .eq('id', req.params.suspenseId)
+      .single();
+    if (svError || !sv) return res.status(404).json({ error: 'Suspense voucher not found' });
+
+    // Fetch all selected settlement entries
+    const { data: settlements, error: sErr } = await supabase.from('suspense_settlements')
+      .select('*')
+      .in('id', settlementIds);
+    if (sErr || !settlements || settlements.length === 0) {
+      return res.status(404).json({ error: 'One or more settlement entries not found' });
+    }
+
+    // Validate every entry: must belong to this voucher, be pending_review, and be an expense
+    for (const s of settlements) {
+      if (s.suspense_id !== req.params.suspenseId) {
+        return res.status(400).json({ error: `Entry ${s.id} does not belong to this suspense voucher` });
+      }
+      if (s.status !== 'pending_review') {
+        return res.status(400).json({ error: `Entry "${s.description}" is not pending review (status: ${s.status})` });
+      }
+      if (s.entry_type !== 'expense') {
+        return res.status(400).json({ error: `Only expense entries can be combined (entry "${s.description}" is "${s.entry_type}")` });
+      }
+    }
+
+    const { data: payee } = await supabase.from('payees')
+      .select('id,user_id,name,mobile')
+      .eq('id', sv.staff_payee_id)
+      .single();
+    if (!payee) return res.status(400).json({ error: 'No designated staff payee found for this suspense voucher' });
+
+    // Compute combined amount
+    const totalAmount = settlements.reduce((sum, s) => sum + parseFloat(s.amount), 0);
+
+    // Build narration: respect custom narration if provided, otherwise join descriptions
+    const headOfAccount = voucherData.headOfAccount;
+    const subHeadOfAccount = voucherData.subHeadOfAccount || null;
+    const narration = voucherData.narration ||
+      settlements.map(s => s.description).join(' | ');
+    const paymentMode = voucherData.paymentMode || sv.payment_mode || 'UPI';
+    const invoiceReference = voucherData.invoiceReference || null;
+    const narrationWithRef = `[Pre-paid via Suspense ${sv.serial_number}] ${narration}`;
+
+    const suspenseSignature = Buffer.from(
+      `suspense:${sv.serial_number}:combined:${approvedBy}:${Date.now()}`
+    ).toString('base64');
+
+    // Create the single combined voucher
+    const serialNumber = await getNextVoucherNumber(sv.company_id);
+    const now = new Date().toISOString();
+    const { data: voucher, error: createVoucherError } = await supabase.from('vouchers').insert({
+      company_id: sv.company_id,
+      serial_number: serialNumber,
+      head_of_account: headOfAccount,
+      sub_head_of_account: subHeadOfAccount,
+      narration: narrationWithRef,
+      amount: totalAmount,
+      payment_mode: paymentMode,
+      payee_id: payee.id,
+      prepared_by: approvedBy,
+      // Enter normal pending → Admin approval flow.
+      // After Admin approval the endpoint detects is_suspense_settlement and
+      // completes the voucher immediately (no OTP — payment was already disbursed).
+      status: 'pending',
+      submitted_at: now,
+      // Audit trail: proves this voucher originates from combined suspense settlements.
+      is_suspense_settlement: true,
+      payee_signature: suspenseSignature,
+      invoice_reference: invoiceReference,
+      // settlement_id is null — this voucher spans multiple entries.
+      // The back-link lives on each suspense_settlements.voucher_id instead.
+      settlement_id: null
+    }).select().single();
+    if (createVoucherError) throw createVoucherError;
+
+    // Approve each settlement entry, stamp HoA, and record the linked voucher
+    const approvePromises = settlementIds.map(id =>
+      supabase.from('suspense_settlements').update({
+        status: 'approved',
+        reviewed_by: approvedBy,
+        reviewed_at: now,
+        head_of_account: headOfAccount,
+        ...(subHeadOfAccount ? { sub_head_of_account: subHeadOfAccount } : {}),
+        voucher_id: voucher.id
+      }).eq('id', id)
+    );
+    await Promise.all(approvePromises);
+
+    // Copy only the attachments that staff uploaded against each selected expense entry.
+    // Strictly filtered per settlement_id — no other entry's or suspense-level attachments included.
+    for (const id of settlementIds) {
+      await supabase.from('voucher_attachments')
+        .update({ voucher_id: voucher.id })
+        .eq('settlement_id', id);
+    }
+
+    // Recalculate suspense voucher balance
+    const { data: approvedSettlements } = await supabase.from('suspense_settlements')
+      .select('entry_type, amount')
+      .eq('suspense_id', sv.id)
+      .eq('status', 'approved');
+
+    let balance = parseFloat(sv.advance_amount);
+    for (const s of (approvedSettlements || [])) {
+      if (s.entry_type === 'expense') balance -= parseFloat(s.amount);
+      else if (s.entry_type === 'refund') balance += parseFloat(s.amount);
+      else if (s.entry_type === 'topup') balance += parseFloat(s.amount);
+    }
+    const newStatus = sv.status === 'open' ? 'partial' : sv.status;
+    await supabase.from('suspense_vouchers')
+      .update({ balance_amount: balance, status: newStatus })
+      .eq('id', sv.id);
+
+    res.json({ success: true, voucher, combinedCount: settlementIds.length, totalAmount });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

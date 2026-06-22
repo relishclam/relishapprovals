@@ -158,12 +158,15 @@ const api = {
   createSuspenseVoucher: (data) => fetch(`${API_BASE}/suspense-vouchers`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
   getSuspenseVoucher: (id) => fetch(`${API_BASE}/suspense-vouchers/${id}`).then(r => r.json()),
   approveSuspenseVoucher: (id, approvedBy) => fetch(`${API_BASE}/suspense-vouchers/${id}/approve`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ approvedBy }) }).then(r => r.json()),
+  verifyAdvanceOtp: (id, otp, verifiedBy) => fetch(`${API_BASE}/suspense-vouchers/${id}/verify-advance-otp`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ otp, verifiedBy }) }).then(r => r.json()),
+  resendAdvanceOtp: (id, requestedBy) => fetch(`${API_BASE}/suspense-vouchers/${id}/resend-advance-otp`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ requestedBy }) }).then(r => r.json()),
   rejectSuspenseVoucher: (id, rejectedBy, reason) => fetch(`${API_BASE}/suspense-vouchers/${id}/reject`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rejectedBy, reason }) }).then(r => r.json()),
   addSuspenseSettlement: (suspenseId, data) => fetch(`${API_BASE}/suspense-vouchers/${suspenseId}/settlements`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
   getSuspenseSettlements: (suspenseId) => fetch(`${API_BASE}/suspense-vouchers/${suspenseId}/settlements`).then(r => r.json()),
   getSettlementSession: (token) => fetch(`${API_BASE}/settlement-sessions/${token}`).then(r => r.json()),
   submitSettlementSession: (token, data) => fetch(`${API_BASE}/settlement-sessions/${token}/settlements`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
   approveSettlementEntry: (settlementId, data) => fetch(`${API_BASE}/suspense-settlements/${settlementId}/approve`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
+  combineSettlements: (suspenseId, data) => fetch(`${API_BASE}/suspense-vouchers/${suspenseId}/combine-settlements`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
   resendSettlementLink: (suspenseId, requestedBy) => fetch(`${API_BASE}/suspense-vouchers/${suspenseId}/resend-settlement-link`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ requestedBy }) }).then(r => r.json()),
   topUpSuspenseVoucher: (suspenseId, data) => fetch(`${API_BASE}/suspense-vouchers/${suspenseId}/topup`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
   approveTopUp: (settlementId, approvedBy) => fetch(`${API_BASE}/suspense-settlements/${settlementId}/approve-topup`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ approvedBy }) }).then(r => r.json()),
@@ -5762,6 +5765,125 @@ const SuspenseVoucherForm = ({ onCreated, onViewDetail }) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // PENDING TOP-UP APPROVALS PANEL (Admin / Super Admin only)
 // ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// PENDING NEW SUSPENSE VOUCHERS PANEL (Admin / Super Admin only)
+// ─────────────────────────────────────────────────────────────────────────────
+const PendingNewVouchersPanel = ({ onViewVoucher }) => {
+  const { user, addToast } = useApp();
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [actionId, setActionId] = useState(null);
+  const [showRejectModal, setShowRejectModal] = useState(false);
+  const [rejectingVoucher, setRejectingVoucher] = useState(null);
+  const [rejectReason, setRejectReason] = useState('');
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const data = await api.getSuspenseVouchers(user.company.id, { status: 'pending_approval' });
+      setItems(data.suspenseVouchers || []);
+    } catch { /* silently skip */ }
+    setLoading(false);
+  };
+
+  useEffect(() => { load(); }, [user.company.id]);
+
+  const handleApprove = async (sv) => {
+    setActionId(sv.id);
+    const result = await api.approveSuspenseVoucher(sv.id, user.id);
+    if (result.success) {
+      addToast(`${sv.serial_number} approved — OTP sent to ${result.payeeName || 'staff'} (${result.payeeMobile || ''}). Open the voucher to verify OTP and activate the settlement link.`, 'success');
+      load();
+    } else addToast(result.error || 'Approval failed', 'error');
+    setActionId(null);
+  };
+
+  const openReject = (sv) => { setRejectingVoucher(sv); setRejectReason(''); setShowRejectModal(true); };
+
+  const confirmReject = async () => {
+    setActionId(rejectingVoucher.id);
+    const result = await api.rejectSuspenseVoucher(rejectingVoucher.id, user.id, rejectReason);
+    if (result.success) { addToast(`${rejectingVoucher.serial_number} rejected`, 'success'); setShowRejectModal(false); load(); }
+    else addToast(result.error || 'Rejection failed', 'error');
+    setActionId(null);
+  };
+
+  if (!loading && items.length === 0) return null;
+
+  return (
+    <div className="card" style={{ marginBottom: '1rem', border: '2px solid #f59e0b', borderRadius: '10px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '0.85rem' }}>
+        <span style={{ fontSize: '1.25rem' }}>💼</span>
+        <h3 style={{ fontWeight: 700, fontSize: '0.95rem', color: '#b45309', margin: 0 }}>
+          New Suspense Vouchers — Awaiting Approval
+        </h3>
+        {items.length > 0 && (
+          <span style={{ background: '#f59e0b', color: 'white', borderRadius: '12px', padding: '1px 8px', fontSize: '0.75rem', fontWeight: 700 }}>{items.length}</span>
+        )}
+      </div>
+      {loading ? (
+        <div style={{ color: '#9ca3af', fontSize: '0.85rem' }}>{Icons.loader} Loading...</div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+          {items.map(sv => (
+            <div key={sv.id} style={{ background: '#fffbeb', border: '1px solid #fde68a', borderRadius: '8px', padding: '0.75rem 1rem', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem' }}>
+              <div style={{ flex: 1, minWidth: '180px' }}>
+                <div style={{ fontWeight: 700, fontSize: '0.95rem', color: '#1f2937' }}>
+                  <button style={{ background: 'none', border: 'none', color: '#f5841f', cursor: 'pointer', padding: 0, fontWeight: 700, fontSize: '0.95rem', textDecoration: 'underline' }}
+                    onClick={() => onViewVoucher && onViewVoucher(sv.id)}>{sv.serial_number}</button>
+                  <span style={{ fontWeight: 400, color: '#6b7280', fontSize: '0.8rem', marginLeft: '0.5rem' }}>{sv.purpose}</span>
+                </div>
+                <div style={{ fontSize: '0.82rem', color: '#4b5563', marginTop: '2px' }}>
+                  <span style={{ background: '#10b981', color: 'white', fontSize: '0.68rem', padding: '1px 5px', borderRadius: '3px', fontWeight: 600, marginRight: '4px' }}>👤 Staff</span>
+                  {sv.staff_payee?.name || sv.staff?.name || 'Unknown'}
+                  {sv.payment_mode && <span style={{ color: '#9ca3af' }}> · {sv.payment_mode}</span>}
+                </div>
+                <div style={{ fontSize: '0.75rem', color: '#9ca3af', marginTop: '2px' }}>
+                  Advance: <strong style={{ color: '#f5841f' }}>{formatRupees(sv.advance_amount)}</strong>
+                  {sv.creator?.name && <span> · Requested by {sv.creator.name}</span>}
+                  {' · '}{new Date(sv.created_at).toLocaleDateString('en-IN')}
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: '0.4rem', flexShrink: 0 }}>
+                <button className="btn btn-sm btn-success" disabled={actionId === sv.id} onClick={() => handleApprove(sv)} style={{ fontSize: '0.8rem' }}>
+                  {actionId === sv.id ? Icons.loader : '✅'} Approve
+                </button>
+                <button className="btn btn-sm btn-danger" disabled={actionId === sv.id} onClick={() => openReject(sv)} style={{ fontSize: '0.8rem' }}>
+                  ✕ Reject
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      {showRejectModal && rejectingVoucher && (
+        <div className="modal-overlay" onClick={() => setShowRejectModal(false)}>
+          <div className="modal" style={{ maxWidth: '420px' }} onClick={e => e.stopPropagation()}>
+            <div className="modal-header" style={{ background: '#ef4444', color: 'white' }}>
+              <h3 className="modal-title" style={{ color: 'white' }}>✕ Reject Suspense Voucher</h3>
+              <button className="modal-close" style={{ color: 'white' }} onClick={() => setShowRejectModal(false)}>×</button>
+            </div>
+            <div className="modal-body">
+              <div style={{ background: '#f8fafc', borderRadius: '8px', padding: '0.75rem', marginBottom: '1rem', fontSize: '0.875rem' }}>
+                <strong>{rejectingVoucher.serial_number}</strong> · {rejectingVoucher.purpose} · {formatRupees(rejectingVoucher.advance_amount)}
+                <div style={{ marginTop: '4px', color: '#6b7280', fontSize: '0.8rem' }}>Staff: {rejectingVoucher.staff_payee?.name || rejectingVoucher.staff?.name}</div>
+              </div>
+              <div className="form-group">
+                <label className="form-label">Reason for Rejection (optional)</label>
+                <textarea className="form-input" rows={3} placeholder="Enter reason..." value={rejectReason} onChange={e => setRejectReason(e.target.value)} autoFocus />
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setShowRejectModal(false)}>Cancel</button>
+              <button className="btn btn-danger" onClick={confirmReject} disabled={!!actionId}>{actionId ? Icons.loader : '✕'} Confirm Rejection</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 const PendingTopUpsPanel = ({ onViewVoucher }) => {
   const { user, addToast } = useApp();
   const [items, setItems] = useState([]);
@@ -5928,7 +6050,10 @@ const SuspenseVoucherList = ({ onViewDetail }) => {
       </div>
 
       {(user.role === 'admin' || user.isSuperAdmin) && (
-        <PendingTopUpsPanel onViewVoucher={(id) => onViewDetail && onViewDetail(id)} />
+        <>
+          <PendingNewVouchersPanel onViewVoucher={(id) => onViewDetail && onViewDetail(id)} />
+          <PendingTopUpsPanel onViewVoucher={(id) => onViewDetail && onViewDetail(id)} />
+        </>
       )}
 
       {loading ? (
@@ -6068,6 +6193,13 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
   const [showRejectTopUpModal, setShowRejectTopUpModal] = useState(false);
   const [rejectingTopUpEntry, setRejectingTopUpEntry] = useState(null);
   const [rejectTopUpReason, setRejectTopUpReason] = useState('');
+  const [selectedSettlements, setSelectedSettlements] = useState(new Set());
+  const [showCombineModal, setShowCombineModal] = useState(false);
+  const [combineForm, setCombineForm] = useState({ headOfAccount: '', subHeadOfAccount: '', narration: '', invoiceReference: '', paymentMode: 'UPI' });
+  const [combineLoading, setCombineLoading] = useState(false);
+  const [showAdvanceOtpModal, setShowAdvanceOtpModal] = useState(false);
+  const [advanceOtp, setAdvanceOtp] = useState('');
+  const [advanceOtpLoading, setAdvanceOtpLoading] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -6083,9 +6215,44 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
   const handleApprove = async () => {
     setActionLoading(true);
     const result = await api.approveSuspenseVoucher(suspenseId, user.id);
-    if (result.success) { addToast('Suspense voucher approved', 'success'); load(); }
-    else addToast(result.error || 'Approval failed', 'error');
+    if (result.success && result.requiresOtp) {
+      addToast(`${sv.serial_number} approved — OTP sent to ${result.payeeName} (${result.payeeMobile}). Please verify OTP to activate the settlement link.`, 'success');
+      setAdvanceOtp('');
+      setShowAdvanceOtpModal(true);
+      load();
+    } else if (result.success) {
+      addToast('Suspense voucher approved', 'success');
+      load();
+    } else {
+      addToast(result.error || 'Approval failed', 'error');
+    }
     setActionLoading(false);
+  };
+
+  const handleVerifyAdvanceOtp = async () => {
+    if (advanceOtp.length < 6) { addToast('Enter the complete 6-digit OTP', 'error'); return; }
+    setAdvanceOtpLoading(true);
+    const result = await api.verifyAdvanceOtp(suspenseId, advanceOtp, user.id);
+    if (result.success) {
+      addToast('OTP verified — settlement link sent to staff' + (result.smsSent ? '' : ' (SMS failed — share link manually)'), result.smsSent ? 'success' : 'warning');
+      setShowAdvanceOtpModal(false);
+      setAdvanceOtp('');
+      if (!result.smsSent && result.settlementUrl) {
+        setShareUrl(result.settlementUrl);
+        setShareSmsStatus('failed');
+        setShowShareModal(true);
+      }
+      load();
+    } else {
+      addToast(result.error || 'OTP verification failed', 'error');
+    }
+    setAdvanceOtpLoading(false);
+  };
+
+  const handleResendAdvanceOtp = async () => {
+    const result = await api.resendAdvanceOtp(suspenseId, user.id);
+    if (result.success) addToast(`OTP resent to ${result.payeeMobile}`, 'success');
+    else addToast(result.error || 'Failed to resend OTP', 'error');
   };
 
   const handleReject = async () => {
@@ -6165,6 +6332,41 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
     setCloseLoading(false);
   };
 
+  const toggleSelectSettlement = (id) => {
+    setSelectedSettlements(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const openCombineModal = () => {
+    const selected = (sv.settlements || []).filter(s => selectedSettlements.has(s.id));
+    const defaultNarration = selected.map(s => s.description).join(' | ');
+    api.getHeadsOfAccount(user.company.id).then(data => { if (Array.isArray(data)) setHeads(data.sort((a, b) => a.name.localeCompare(b.name))); });
+    setCombineForm({ headOfAccount: '', subHeadOfAccount: '', narration: defaultNarration, invoiceReference: '', paymentMode: sv?.payment_mode || 'UPI' });
+    setShowCombineModal(true);
+  };
+
+  const handleCombineSettlements = async () => {
+    if (!combineForm.headOfAccount) { addToast('Please select a Head of Account', 'error'); return; }
+    setCombineLoading(true);
+    const result = await api.combineSettlements(suspenseId, {
+      approvedBy: user.id,
+      settlementIds: Array.from(selectedSettlements),
+      voucherData: { headOfAccount: combineForm.headOfAccount, subHeadOfAccount: combineForm.subHeadOfAccount || null, narration: combineForm.narration, invoiceReference: combineForm.invoiceReference || null, paymentMode: combineForm.paymentMode }
+    });
+    if (result.success) {
+      addToast(`${result.combinedCount} entries combined → Voucher ${result.voucher.serial_number} created (${formatRupees(result.totalAmount)})`, 'success');
+      setShowCombineModal(false);
+      setSelectedSettlements(new Set());
+      load();
+    } else {
+      addToast(result.error || 'Combine failed', 'error');
+    }
+    setCombineLoading(false);
+  };
+
   const openApproveModal = (entry) => {
     setApprovingEntry(entry);
     setApproveForm({ headOfAccount: entry.head_of_account || '', subHeadOfAccount: '', narration: entry.description, invoiceReference: entry.reference_number || '', paymentMode: sv?.payment_mode || 'UPI', createVoucher: true });
@@ -6186,7 +6388,7 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
   };
 
   const statusBadge = (status) => {
-    const map = { pending_approval: ['Pending Approval', '#f59e0b', '#fffbeb'], open: ['Open', '#10b981', '#ecfdf5'], partial: ['Partial', '#3b82f6', '#eff6ff'], closed: ['Closed', '#6b7280', '#f3f4f6'], rejected: ['Rejected', '#ef4444', '#fef2f2'] };
+    const map = { pending_approval: ['Pending Approval', '#f59e0b', '#fffbeb'], awaiting_payee_otp: ['Awaiting Advance OTP', '#ea580c', '#fff7ed'], open: ['Open', '#10b981', '#ecfdf5'], partial: ['Partial', '#3b82f6', '#eff6ff'], closed: ['Closed', '#6b7280', '#f3f4f6'], rejected: ['Rejected', '#ef4444', '#fef2f2'] };
     const [label, color, bg] = map[status] || [status, '#666', '#eee'];
     return <span style={{ background: bg, color, padding: '3px 10px', borderRadius: '4px', fontSize: '0.8rem', fontWeight: 600 }}>{label}</span>;
   };
@@ -6223,10 +6425,13 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
               <button className="btn btn-sm btn-success" onClick={handleApprove} disabled={actionLoading}>{actionLoading ? Icons.loader : Icons.check} Approve</button>
             </>
           )}
+          {(user.role === 'accounts' || user.isSuperAdmin || isAdmin) && sv.status === 'awaiting_payee_otp' && (
+            <button className="btn btn-sm btn-warning" style={{ background: '#ea580c', color: 'white', border: 'none' }} onClick={() => { setAdvanceOtp(''); setShowAdvanceOtpModal(true); }}>🔐 Verify Advance OTP</button>
+          )}
           {(user.role === 'accounts' || user.isSuperAdmin || isAdmin) && (sv.status === 'open' || sv.status === 'partial') && (
             <button className="btn btn-sm btn-secondary" onClick={handleResendLink} disabled={resendLoading}>{resendLoading ? Icons.loader : '📲'} Resend Link</button>
           )}
-          {(user.role === 'accounts' || user.isSuperAdmin) && (sv.status === 'open' || sv.status === 'partial' || sv.status === 'closed') && sv.status !== 'pending_approval' && sv.status !== 'rejected' && (
+          {(user.role === 'accounts' || user.isSuperAdmin) && (sv.status === 'open' || sv.status === 'partial' || sv.status === 'closed') && sv.status !== 'pending_approval' && sv.status !== 'rejected' && sv.status !== 'awaiting_payee_otp' && (
             <button className="btn btn-sm btn-success" onClick={() => { setTopUpForm({ amount: '', description: `Additional advance for ${sv.purpose}` }); setShowTopUp(true); }}>💰 Top Up</button>
           )}
           {(user.role === 'accounts' || user.isSuperAdmin) && (sv.status === 'open' || sv.status === 'partial') && (
@@ -6282,6 +6487,15 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
       {sv.settlements && sv.settlements.length > 0 && (
         <div className="card" style={{ marginBottom: '1rem' }}>
           <h3 style={{ fontWeight: 600, fontSize: '0.95rem', marginBottom: '0.75rem' }}>Settlement Entries</h3>
+          {(user.role === 'accounts' || user.isSuperAdmin) && selectedSettlements.size >= 2 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '8px', padding: '0.6rem 1rem', marginBottom: '0.75rem', flexWrap: 'wrap' }}>
+              <span style={{ fontSize: '0.85rem', color: '#1d4ed8', fontWeight: 600 }}>
+                🔗 {selectedSettlements.size} entries selected · Total: {formatRupees((sv.settlements || []).filter(s => selectedSettlements.has(s.id)).reduce((sum, s) => sum + parseFloat(s.amount), 0))}
+              </span>
+              <button className="btn btn-sm btn-primary" style={{ fontSize: '0.8rem' }} onClick={openCombineModal}>🔗 Combine into One Voucher</button>
+              <button className="btn btn-sm btn-secondary" style={{ fontSize: '0.8rem' }} onClick={() => setSelectedSettlements(new Set())}>✕ Clear Selection</button>
+            </div>
+          )}
           {sv.total_expenses_approved != null && sv.total_suspense_sent != null && sv.total_expenses_approved > sv.total_suspense_sent && (
             <div style={{ background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: '8px', padding: '0.75rem 1rem', marginBottom: '0.75rem', fontSize: '0.85rem', color: '#991b1b' }}>
               ⚠️ <strong>Over-spending detected.</strong> Total approved expenses ({formatRupees(sv.total_expenses_approved)}) exceed total suspense sent ({formatRupees(sv.total_suspense_sent)}) by <strong>{formatRupees(sv.total_expenses_approved - sv.total_suspense_sent)}</strong>. Staff may have spent from their own funds. Please review and close the voucher when settled.
@@ -6291,6 +6505,7 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
               <thead>
                 <tr style={{ background: '#f8f9fa' }}>
+                  {(user.role === 'accounts' || user.isSuperAdmin) && <th style={{ padding: '8px 8px', textAlign: 'center', borderBottom: '1px solid #e2e8f0', width: '36px' }}></th>}
                   <th style={{ padding: '8px 12px', textAlign: 'left', borderBottom: '1px solid #e2e8f0' }}>Date</th>
                   <th style={{ padding: '8px 12px', textAlign: 'left', borderBottom: '1px solid #e2e8f0' }}>Type</th>
                   <th style={{ padding: '8px 12px', textAlign: 'left', borderBottom: '1px solid #e2e8f0' }}>Description</th>
@@ -6303,6 +6518,13 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
               <tbody>
                 {sv.settlements.map((s, i) => (
                   <tr key={s.id} style={{ background: i % 2 === 0 ? 'white' : '#f8f9fa' }}>
+                    {(user.role === 'accounts' || user.isSuperAdmin) && (
+                      <td style={{ padding: '8px 8px', borderBottom: '1px solid #f0f0f0', textAlign: 'center' }}>
+                        {s.status === 'pending_review' && s.entry_type === 'expense' && (
+                          <input type="checkbox" checked={selectedSettlements.has(s.id)} onChange={() => toggleSelectSettlement(s.id)} style={{ width: '15px', height: '15px', cursor: 'pointer' }} title="Select to combine" />
+                        )}
+                      </td>
+                    )}
                     <td style={{ padding: '8px 12px', borderBottom: '1px solid #f0f0f0' }}>{new Date(s.created_at).toLocaleDateString('en-IN')}</td>
                     <td style={{ padding: '8px 12px', borderBottom: '1px solid #f0f0f0' }}><span style={{ color: entryTypeColor(s.entry_type), fontWeight: 600, fontSize: '0.8rem' }}>{entryTypeLabel(s.entry_type)}</span></td>
                     <td style={{ padding: '8px 12px', borderBottom: '1px solid #f0f0f0' }}>{s.description}{s.head_of_account && <span style={{ color: '#888', fontSize: '0.75rem' }}> · {s.head_of_account}</span>}</td>
@@ -6493,6 +6715,96 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
             <div className="modal-footer">
               <button className="btn btn-secondary" onClick={() => setShowRejectModal(false)}>Cancel</button>
               <button className="btn btn-danger" onClick={handleReject} disabled={actionLoading}>{actionLoading && Icons.loader} Confirm Rejection</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showAdvanceOtpModal && (
+        <div className="modal-overlay" onClick={() => setShowAdvanceOtpModal(false)}>
+          <div className="modal" style={{ maxWidth: '420px' }} onClick={e => e.stopPropagation()}>
+            <div className="modal-header" style={{ background: '#ea580c', color: 'white' }}>
+              <h3 className="modal-title" style={{ color: 'white' }}>🔐 Verify Advance Receipt OTP</h3>
+              <button className="modal-close" style={{ color: 'white' }} onClick={() => setShowAdvanceOtpModal(false)}>×</button>
+            </div>
+            <div className="modal-body">
+              <div style={{ background: '#fff7ed', border: '1px solid #fdba74', borderRadius: '8px', padding: '0.85rem', marginBottom: '1rem', fontSize: '0.85rem', color: '#9a3412' }}>
+                An OTP has been sent to <strong>{sv.staff_payee?.name || sv.staff?.name || 'the staff member'}</strong> ({sv.staff_payee?.mobile || sv.staff?.mobile || ''}). Ask them to share the OTP to confirm they have received the advance of <strong>{formatRupees(sv.advance_amount)}</strong>. The settlement form link will only be sent after this step.
+              </div>
+              <div className="form-group" style={{ textAlign: 'center' }}>
+                <label className="form-label" style={{ marginBottom: '0.75rem', display: 'block' }}>Enter OTP received by staff</label>
+                <OTPInput value={advanceOtp} onChange={setAdvanceOtp} />
+              </div>
+              <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1rem' }}>
+                <button className="btn btn-secondary btn-sm" style={{ flex: 1 }} onClick={handleResendAdvanceOtp}>🔄 Resend OTP</button>
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setShowAdvanceOtpModal(false)}>Cancel</button>
+              <button className="btn btn-success" onClick={handleVerifyAdvanceOtp} disabled={advanceOtpLoading || advanceOtp.length < 6}>{advanceOtpLoading ? Icons.loader : Icons.check} Verify & Activate</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showCombineModal && (
+        <div className="modal-overlay" onClick={() => setShowCombineModal(false)}>
+          <div className="modal" style={{ maxWidth: '560px' }} onClick={e => e.stopPropagation()}>
+            <div className="modal-header" style={{ background: '#2563eb', color: 'white' }}>
+              <h3 className="modal-title" style={{ color: 'white' }}>🔗 Combine Entries into One Voucher</h3>
+              <button className="modal-close" style={{ color: 'white' }} onClick={() => setShowCombineModal(false)}>×</button>
+            </div>
+            <div className="modal-body">
+              {/* Summary of selected entries */}
+              <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '0.85rem', marginBottom: '1rem' }}>
+                <div style={{ fontSize: '0.72rem', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.5rem' }}>Entries being combined</div>
+                {(sv.settlements || []).filter(s => selectedSettlements.has(s.id)).map(s => (
+                  <div key={s.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', padding: '3px 0', borderBottom: '1px solid #f1f5f9' }}>
+                    <span style={{ color: '#374151' }}>{s.description}</span>
+                    <span style={{ fontWeight: 600, color: '#ef4444' }}>{formatRupees(s.amount)}</span>
+                  </div>
+                ))}
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.9rem', fontWeight: 700, marginTop: '0.5rem', paddingTop: '0.4rem', borderTop: '2px solid #e2e8f0' }}>
+                  <span>Combined Total</span>
+                  <span style={{ color: '#1d4ed8' }}>{formatRupees((sv.settlements || []).filter(s => selectedSettlements.has(s.id)).reduce((sum, s) => sum + parseFloat(s.amount), 0))}</span>
+                </div>
+              </div>
+              <div style={{ background: '#f0fdf4', border: '1px solid #86efac', borderRadius: '8px', padding: '0.75rem', marginBottom: '1rem', fontSize: '0.82rem', color: '#166534' }}>
+                ✅ One <strong>Completed</strong> payment voucher will be created for the combined total. All bill attachments from each expense entry will be carried over to this voucher.
+              </div>
+              <div className="form-group">
+                <label className="form-label">Head of Account <span style={{ color: '#ef4444' }}>*</span></label>
+                <select className="form-select" value={combineForm.headOfAccount} onChange={e => setCombineForm(f => ({...f, headOfAccount: e.target.value}))}>
+                  <option value="">— Select Head of Account —</option>
+                  {heads.map(h => <option key={h.id} value={h.name}>{h.name}</option>)}
+                </select>
+              </div>
+              <div className="form-group">
+                <label className="form-label">Sub-Head (optional)</label>
+                <input className="form-input" type="text" placeholder="Sub-head of account" value={combineForm.subHeadOfAccount} onChange={e => setCombineForm(f => ({...f, subHeadOfAccount: e.target.value}))} />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Narration</label>
+                <textarea className="form-input" rows={3} value={combineForm.narration} onChange={e => setCombineForm(f => ({...f, narration: e.target.value}))} />
+              </div>
+              <div className="form-row">
+                <div className="form-group">
+                  <label className="form-label">Payment Mode</label>
+                  <select className="form-select" value={combineForm.paymentMode} onChange={e => setCombineForm(f => ({...f, paymentMode: e.target.value}))}>
+                    <option value="Cash">Cash</option>
+                    <option value="UPI">UPI</option>
+                    <option value="Account Transfer">Account Transfer</option>
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Invoice Ref. (optional)</label>
+                  <input className="form-input" type="text" placeholder="Invoice / Bill No." value={combineForm.invoiceReference} onChange={e => setCombineForm(f => ({...f, invoiceReference: e.target.value}))} />
+                </div>
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setShowCombineModal(false)}>Cancel</button>
+              <button className="btn btn-primary" onClick={handleCombineSettlements} disabled={combineLoading}>{combineLoading ? Icons.loader : '🔗'} Combine & Create Voucher</button>
             </div>
           </div>
         </div>
