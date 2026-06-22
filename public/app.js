@@ -154,6 +154,7 @@ const api = {
   deleteSubHeadOfAccount: (id) => fetch(`${API_BASE}/sub-heads-of-account/${id}`, { method: 'DELETE' }).then(r => r.json()),
   // Suspense vouchers
   getSuspenseVouchers: (companyId, params) => { const q = new URLSearchParams(params || {}).toString(); return fetch(`${API_BASE}/companies/${companyId}/suspense-vouchers${q ? '?' + q : ''}`).then(r => r.json()); },
+  getPendingTopUps: (companyId) => fetch(`${API_BASE}/companies/${companyId}/pending-topups`).then(r => r.json()),
   createSuspenseVoucher: (data) => fetch(`${API_BASE}/suspense-vouchers`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
   getSuspenseVoucher: (id) => fetch(`${API_BASE}/suspense-vouchers/${id}`).then(r => r.json()),
   approveSuspenseVoucher: (id, approvedBy) => fetch(`${API_BASE}/suspense-vouchers/${id}/approve`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ approvedBy }) }).then(r => r.json()),
@@ -5758,6 +5759,128 @@ const SuspenseVoucherForm = ({ onCreated, onViewDetail }) => {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// PENDING TOP-UP APPROVALS PANEL (Admin / Super Admin only)
+// ─────────────────────────────────────────────────────────────────────────────
+const PendingTopUpsPanel = ({ onViewVoucher }) => {
+  const { user, addToast } = useApp();
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [actionId, setActionId] = useState(null);
+  const [showRejectModal, setShowRejectModal] = useState(false);
+  const [rejectingEntry, setRejectingEntry] = useState(null);
+  const [rejectReason, setRejectReason] = useState('');
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const data = await api.getPendingTopUps(user.company.id);
+      setItems(data.pendingTopUps || []);
+    } catch { /* silently skip */ }
+    setLoading(false);
+  };
+
+  useEffect(() => { load(); }, [user.company.id]);
+
+  const handleApprove = async (entry) => {
+    setActionId(entry.id);
+    const result = await api.approveTopUp(entry.id, user.id);
+    if (result.success) {
+      addToast(`Top-up of ${formatRupees(entry.amount)} approved · New balance: ${formatRupees(result.newBalance)}`, 'success');
+      load();
+    } else addToast(result.error || 'Approval failed', 'error');
+    setActionId(null);
+  };
+
+  const openReject = (entry) => { setRejectingEntry(entry); setRejectReason(''); setShowRejectModal(true); };
+
+  const confirmReject = async () => {
+    setActionId(rejectingEntry.id);
+    const result = await api.rejectTopUp(rejectingEntry.id, user.id, rejectReason);
+    if (result.success) {
+      addToast('Top-up rejected', 'success');
+      setShowRejectModal(false);
+      load();
+    } else addToast(result.error || 'Rejection failed', 'error');
+    setActionId(null);
+  };
+
+  if (!loading && items.length === 0) return null;
+
+  return (
+    <div className="card" style={{ marginBottom: '1.25rem', border: '2px solid #7c3aed', borderRadius: '10px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '0.85rem' }}>
+        <span style={{ fontSize: '1.25rem' }}>🔐</span>
+        <h3 style={{ fontWeight: 700, fontSize: '0.95rem', color: '#7c3aed', margin: 0 }}>
+          Pending Top-Up Approvals
+        </h3>
+        {items.length > 0 && (
+          <span style={{ background: '#7c3aed', color: 'white', borderRadius: '12px', padding: '1px 8px', fontSize: '0.75rem', fontWeight: 700 }}>{items.length}</span>
+        )}
+      </div>
+      {loading ? (
+        <div style={{ color: '#9ca3af', fontSize: '0.85rem' }}>{Icons.loader} Loading...</div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+          {items.map(entry => (
+            <div key={entry.id} style={{ background: '#faf5ff', border: '1px solid #ddd6fe', borderRadius: '8px', padding: '0.75rem 1rem', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem' }}>
+              <div style={{ flex: 1, minWidth: '180px' }}>
+                <div style={{ fontWeight: 700, fontSize: '0.95rem', color: '#1f2937' }}>
+                  {formatRupees(entry.amount)}
+                  <span style={{ fontWeight: 400, color: '#6b7280', fontSize: '0.8rem', marginLeft: '0.5rem' }}>top-up</span>
+                </div>
+                <div style={{ fontSize: '0.82rem', color: '#4b5563', marginTop: '2px' }}>{entry.description}</div>
+                <div style={{ fontSize: '0.75rem', color: '#9ca3af', marginTop: '2px' }}>
+                  <button
+                    style={{ background: 'none', border: 'none', color: '#7c3aed', cursor: 'pointer', padding: 0, fontWeight: 600, fontSize: '0.78rem', textDecoration: 'underline' }}
+                    onClick={() => onViewVoucher && onViewVoucher(entry.suspense?.id)}
+                  >
+                    {entry.suspense?.serial_number}
+                  </button>
+                  {' · '}{entry.suspense?.staff_payee?.name || 'Staff'}
+                  {entry.submitter?.name && <span> · Requested by {entry.submitter.name}</span>}
+                  {' · '}{new Date(entry.created_at).toLocaleDateString('en-IN')}
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: '0.4rem', flexShrink: 0 }}>
+                <button className="btn btn-sm btn-success" disabled={actionId === entry.id} onClick={() => handleApprove(entry)} style={{ fontSize: '0.8rem' }}>
+                  {actionId === entry.id ? Icons.loader : '✅'} Approve
+                </button>
+                <button className="btn btn-sm btn-danger" disabled={actionId === entry.id} onClick={() => openReject(entry)} style={{ fontSize: '0.8rem' }}>
+                  ✕ Reject
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      {showRejectModal && rejectingEntry && (
+        <div className="modal-overlay" onClick={() => setShowRejectModal(false)}>
+          <div className="modal" style={{ maxWidth: '420px' }} onClick={e => e.stopPropagation()}>
+            <div className="modal-header" style={{ background: '#ef4444', color: 'white' }}>
+              <h3 className="modal-title" style={{ color: 'white' }}>✕ Reject Top-Up</h3>
+              <button className="modal-close" style={{ color: 'white' }} onClick={() => setShowRejectModal(false)}>×</button>
+            </div>
+            <div className="modal-body">
+              <div style={{ background: '#f8fafc', borderRadius: '8px', padding: '0.75rem', marginBottom: '1rem', fontSize: '0.875rem' }}>
+                <strong>{formatRupees(rejectingEntry.amount)}</strong> top-up for <strong>{rejectingEntry.suspense?.serial_number}</strong> — {rejectingEntry.description}
+              </div>
+              <div className="form-group">
+                <label className="form-label">Reason for Rejection (optional)</label>
+                <textarea className="form-input" rows={3} placeholder="Enter reason..." value={rejectReason} onChange={e => setRejectReason(e.target.value)} autoFocus />
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setShowRejectModal(false)}>Cancel</button>
+              <button className="btn btn-danger" onClick={confirmReject} disabled={!!actionId}>{actionId ? Icons.loader : '✕'} Confirm Rejection</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 // SUSPENSE VOUCHER LIST
 // ─────────────────────────────────────────────────────────────────────────────
 const SuspenseVoucherList = ({ onViewDetail }) => {
@@ -5803,6 +5926,10 @@ const SuspenseVoucherList = ({ onViewDetail }) => {
           <button className="btn btn-sm btn-secondary" onClick={load}>{Icons.refresh}</button>
         </div>
       </div>
+
+      {(user.role === 'admin' || user.isSuperAdmin) && (
+        <PendingTopUpsPanel onViewVoucher={(id) => onViewDetail && onViewDetail(id)} />
+      )}
 
       {loading ? (
         <div className="loading-state">{Icons.loader} Loading...</div>

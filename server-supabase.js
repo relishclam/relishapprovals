@@ -2534,6 +2534,22 @@ app.get('/api/companies/:companyId/suspense-vouchers', async (req, res) => {
   }
 });
 
+// Pending top-up approvals for this company — Admin/Super Admin inbox
+app.get('/api/companies/:companyId/pending-topups', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('suspense_settlements')
+      .select(`*, submitter:users!submitted_by(id,name), suspense:suspense_vouchers!suspense_id(id,serial_number,purpose,staff_payee:payees!staff_payee_id(id,name,mobile))`)
+      .eq('company_id', req.params.companyId)
+      .eq('entry_type', 'topup')
+      .eq('status', 'pending_approval')
+      .order('created_at', { ascending: true });
+    if (error) throw error;
+    res.json({ pendingTopUps: data || [] });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Get single suspense voucher with settlements
 app.get('/api/suspense-vouchers/:id', async (req, res) => {
   try {
