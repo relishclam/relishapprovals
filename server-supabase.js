@@ -1380,21 +1380,25 @@ app.get('/api/vouchers/:voucherId', async (req, res) => {
         payee:payees(name, alias, mobile, bank_account, ifsc, upi_id),
         preparer:users!vouchers_prepared_by_fkey(name, username),
         approver:users!vouchers_approved_by_fkey(name, username),
-        company:companies(name, address, gst),
-        settlement:suspense_settlements(id, suspense_id)
+        company:companies(name, address, gst)
       `)
       .eq('id', req.params.voucherId)
       .single();
     
     if (error) throw error;
 
-    // Resolve the suspense voucher serial number separately — avoids a nested
-    // PostgREST join that can fail when the schema cache is stale or the FK
-    // column name (suspense_id) doesn’t match PostgREST’s resolution heuristic.
+    // Resolve suspense serial in a separate query -- avoids PostgREST ambiguity
+    // caused by two FKs between vouchers and suspense_settlements:
+    //   vouchers.settlement_id  (migration 014)  ->  suspense_settlements.id
+    //   suspense_settlements.voucher_id  (migration 019)  ->  vouchers.id
     let suspenseSerial = null;
-    if (voucher.settlement) {
-      const settlements = Array.isArray(voucher.settlement) ? voucher.settlement : [voucher.settlement];
-      const suspenseId = settlements[0]?.suspense_id;
+    if (voucher.is_suspense_settlement) {
+      const { data: linkedSettlements } = await supabase
+        .from('suspense_settlements')
+        .select('suspense_id')
+        .eq('voucher_id', req.params.voucherId)
+        .limit(1);
+      const suspenseId = linkedSettlements?.[0]?.suspense_id;
       if (suspenseId) {
         const { data: sv } = await supabase.from('suspense_vouchers')
           .select('serial_number').eq('id', suspenseId).single();
