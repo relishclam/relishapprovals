@@ -1606,7 +1606,23 @@ const CreateVoucher = () => {
             <div className="form-group"><label className="form-label">Invoice Reference</label><input type="text" className="form-input" placeholder="e.g., INV-2026-001 (optional)" value={form.invoiceReference} onChange={(e) => setForm({ ...form, invoiceReference: e.target.value })} /></div>
           </div>
           <div className="form-group"><label className="form-label">Paid From Account <span style={{fontWeight:400,color:'#888',fontSize:'0.82rem'}}>(optional — which bank account / director's account)</span></label><input type="text" list="pfa-create-list" className="form-input" placeholder="e.g., HDFC Current A/C, Director Ramesh A/C" value={form.paidFromAccount} onChange={(e) => setForm({ ...form, paidFromAccount: e.target.value })} /><datalist id="pfa-create-list">{paymentAccounts.map(a => <option key={a.id} value={a.label} />)}</datalist></div>
-          <div className="form-group"><label className="form-label form-label-row">Payee *<button className="btn btn-sm btn-secondary" onClick={() => setShowPayeeModal(true)}>{Icons.plus} Add Payee</button></label><select className="form-select" value={form.payeeId} onChange={(e) => setForm({ ...form, payeeId: e.target.value })}><option value="">Select Payee</option>{payees.map(p => <option key={p.id} value={p.id}>{p.name} {p.alias && `(${p.alias})`}</option>)}</select></div>
+          <div className="form-group"><label className="form-label form-label-row">Payee *<button className="btn btn-sm btn-secondary" onClick={() => setShowPayeeModal(true)}>{Icons.plus} Add Payee</button></label><select className="form-select" value={form.payeeId} onChange={(e) => setForm({ ...form, payeeId: e.target.value })}><option value="">Select Payee</option>{payees.map(p => <option key={p.id} value={p.id}>{p.name} {p.alias && `(${p.alias})`}</option>)}</select>
+          {form.payeeId && form.paymentMode !== 'Cash' && (() => {
+            const p = payees.find(x => x.id === form.payeeId);
+            if (!p) return null;
+            if (form.paymentMode === 'UPI') {
+              return p.upi_id
+                ? <div style={{marginTop:'0.4rem',padding:'0.45rem 0.75rem',background:'#f0fdf4',border:'1px solid #86efac',borderRadius:'6px',fontSize:'0.82rem',color:'#166534'}}>✅ UPI ID: <strong style={{fontFamily:'monospace'}}>{p.upi_id}</strong></div>
+                : <div style={{marginTop:'0.4rem',padding:'0.45rem 0.75rem',background:'#fffbeb',border:'1px solid #fcd34d',borderRadius:'6px',fontSize:'0.82rem',color:'#92400e'}}>⚠️ No UPI ID on file for this payee — add it in <strong>Manage Payees</strong> before submitting.</div>;
+            }
+            if (form.paymentMode === 'Account Transfer') {
+              return p.bank_account
+                ? <div style={{marginTop:'0.4rem',padding:'0.45rem 0.75rem',background:'#f0fdf4',border:'1px solid #86efac',borderRadius:'6px',fontSize:'0.82rem',color:'#166534'}}>✅ A/C: <strong style={{fontFamily:'monospace'}}>{p.bank_account}</strong>{p.ifsc ? <> · IFSC: <strong style={{fontFamily:'monospace'}}>{p.ifsc}</strong></> : null}{p.bank_name ? <> · {p.bank_name}</> : null}</div>
+                : <div style={{marginTop:'0.4rem',padding:'0.45rem 0.75rem',background:'#fffbeb',border:'1px solid #fcd34d',borderRadius:'6px',fontSize:'0.82rem',color:'#92400e'}}>⚠️ No bank account on file for this payee — add it in <strong>Manage Payees</strong> before submitting.</div>;
+            }
+            return null;
+          })()}
+          </div>
           
           <div className="form-group">
             <label className="form-label form-label-row">
@@ -3003,6 +3019,21 @@ const VoucherList = ({ filter }) => {
                 <option value="">Select Payee</option>
                 {payees.map(p => <option key={p.id} value={p.id}>{p.name} {p.alias && `(${p.alias})`}</option>)}
               </select>
+              {editForm.payeeId && editForm.paymentMode !== 'Cash' && (() => {
+                const p = payees.find(x => x.id === editForm.payeeId);
+                if (!p) return null;
+                if (editForm.paymentMode === 'UPI') {
+                  return p.upi_id
+                    ? <div style={{marginTop:'0.4rem',padding:'0.45rem 0.75rem',background:'#f0fdf4',border:'1px solid #86efac',borderRadius:'6px',fontSize:'0.82rem',color:'#166534'}}>✅ UPI ID: <strong style={{fontFamily:'monospace'}}>{p.upi_id}</strong></div>
+                    : <div style={{marginTop:'0.4rem',padding:'0.45rem 0.75rem',background:'#fffbeb',border:'1px solid #fcd34d',borderRadius:'6px',fontSize:'0.82rem',color:'#92400e'}}>⚠️ No UPI ID on file for this payee — go to <strong>Manage Payees</strong> to add it before submitting.</div>;
+                }
+                if (editForm.paymentMode === 'Account Transfer') {
+                  return p.bank_account
+                    ? <div style={{marginTop:'0.4rem',padding:'0.45rem 0.75rem',background:'#f0fdf4',border:'1px solid #86efac',borderRadius:'6px',fontSize:'0.82rem',color:'#166534'}}>✅ A/C: <strong style={{fontFamily:'monospace'}}>{p.bank_account}</strong>{p.ifsc ? <> · IFSC: <strong style={{fontFamily:'monospace'}}>{p.ifsc}</strong></> : null}{p.bank_name ? <> · {p.bank_name}</> : null}</div>
+                    : <div style={{marginTop:'0.4rem',padding:'0.45rem 0.75rem',background:'#fffbeb',border:'1px solid #fcd34d',borderRadius:'6px',fontSize:'0.82rem',color:'#92400e'}}>⚠️ No bank account on file for this payee — go to <strong>Manage Payees</strong> to add it before submitting.</div>;
+                }
+                return null;
+              })()}
             </div>
             <div className="form-group">
               <label className="form-label form-label-row">
