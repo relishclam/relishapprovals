@@ -173,6 +173,7 @@ const api = {
   approveTopUp: (settlementId, approvedBy) => fetch(`${API_BASE}/suspense-settlements/${settlementId}/approve-topup`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ approvedBy }) }).then(r => r.json()),
   rejectTopUp: (settlementId, rejectedBy, reason) => fetch(`${API_BASE}/suspense-settlements/${settlementId}/reject-topup`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rejectedBy, reason }) }).then(r => r.json()),
   closeSuspenseVoucher: (suspenseId, closedBy) => fetch(`${API_BASE}/suspense-vouchers/${suspenseId}/close`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ closedBy }) }).then(r => r.json()),
+  recalculateSuspenseBalance: (suspenseId, requestedBy) => fetch(`${API_BASE}/suspense-vouchers/${suspenseId}/recalculate-balance`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ requestedBy }) }).then(r => r.json()),
   // Attachments
   uploadAttachment: (data) => fetch(`${API_BASE}/attachments/upload`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
   getAttachments: (params) => fetch(`${API_BASE}/attachments?${new URLSearchParams(params)}`).then(r => r.json()),
@@ -6365,6 +6366,16 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
     setCloseLoading(false);
   };
 
+  const handleRecalculateBalance = async () => {
+    setActionLoading(true);
+    const result = await api.recalculateSuspenseBalance(suspenseId, user.id);
+    if (result.success) {
+      addToast(`Balance corrected to ${formatRupees(result.correctedBalance)}`, 'success');
+      load();
+    } else addToast(result.error || 'Failed to recalculate balance', 'error');
+    setActionLoading(false);
+  };
+
   const toggleSelectSettlement = (id) => {
     setSelectedSettlements(prev => {
       const next = new Set(prev);
@@ -6469,6 +6480,9 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
           )}
           {(user.role === 'accounts' || user.isSuperAdmin) && (sv.status === 'open' || sv.status === 'partial') && (
             <button className="btn btn-sm btn-danger" onClick={() => setShowCloseModal(true)}>🔒 Close Voucher</button>
+          )}
+          {(user.role === 'accounts' || user.isSuperAdmin) && sv.status !== 'pending_approval' && sv.status !== 'rejected' && sv.status !== 'awaiting_payee_otp' && (
+            <button className="btn btn-sm btn-secondary" onClick={handleRecalculateBalance} disabled={actionLoading} title="Recompute balance from approved settlement entries">🔄 Fix Balance</button>
           )}
           {canSettle && <button className="btn btn-sm btn-primary" onClick={() => setShowSettlement(true)}>{Icons.plus} Add Settlement</button>}
         </div>

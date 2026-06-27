@@ -3493,6 +3493,42 @@ app.post('/api/suspense-vouchers/:suspenseId/combine-settlements', async (req, r
   }
 });
 
+// Recalculate and correct the stored balance_amount from live settlement data (Accounts / Super Admin only)
+app.post('/api/suspense-vouchers/:id/recalculate-balance', async (req, res) => {
+  const { requestedBy } = req.body;
+  if (!requestedBy) return res.status(400).json({ error: 'requestedBy is required' });
+  try {
+    const actor = await getActorRole(requestedBy);
+    if (actor.role !== 'accounts' && !actor.is_super_admin) {
+      return res.status(403).json({ error: 'Unauthorized: Only Accounts users or Super Admin can recalculate balance' });
+    }
+    const { data: sv, error } = await supabase.from('suspense_vouchers')
+      .select('id, serial_number, advance_amount, status')
+      .eq('id', req.params.id)
+      .single();
+    if (error || !sv) return res.status(404).json({ error: 'Suspense voucher not found' });
+
+    const { data: approvedSettlements } = await supabase.from('suspense_settlements')
+      .select('entry_type, amount')
+      .eq('suspense_id', sv.id)
+      .eq('status', 'approved');
+
+    let balance = parseFloat(sv.advance_amount);
+    for (const s of (approvedSettlements || [])) {
+      if (s.entry_type === 'expense') balance -= parseFloat(s.amount);
+      else if (s.entry_type === 'refund' || s.entry_type === 'topup') balance += parseFloat(s.amount);
+    }
+
+    await supabase.from('suspense_vouchers')
+      .update({ balance_amount: balance })
+      .eq('id', sv.id);
+
+    res.json({ success: true, correctedBalance: balance });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Manually close a suspense voucher (Accounts only)
 app.post('/api/suspense-vouchers/:id/close', async (req, res) => {
   const { closedBy } = req.body;
@@ -3556,8 +3592,8 @@ app.post('/api/suspense-settlements/:settlementId/approve-topup', async (req, re
       if (s.entry_type === 'expense') balance -= parseFloat(s.amount);
       else if (s.entry_type === 'refund' || s.entry_type === 'topup') balance += parseFloat(s.amount);
     }
-    // Also include this just-approved entry
-    balance += parseFloat(settlement.amount);
+    // Note: the just-approved top-up is already included in approvedSettlements above
+    // because the status update runs before the query. No extra addition needed.
     const reopened = sv.status === 'closed';
     const newStatus = reopened ? 'partial' : (sv.status === 'open' ? 'open' : sv.status);
     await supabase.from('suspense_vouchers')

@@ -97,6 +97,23 @@ This step proves the staff member has physically received the advance payment.
 
 ---
 
+### 3a. Accounts — Classifying Attachments Uploaded to the Suspense Voucher
+
+When Accounts uploads a file directly to the **suspense voucher** (not to a specific settlement entry), the system asks:
+
+> *"What are you uploading?"*
+
+| Choice | When to select it |
+|---|---|
+| 🏦 **Transfer Receipt** | Bank/UPI transfer confirmation, NEFT screenshot, or any proof that the advance was disbursed to the staff member |
+| 🧾 **Expense Bill** | An invoice or receipt uploaded on behalf of the staff member (e.g. they handed over a physical bill) |
+
+The upload buttons are disabled until a category is chosen. After each upload the choice resets so every file is explicitly classified. Each attachment in the list shows a colour-coded badge (blue for Transfer Receipt, green for Expense Bill).
+
+> ⚠️ **Only Transfer Receipts are copied to final payment vouchers.** Expense Bills uploaded at the suspense level remain on the suspense voucher. To link an expense bill to a specific entry, upload it against that entry (during staff submission or during Accounts review).
+
+---
+
 ### 4. Accounts — Reviewing Settlement Entries
 
 1. Receive an in-app notification each time a staff member submits an entry.
@@ -113,7 +130,9 @@ This step proves the staff member has physically received the advance payment.
 
 **What the created Payment Voucher contains:**
 - The expense bill(s) uploaded by staff for that specific entry.
-- Copies of all **transfer receipts** uploaded at the suspense voucher level (e.g. NEFT/UPI payment confirmation) — so the voucher independently proves both *what* was spent and *how* the funds reached the staff member.
+- Copies of all attachments classified as **🏦 Transfer Receipt** at the suspense voucher level (NEFT/UPI payment confirmation, etc.) — so the voucher independently proves both *what* was spent and *how* the funds reached the staff member.
+
+> ℹ️ Attachments classified as 🧾 **Expense Bill** at the suspense level are **not** copied — they are not proof of disbursement and would incorrectly appear on every voucher created from the same suspense advance.
 
 ---
 
@@ -134,7 +153,7 @@ If a staff member has submitted several small expenses that belong under the sam
 - All selected entries are approved simultaneously.
 - One payment voucher is created with **amount = sum of all selected entries**.
 - Every bill / attachment uploaded against each selected entry is carried over to the new voucher — no attachment is lost.
-- Copies of the suspense-level **transfer receipts** (NEFT/UPI disbursement proof) are also added to the voucher, giving it a complete standalone audit trail.
+- Copies of all suspense-level attachments classified as **🏦 Transfer Receipt** are also added to the voucher, giving it a complete standalone audit trail. Suspense-level **🧾 Expense Bills** are not copied.
 - Each entry records a back-link to the combined voucher for full traceability.
 - The new voucher enters **Pending** status for Admin approval.
 
@@ -282,6 +301,7 @@ If you have spent all your advance and need more funds, ask your accounts team t
 | Verify advance OTP (activate link) | ✅ | ✅ | — |
 | Submit expense entry | ✅ | — | ✅ |
 | Attach bill photo | ✅ | — | ✅ |
+| Upload & classify suspense-level attachment | ✅ | — | — |
 | Review & approve entries | ✅ | — | — |
 | Combine entries into one voucher | ✅ | — | — |
 | Approve payment voucher | — | ✅ | — |
@@ -300,6 +320,7 @@ If you have spent all your advance and need more funds, ask your accounts team t
 4. **The SMS link is permanent** until explicitly revoked — staff can use it any time the voucher is open.
 5. **All entries go through review** — no expense is finalised until an Accounts user approves it.
 6. **Payment vouchers follow the normal approval flow** — vouchers created from settlement entries enter Pending status and require Admin approval. After Admin approval they are immediately completed (no new OTP) because the advance was already OTP-verified at disbursement.
-   Each final voucher automatically carries: (a) the expense bills uploaded by staff for that entry, and (b) copies of the suspense-level transfer receipts uploaded by Accounts — so every voucher is independently auditable.
-7. **Combine saves work** — multiple small expenses under the same Head of Account can be combined into one voucher. All bills from every combined entry are preserved.
-8. **Balance is always auto-calculated** — Expenses reduce the balance; Refunds and Top-ups increase it.
+   Each final voucher automatically carries: (a) the expense bills uploaded by staff for that entry, and (b) copies of the suspense-level **Transfer Receipts** uploaded by Accounts — so every voucher is independently auditable.
+7. **Classify every suspense-level upload** — when Accounts uploads an attachment directly to a suspense voucher, they must declare whether it is a 🏦 Transfer Receipt or a 🧾 Expense Bill. Only Transfer Receipts are propagated to final payment vouchers; Expense Bills remain on the suspense voucher. This prevents disbursement proofs and staff invoices from being mixed up across vouchers.
+8. **Combine saves work** — multiple small expenses under the same Head of Account can be combined into one voucher. All bills from every combined entry are preserved.
+9. **Balance is always auto-calculated** — Expenses reduce the balance; Refunds and Top-ups increase it.
