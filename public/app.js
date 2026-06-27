@@ -145,6 +145,10 @@ const api = {
   addHeadOfAccount: (companyId, name, isGlobal) => fetch(`${API_BASE}/heads-of-account`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ companyId, name, isGlobal }) }).then(r => r.json()),
   updateHeadOfAccount: (id, name, isGlobal) => fetch(`${API_BASE}/heads-of-account/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, isGlobal }) }).then(r => r.json()),
   deleteHeadOfAccount: (id) => fetch(`${API_BASE}/heads-of-account/${id}`, { method: 'DELETE' }).then(r => r.json()),
+  // Payment accounts (Paid From)
+  getPaymentAccounts: (companyId) => fetch(`${API_BASE}/companies/${companyId}/payment-accounts`).then(r => r.json()),
+  addPaymentAccount: (data) => fetch(`${API_BASE}/payment-accounts`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
+  deletePaymentAccount: (id) => fetch(`${API_BASE}/payment-accounts/${id}`, { method: 'DELETE' }).then(r => r.json()),
   importHeadsOfAccount: (companyId, names) => fetch(`${API_BASE}/heads-of-account/import`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ companyId, names }) }).then(r => r.json()),
   // Sub-heads of account
   getSubHeadsOfAccount: (headId) => fetch(`${API_BASE}/sub-heads-of-account?headId=${headId}`).then(r => r.json()),
@@ -698,6 +702,7 @@ const VoucherPreview = ({ voucher }) => {
         <div className="voucher-meta-item"><span className="voucher-meta-label">Date:</span><span className="voucher-meta-value">{formatDate(voucher.created_at)}</span></div>
         <div className="voucher-meta-item"><span className="voucher-meta-label">Payee:</span><span className="voucher-meta-value">{voucher.payee_name} {voucher.payee_alias && `(${voucher.payee_alias})`}</span></div>
         <div className="voucher-meta-item"><span className="voucher-meta-label">Mode:</span><span className="voucher-meta-value">{voucher.payment_mode}</span></div>
+        {voucher.paid_from_account && <div className="voucher-meta-item"><span className="voucher-meta-label">Paid From:</span><span className="voucher-meta-value">{voucher.paid_from_account}</span></div>}
         {voucher.invoice_reference && <div className="voucher-meta-item"><span className="voucher-meta-label">Invoice Ref:</span><span className="voucher-meta-value">{voucher.invoice_reference}</span></div>}
         {voucher.suspense_serial && <div className="voucher-meta-item" style={{background:'#fffbeb',borderRadius:'4px',padding:'2px 6px'}}><span className="voucher-meta-label">Suspense Ref:</span><span className="voucher-meta-value" style={{fontWeight:700,color:'#92400e'}}>{voucher.suspense_serial}</span></div>}
       </div>
@@ -1312,6 +1317,7 @@ const CreateVoucher = () => {
   const [loading, setLoading] = useState(false);
   const [createdVoucher, setCreatedVoucher] = useState(null);
   const [payees, setPayees] = useState([]);
+  const [paymentAccounts, setPaymentAccounts] = useState([]);
   const [heads, setHeads] = useState([]);
   const [headsData, setHeadsData] = useState([]); // Full data with IDs
   const [subHeads, setSubHeads] = useState([]); // Sub-heads for selected head
@@ -1330,12 +1336,12 @@ const CreateVoucher = () => {
       const s = localStorage.getItem('cv_draft');
       if (s) {
         const saved = JSON.parse(s);
-        return saved.form || { headOfAccount: '', subHeadOfAccount: '', narration: '', narrationItems: [], deductions: [], payeeId: '', paymentMode: 'UPI', amount: '', invoiceReference: '' };
+        return saved.form || { headOfAccount: '', subHeadOfAccount: '', narration: '', narrationItems: [], deductions: [], payeeId: '', paymentMode: 'UPI', amount: '', invoiceReference: '', paidFromAccount: '' };
       }
     } catch {}
-    return { headOfAccount: '', subHeadOfAccount: '', narration: '', narrationItems: [], deductions: [], payeeId: '', paymentMode: 'UPI', amount: '', invoiceReference: '' };
+    return { headOfAccount: '', subHeadOfAccount: '', narration: '', narrationItems: [], deductions: [], payeeId: '', paymentMode: 'UPI', amount: '', invoiceReference: '', paidFromAccount: '' };
   });
-  const [newPayee, setNewPayee] = useState({ name: '', alias: '', mobile: '', bankAccount: '', ifsc: '', upiId: '' });
+  const [newPayee, setNewPayee] = useState({ name: '', alias: '', mobile: '', bankAccount: '', ifsc: '', upiId: '', bankName: '' });
   const [useNarrationTable, setUseNarrationTable] = useState(() => {
     try { const s = localStorage.getItem('cv_draft'); return s ? (JSON.parse(s).useNarrationTable ?? true) : true; } catch { return true; }
   });  // Default to TRUE for tabulated format
@@ -1351,6 +1357,7 @@ const CreateVoucher = () => {
   useEffect(() => { 
     // Load payees for user's company
     api.getPayees(user.company.id).then(setPayees);
+    api.getPaymentAccounts(user.company.id).then(setPaymentAccounts);
     // Load heads from database based on user's company
     api.getHeadsOfAccount(user.company.id).then(data => {
       if (Array.isArray(data)) {
@@ -1423,7 +1430,7 @@ const CreateVoucher = () => {
 
   const handleAddPayee = async () => {
     setLoading(true);
-    try { const result = await api.addPayee({ companyId: user.company.id, ...newPayee }); if (result.success) { addToast('Payee added', 'success'); setShowPayeeModal(false); setNewPayee({ name: '', alias: '', mobile: '', bankAccount: '', ifsc: '', upiId: '' }); api.getPayees(user.company.id).then(setPayees); } } catch { addToast('Failed', 'error'); }
+    try { const result = await api.addPayee({ companyId: user.company.id, ...newPayee }); if (result.success) { addToast('Payee added', 'success'); setShowPayeeModal(false); setNewPayee({ name: '', alias: '', mobile: '', bankAccount: '', ifsc: '', upiId: '', bankName: '' }); api.getPayees(user.company.id).then(setPayees); } } catch { addToast('Failed', 'error'); }
     setLoading(false);
   };
 
@@ -1492,12 +1499,13 @@ const CreateVoucher = () => {
         payeeId: form.payeeId, 
         preparedBy: user.id,
         saveAsDraft: saveAsDraft,
-        invoiceReference: form.invoiceReference || null
+        invoiceReference: form.invoiceReference || null,
+        paidFromAccount: form.paidFromAccount || null
       }); 
       if (result.success) { 
         addToast(saveAsDraft ? `Draft ${result.serialNumber} saved` : `Voucher ${result.serialNumber} submitted`, 'success'); 
         localStorage.removeItem('cv_draft');
-        setForm({ headOfAccount: '', subHeadOfAccount: '', narration: '', narrationItems: [], deductions: [], payeeId: '', paymentMode: 'UPI', amount: '', invoiceReference: '' }); 
+        setForm({ headOfAccount: '', subHeadOfAccount: '', narration: '', narrationItems: [], deductions: [], payeeId: '', paymentMode: 'UPI', amount: '', invoiceReference: '', paidFromAccount: '' }); 
         setShowDeductions(false);
         setUseNarrationTable(false);
         setCreatedVoucher({ id: result.voucherId, serialNumber: result.serialNumber, status: result.status || (saveAsDraft ? 'draft' : 'pending') });
@@ -1535,7 +1543,7 @@ const CreateVoucher = () => {
             <span style={{fontSize: '0.9rem', color: '#92400e'}}>⚡ <strong>Draft restored</strong> — your last unsaved voucher was recovered automatically.</span>
             <button style={{fontSize: '0.8rem', padding: '0.3rem 0.75rem', background: 'transparent', border: '1px solid #f59e0b', borderRadius: '6px', color: '#92400e', cursor: 'pointer'}} onClick={() => {
               localStorage.removeItem('cv_draft');
-              setForm({ headOfAccount: '', subHeadOfAccount: '', narration: '', narrationItems: [], deductions: [], payeeId: '', paymentMode: 'UPI', amount: '', invoiceReference: '' });
+              setForm({ headOfAccount: '', subHeadOfAccount: '', narration: '', narrationItems: [], deductions: [], payeeId: '', paymentMode: 'UPI', amount: '', invoiceReference: '', paidFromAccount: '' });
               setShowDeductions(false);
               setUseNarrationTable(true);
             }}>✕ Discard Draft</button>
@@ -1597,6 +1605,7 @@ const CreateVoucher = () => {
             <div className="form-group"><label className="form-label">Payment Mode *</label><select className="form-select" value={form.paymentMode} onChange={(e) => setForm({ ...form, paymentMode: e.target.value })}><option value="UPI">UPI</option><option value="Account Transfer">Account Transfer</option><option value="Cash">Cash</option></select></div>
             <div className="form-group"><label className="form-label">Invoice Reference</label><input type="text" className="form-input" placeholder="e.g., INV-2026-001 (optional)" value={form.invoiceReference} onChange={(e) => setForm({ ...form, invoiceReference: e.target.value })} /></div>
           </div>
+          <div className="form-group"><label className="form-label">Paid From Account <span style={{fontWeight:400,color:'#888',fontSize:'0.82rem'}}>(optional — which bank account / director's account)</span></label><input type="text" list="pfa-create-list" className="form-input" placeholder="e.g., HDFC Current A/C, Director Ramesh A/C" value={form.paidFromAccount} onChange={(e) => setForm({ ...form, paidFromAccount: e.target.value })} /><datalist id="pfa-create-list">{paymentAccounts.map(a => <option key={a.id} value={a.label} />)}</datalist></div>
           <div className="form-group"><label className="form-label form-label-row">Payee *<button className="btn btn-sm btn-secondary" onClick={() => setShowPayeeModal(true)}>{Icons.plus} Add Payee</button></label><select className="form-select" value={form.payeeId} onChange={(e) => setForm({ ...form, payeeId: e.target.value })}><option value="">Select Payee</option>{payees.map(p => <option key={p.id} value={p.id}>{p.name} {p.alias && `(${p.alias})`}</option>)}</select></div>
           
           <div className="form-group">
@@ -1715,6 +1724,7 @@ const CreateVoucher = () => {
             <div className="form-group"><label className="form-label">Alias</label><input type="text" className="form-input" value={newPayee.alias} onChange={(e) => setNewPayee({ ...newPayee, alias: e.target.value })} /></div>
             <div className="form-group"><label className="form-label">Mobile Number *</label><input type="tel" className="form-input" value={newPayee.mobile} onChange={(e) => setNewPayee({ ...newPayee, mobile: e.target.value })} /></div>
             <div className="form-row"><div className="form-group"><label className="form-label">Bank Account</label><input type="text" className="form-input" value={newPayee.bankAccount} onChange={(e) => setNewPayee({ ...newPayee, bankAccount: e.target.value })} /></div><div className="form-group"><label className="form-label">IFSC Code</label><input type="text" className="form-input" value={newPayee.ifsc} onChange={(e) => setNewPayee({ ...newPayee, ifsc: e.target.value })} /></div></div>
+            <div className="form-group"><label className="form-label">Bank Name</label><input type="text" className="form-input" placeholder="e.g., ICICI Bank" value={newPayee.bankName} onChange={(e) => setNewPayee({ ...newPayee, bankName: e.target.value })} /></div>
             <div className="form-group"><label className="form-label">UPI ID</label><input type="text" className="form-input" value={newPayee.upiId} onChange={(e) => setNewPayee({ ...newPayee, upiId: e.target.value })} /></div>
           </div>
           <div className="modal-footer"><button className="btn btn-secondary" onClick={() => setShowPayeeModal(false)}>Cancel</button><button className="btn btn-primary" onClick={handleAddPayee} disabled={loading || !newPayee.name || !newPayee.mobile}>{loading && Icons.loader}Add Payee</button></div>
@@ -1962,6 +1972,7 @@ const VoucherList = ({ filter }) => {
   const [showRejectModal, setShowRejectModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [showPrintModal, setShowPrintModal] = useState(false);
+  const [payNowVoucher, setPayNowVoucher] = useState(null);
   const [printDateFrom, setPrintDateFrom] = useState('');
   const [printDateTo, setPrintDateTo] = useState('');
   const [showExcelModal, setShowExcelModal] = useState(false);
@@ -1975,8 +1986,9 @@ const VoucherList = ({ filter }) => {
   
   // Edit Draft state
   const [showEditModal, setShowEditModal] = useState(false);
-  const [editForm, setEditForm] = useState({ headOfAccount: '', subHeadOfAccount: '', narration: '', narrationItems: [], deductions: [], payeeId: '', paymentMode: 'UPI', amount: '', invoiceReference: '' });
+  const [editForm, setEditForm] = useState({ headOfAccount: '', subHeadOfAccount: '', narration: '', narrationItems: [], deductions: [], payeeId: '', paymentMode: 'UPI', amount: '', invoiceReference: '', paidFromAccount: '' });
   const [payees, setPayees] = useState([]);
+  const [paymentAccounts, setPaymentAccounts] = useState([]);
   const [heads, setHeads] = useState([]);
   const [headsData, setHeadsData] = useState([]);
   const [subHeads, setSubHeads] = useState([]);
@@ -1997,6 +2009,7 @@ const VoucherList = ({ filter }) => {
   // Load payees and heads for edit modal
   useEffect(() => {
     api.getPayees(user.company.id).then(setPayees);
+    api.getPaymentAccounts(user.company.id).then(setPaymentAccounts);
     api.getHeadsOfAccount(user.company.id).then(data => {
       if (Array.isArray(data)) {
         setHeadsData(data);
@@ -2088,7 +2101,8 @@ const VoucherList = ({ filter }) => {
       payeeId: voucher.payee_id || '',
       paymentMode: voucher.payment_mode || 'UPI',
       amount: grossAmount.toFixed(2),
-      invoiceReference: voucher.invoice_reference || ''
+      invoiceReference: voucher.invoice_reference || '',
+      paidFromAccount: voucher.paid_from_account || ''
     });
     setUseNarrationTable(hasItems);
     setShowEditDeductions(validDeductions.length > 0);
@@ -2119,7 +2133,8 @@ const VoucherList = ({ filter }) => {
         paymentMode: editForm.paymentMode,
         payeeId: editForm.payeeId,
         saveAsDraft: saveAsDraft,
-        invoiceReference: editForm.invoiceReference || null
+        invoiceReference: editForm.invoiceReference || null,
+        paidFromAccount: editForm.paidFromAccount || null
       });
       if (result.success) {
         addToast(saveAsDraft ? 'Draft updated successfully' : 'Voucher submitted for approval', 'success');
@@ -2707,7 +2722,7 @@ const VoucherList = ({ filter }) => {
       <div className="card"><div className="card-body" style={{ padding: 0 }}>
         {filtered.length === 0 ? <div className="empty-state">{Icons.fileText}<p>No vouchers found</p></div> : (
           <div className="table-container"><table className="table"><thead><tr><th>Serial No.</th><th>Head of Account</th><th>Payee</th><th>Amount</th><th>Mode</th><th>Status</th><th>Date</th><th>Actions</th></tr></thead><tbody>
-            {filtered.map(v => (<tr key={v.id}><td className="text-mono fw-600">{v.serial_number}{v.attachment_count > 0 && <span title={`${v.attachment_count} attachment${v.attachment_count > 1 ? 's' : ''}`} style={{marginLeft: '6px', color: '#f5841f', verticalAlign: 'middle', display: 'inline-flex'}}>{Icons.paperclip}</span>}</td><td>{v.head_of_account}</td><td>{v.payee_name}</td><td className="fw-600">{formatRupees(v.amount, 0)}</td><td>{v.payment_mode}</td><td><span className={`status-badge status-${v.status}`}>{v.status.replace(/_/g, ' ')}</span></td><td>{new Date(v.created_at).toLocaleDateString('en-IN')}</td><td><button className="btn btn-sm btn-secondary" onClick={() => openVoucher(v)}>{Icons.eye} View</button></td></tr>))}
+            {filtered.map(v => (<tr key={v.id}><td className="text-mono fw-600">{v.serial_number}{v.attachment_count > 0 && <span title={`${v.attachment_count} attachment${v.attachment_count > 1 ? 's' : ''}`} style={{marginLeft: '6px', color: '#f5841f', verticalAlign: 'middle', display: 'inline-flex'}}>{Icons.paperclip}</span>}</td><td>{v.head_of_account}</td><td>{v.payee_name}</td><td className="fw-600">{formatRupees(v.amount, 0)}</td><td>{v.payment_mode}</td><td><span className={`status-badge status-${v.status}`}>{v.status.replace(/_/g, ' ')}</span></td><td>{new Date(v.created_at).toLocaleDateString('en-IN')}</td><td><div style={{display:'flex',gap:'0.4rem',flexWrap:'wrap'}}><button className="btn btn-sm btn-secondary" onClick={() => openVoucher(v)}>{Icons.eye} View</button>{v.status === 'completed' && v.payment_mode !== 'Cash' && (user.role === 'admin' || user.isSuperAdmin) && (<button className="btn btn-sm" style={{background:'#16a34a',color:'white',border:'none',borderRadius:'6px',padding:'0.3rem 0.65rem',fontSize:'0.8rem',cursor:'pointer',fontWeight:600}} onClick={() => setPayNowVoucher(v)}>💳 Pay Now</button>)}</div></td></tr>))}
           </tbody></table></div>
         )}
       </div></div>
@@ -2978,6 +2993,11 @@ const VoucherList = ({ filter }) => {
               </div>
             </div>
             <div className="form-group">
+              <label className="form-label">Paid From Account <span style={{fontWeight:400,color:'#888',fontSize:'0.82rem'}}>(optional — which bank account / director's account)</span></label>
+              <input type="text" list="pfa-edit-list" className="form-input" placeholder="e.g., HDFC Current A/C, Director Ramesh A/C" value={editForm.paidFromAccount} onChange={(e) => setEditForm({ ...editForm, paidFromAccount: e.target.value })} />
+              <datalist id="pfa-edit-list">{paymentAccounts.map(a => <option key={a.id} value={a.label} />)}</datalist>
+            </div>
+            <div className="form-group">
               <label className="form-label">Payee *</label>
               <select className="form-select" value={editForm.payeeId} onChange={(e) => setEditForm({ ...editForm, payeeId: e.target.value })}>
                 <option value="">Select Payee</option>
@@ -3082,6 +3102,79 @@ const VoucherList = ({ filter }) => {
           </div>
         </div></div>
       )}
+
+      {/* Pay Now Modal */}
+      {payNowVoucher && (() => {
+        const v = payNowVoucher;
+        const isMobile = /Mobi|Android/i.test(navigator.userAgent);
+        const upiUrl = v.payment_mode === 'UPI' && v.payee_upi_id
+          ? `upi://pay?${new URLSearchParams({ pa: v.payee_upi_id, pn: v.payee_name, am: parseFloat(v.amount).toFixed(2), cu: 'INR', tn: `Voucher ${v.serial_number}` }).toString()}`
+          : null;
+        const qrSrc = upiUrl
+          ? `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(upiUrl)}&bgcolor=ffffff&color=1a1a1a&margin=10`
+          : null;
+        const copyBankDetails = () => {
+          const text = [`Payee: ${v.payee_name}`, `Account No: ${v.payee_bank_account || '—'}`, `IFSC: ${v.payee_ifsc || '—'}`, `Bank: ${v.payee_bank_name || '—'}`, `Amount: ₹${parseFloat(v.amount).toLocaleString('en-IN', {minimumFractionDigits:2})}`, `Reference: ${v.serial_number}`].join('\n');
+          navigator.clipboard.writeText(text).then(() => addToast('Bank details copied', 'success'));
+        };
+        return (
+          <div className="modal-overlay" onClick={() => setPayNowVoucher(null)}>
+            <div className="modal" onClick={(e) => e.stopPropagation()} style={{maxWidth:'440px'}}>
+              <div className="modal-header" style={{background:'#16a34a',color:'white'}}>
+                <h3 className="modal-title" style={{color:'white'}}>💳 Pay Now — {v.serial_number}</h3>
+                <button className="modal-close" style={{color:'white'}} onClick={() => setPayNowVoucher(null)}>×</button>
+              </div>
+              <div className="modal-body">
+                <div style={{marginBottom:'1rem',padding:'0.75rem',background:'#f0fdf4',borderRadius:'8px',border:'1px solid #86efac',fontSize:'0.9rem'}}>
+                  <div style={{display:'flex',justifyContent:'space-between',marginBottom:'0.3rem'}}><span style={{color:'#166534'}}>Payee</span><strong>{v.payee_name}</strong></div>
+                  <div style={{display:'flex',justifyContent:'space-between',marginBottom:'0.3rem'}}><span style={{color:'#166534'}}>Amount</span><strong style={{fontFamily:'monospace',fontSize:'1.1rem'}}>₹{parseFloat(v.amount).toLocaleString('en-IN',{minimumFractionDigits:2})}</strong></div>
+                  <div style={{display:'flex',justifyContent:'space-between',marginBottom:'0.3rem'}}><span style={{color:'#166534'}}>Mode</span><strong>{v.payment_mode}</strong></div>
+                  {v.paid_from_account && <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#166534'}}>Paid From</span><strong>{v.paid_from_account}</strong></div>}
+                </div>
+
+                {v.payment_mode === 'UPI' && !v.payee_upi_id && (
+                  <div style={{padding:'1rem',background:'#fef9c3',borderRadius:'8px',border:'1px solid #fde047',textAlign:'center',fontSize:'0.88rem',color:'#713f12'}}>
+                    ⚠️ No UPI ID recorded for this payee. Edit the payee to add their UPI ID.
+                  </div>
+                )}
+
+                {v.payment_mode === 'UPI' && v.payee_upi_id && isMobile && (
+                  <div style={{textAlign:'center'}}>
+                    <p style={{fontSize:'0.85rem',color:'#555',marginBottom:'1rem'}}>Tap below to open your UPI app with details pre-filled.</p>
+                    <a href={upiUrl} style={{display:'inline-block',background:'#16a34a',color:'white',padding:'0.75rem 2rem',borderRadius:'8px',fontWeight:700,textDecoration:'none',fontSize:'1rem'}}>Open UPI App →</a>
+                    <p style={{fontSize:'0.75rem',color:'#888',marginTop:'0.75rem'}}>UPI ID: <code>{v.payee_upi_id}</code></p>
+                  </div>
+                )}
+
+                {v.payment_mode === 'UPI' && v.payee_upi_id && !isMobile && (
+                  <div style={{textAlign:'center'}}>
+                    <p style={{fontSize:'0.85rem',color:'#555',marginBottom:'0.75rem'}}>Scan this QR code with any UPI app on your phone.</p>
+                    <img src={qrSrc} alt="UPI QR Code" style={{width:220,height:220,border:'1px solid #e5e7eb',borderRadius:'8px'}} />
+                    <p style={{fontSize:'0.75rem',color:'#888',marginTop:'0.75rem'}}>UPI ID: <code>{v.payee_upi_id}</code></p>
+                  </div>
+                )}
+
+                {v.payment_mode === 'Account Transfer' && (
+                  <div>
+                    <p style={{fontSize:'0.85rem',color:'#555',marginBottom:'0.75rem'}}>Use these details in your banking app (NEFT / IMPS / RTGS).</p>
+                    <div style={{background:'#f8fafc',border:'1px solid #e2e8f0',borderRadius:'8px',padding:'1rem',fontSize:'0.9rem'}}>
+                      {[['Payee', v.payee_name], ['Account No', v.payee_bank_account || '—'], ['IFSC', v.payee_ifsc || '—'], ['Bank', v.payee_bank_name || '—'], ['Amount', `₹${parseFloat(v.amount).toLocaleString('en-IN',{minimumFractionDigits:2})}`], ['Reference', v.serial_number]].map(([label, val]) => (
+                        <div key={label} style={{display:'flex',justifyContent:'space-between',padding:'0.35rem 0',borderBottom:'1px solid #e2e8f0'}}>
+                          <span style={{color:'#64748b'}}>{label}</span><strong style={{textAlign:'right',maxWidth:'60%',wordBreak:'break-all'}}>{val}</strong>
+                        </div>
+                      ))}
+                    </div>
+                    <button className="btn btn-secondary" style={{width:'100%',marginTop:'0.75rem'}} onClick={copyBankDetails}>📋 Copy All Details</button>
+                  </div>
+                )}
+              </div>
+              <div className="modal-footer">
+                <button className="btn btn-secondary" onClick={() => setPayNowVoucher(null)}>Close</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 };
@@ -4638,6 +4731,87 @@ const PayeesManagement = () => {
           </div>
         </div>
       )}
+    </div>
+  );
+};
+
+// Pay From Accounts Management Component
+const PaymentAccountsManagement = () => {
+  const { user, addToast } = useApp();
+  const [accounts, setAccounts] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [newLabel, setNewLabel] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  const load = () => {
+    setLoading(true);
+    api.getPaymentAccounts(user.company.id).then(data => {
+      setAccounts(Array.isArray(data) ? data : []);
+    }).finally(() => setLoading(false));
+  };
+
+  useEffect(() => { load(); }, [user.company.id]);
+
+  const handleAdd = async () => {
+    if (!newLabel.trim()) { addToast('Label cannot be empty', 'error'); return; }
+    if (accounts.some(a => a.label.toLowerCase() === newLabel.trim().toLowerCase())) { addToast('Already exists', 'error'); return; }
+    setSubmitting(true);
+    try {
+      const result = await api.addPaymentAccount({ companyId: user.company.id, label: newLabel.trim() });
+      if (result.success) { addToast('Account added', 'success'); setNewLabel(''); load(); }
+      else addToast(result.error || 'Failed', 'error');
+    } catch { addToast('Failed', 'error'); }
+    setSubmitting(false);
+  };
+
+  const handleDelete = async (id, label) => {
+    if (!confirm(`Remove "${label}" from the list?`)) return;
+    try {
+      await api.deletePaymentAccount(id);
+      addToast('Removed', 'success');
+      load();
+    } catch { addToast('Failed to remove', 'error'); }
+  };
+
+  return (
+    <div>
+      <div className="page-header"><h1 className="page-title">Pay From Accounts</h1><p className="page-subtitle">Manage the list of bank accounts and director/partner accounts that payments can be sent from</p></div>
+      <div className="card" style={{marginBottom:'1.5rem'}}>
+        <div className="card-header"><h3 className="card-title">{Icons.plus} Add Account</h3></div>
+        <div className="card-body">
+          <div style={{display:'flex',gap:'0.75rem',alignItems:'flex-end'}}>
+            <div className="form-group" style={{flex:1,marginBottom:0}}>
+              <label className="form-label">Account Label</label>
+              <input type="text" className="form-input" placeholder="e.g., HDFC Current A/C, Director Ramesh Personal A/C" value={newLabel} onChange={(e) => setNewLabel(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleAdd()} />
+              <div style={{fontSize:'0.78rem',color:'#888',marginTop:'0.35rem'}}>Use a clear, consistent name — this appears as an autocomplete suggestion when creating vouchers.</div>
+            </div>
+            <button className="btn btn-primary" onClick={handleAdd} disabled={submitting || !newLabel.trim()} style={{flexShrink:0}}>{submitting && Icons.loader}Add</button>
+          </div>
+        </div>
+      </div>
+      <div className="card">
+        <div className="card-header"><h3 className="card-title">{Icons.fileText} Accounts List</h3></div>
+        <div className="card-body" style={{padding:0}}>
+          {loading ? <div style={{padding:'2rem',textAlign:'center'}}>{Icons.loader}</div> : accounts.length === 0 ? (
+            <div className="empty-state">{Icons.fileText}<p>No accounts added yet. Add your company bank accounts and director accounts above.</p></div>
+          ) : (
+            <div className="table-container">
+              <table className="table">
+                <thead><tr><th>Label</th><th>Added</th><th>Action</th></tr></thead>
+                <tbody>
+                  {accounts.map(a => (
+                    <tr key={a.id}>
+                      <td><strong>{a.label}</strong></td>
+                      <td style={{color:'#888',fontSize:'0.85rem'}}>{new Date(a.created_at).toLocaleDateString('en-IN')}</td>
+                      <td><button className="btn btn-sm btn-danger" onClick={() => handleDelete(a.id, a.label)}>🗑️ Remove</button></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 };
@@ -8020,7 +8194,7 @@ const App = () => {
   const contextValue = { user, vouchers, notifications, addToast, refreshVouchers, refreshNotifications };
   const renderPage = () => {
     if (user.role === 'auditor') return <VoucherList filter="completed" />;
-    switch(currentPage) { case 'dashboard': return <Dashboard />; case 'create': return (user.role === 'accounts' || user.isSuperAdmin) ? <CreateVoucher /> : <Dashboard />; case 'drafts': return (user.role === 'accounts' || user.isSuperAdmin) ? <VoucherList filter="draft" /> : <Dashboard />; case 'pending': return <VoucherList filter="pending" />; case 'approved': return <VoucherList filter="approved" />; case 'completed': return <VoucherList filter="completed" />; case 'all': return <VoucherList filter="all" />; case 'users': return user.isSuperAdmin ? <UsersManagement /> : <Dashboard />; case 'payees': return (user.role === 'accounts' || user.isSuperAdmin) ? <PayeesManagement /> : <Dashboard />; case 'accounts': return (user.role === 'accounts' || user.isSuperAdmin) ? <AccountsManagement /> : <Dashboard />; case 'suspense': return <SuspenseVoucherList onViewDetail={(id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); }} />; case 'create-suspense': return (user.role === 'accounts' || user.isSuperAdmin) ? <SuspenseVoucherForm onCreated={() => { setCurrentPage('suspense'); }} onViewDetail={(id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); }} /> : <Dashboard />; case 'suspense-detail': return suspenseDetailId ? <SuspenseVoucherDetail suspenseId={suspenseDetailId} onBack={() => setCurrentPage('suspense')} /> : <SuspenseVoucherList onViewDetail={(id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); }} />; default: return <Dashboard />; } };
+    switch(currentPage) { case 'dashboard': return <Dashboard />; case 'create': return (user.role === 'accounts' || user.isSuperAdmin) ? <CreateVoucher /> : <Dashboard />; case 'drafts': return (user.role === 'accounts' || user.isSuperAdmin) ? <VoucherList filter="draft" /> : <Dashboard />; case 'pending': return <VoucherList filter="pending" />; case 'approved': return <VoucherList filter="approved" />; case 'completed': return <VoucherList filter="completed" />; case 'all': return <VoucherList filter="all" />; case 'users': return user.isSuperAdmin ? <UsersManagement /> : <Dashboard />; case 'payees': return (user.role === 'accounts' || user.isSuperAdmin) ? <PayeesManagement /> : <Dashboard />; case 'accounts': return (user.role === 'accounts' || user.isSuperAdmin) ? <AccountsManagement /> : <Dashboard />; case 'pay-from-accounts': return (user.role === 'accounts' || user.isSuperAdmin) ? <PaymentAccountsManagement /> : <Dashboard />; case 'suspense': return <SuspenseVoucherList onViewDetail={(id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); }} />; case 'create-suspense': return (user.role === 'accounts' || user.isSuperAdmin) ? <SuspenseVoucherForm onCreated={() => { setCurrentPage('suspense'); }} onViewDetail={(id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); }} /> : <Dashboard />; case 'suspense-detail': return suspenseDetailId ? <SuspenseVoucherDetail suspenseId={suspenseDetailId} onBack={() => setCurrentPage('suspense')} /> : <SuspenseVoucherList onViewDetail={(id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); }} />; default: return <Dashboard />; } };
 
   const handleNavClick = (page) => {
     try { localStorage.setItem('relish_page', page); } catch {}
@@ -8132,6 +8306,7 @@ const App = () => {
             {(user.role === 'accounts' || user.isSuperAdmin) && <div className="nav-section"><div className="nav-section-title">Master Data</div>
               <div className={`nav-item ${currentPage === 'payees' ? 'active' : ''}`} onClick={() => handleNavClick('payees')}>{Icons.users} Manage Payees</div>
               <div className={`nav-item ${currentPage === 'accounts' ? 'active' : ''}`} onClick={() => handleNavClick('accounts')}>{Icons.fileText} Heads of Account</div>
+              <div className={`nav-item ${currentPage === 'pay-from-accounts' ? 'active' : ''}`} onClick={() => handleNavClick('pay-from-accounts')}>🏦 Pay From Accounts</div>
             </div>}
             {user.isSuperAdmin && <div className="nav-section"><div className="nav-section-title">Admin Dashboard</div><div className={`nav-item ${currentPage === 'users' ? 'active' : ''}`} onClick={() => handleNavClick('users')}>{Icons.users} User Management</div></div>}
             </>)}
@@ -8190,6 +8365,7 @@ const App = () => {
                 {(user.role === 'accounts' || user.isSuperAdmin) && <div className="nav-section"><div className="nav-section-title">Master Data</div>
                   <div className={`nav-item ${currentPage === 'payees' ? 'active' : ''}`} onClick={() => handleNavClick('payees')}>{Icons.users} Manage Payees</div>
                   <div className={`nav-item ${currentPage === 'accounts' ? 'active' : ''}`} onClick={() => handleNavClick('accounts')}>{Icons.fileText} Heads of Account</div>
+                  <div className={`nav-item ${currentPage === 'pay-from-accounts' ? 'active' : ''}`} onClick={() => handleNavClick('pay-from-accounts')}>🏦 Pay From Accounts</div>
                 </div>}
                 {user.isSuperAdmin && <div className="nav-section"><div className="nav-section-title">Admin Dashboard</div><div className={`nav-item ${currentPage === 'users' ? 'active' : ''}`} onClick={() => handleNavClick('users')}>{Icons.users} User Management</div></div>}
                 </>)}

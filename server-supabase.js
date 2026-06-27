@@ -917,7 +917,7 @@ app.get('/api/companies/:companyId/users', async (req, res) => {
 
 // Add payee
 app.post('/api/payees', async (req, res) => {
-  const { companyId, name, alias, mobile, bankAccount, ifsc, upiId, isGlobal, payeeType, requiresOtp, userId, isStaff } = req.body;
+  const { companyId, name, alias, mobile, bankAccount, ifsc, upiId, bankName, isGlobal, payeeType, requiresOtp, userId, isStaff } = req.body;
   if (!companyId || !name || !mobile) {
     return res.status(400).json({ error: 'Company, name, and mobile are required' });
   }
@@ -942,6 +942,7 @@ app.post('/api/payees', async (req, res) => {
       bank_account: bankAccount || null,
       ifsc: ifsc || null,
       upi_id: upiId || null,
+      bank_name: bankName || null,
       is_global: isGlobal || false,
       payee_type: payeeType || 'registered',
       requires_otp: otpRequired,
@@ -1137,7 +1138,7 @@ const getNextVoucherNumber = async (companyId) => {
 
 // Create voucher (submit for approval) or save as draft
 app.post('/api/vouchers', async (req, res) => {
-  const { companyId, headOfAccount, subHeadOfAccount, narration, narrationItems, deductions, amount, paymentMode, payeeId, preparedBy, saveAsDraft, invoiceReference } = req.body;
+  const { companyId, headOfAccount, subHeadOfAccount, narration, narrationItems, deductions, amount, paymentMode, payeeId, preparedBy, saveAsDraft, invoiceReference, paidFromAccount } = req.body;
   
   if (!companyId || !headOfAccount || !amount || !paymentMode || !payeeId || !preparedBy) {
     return res.status(400).json({ error: 'Missing required fields' });
@@ -1166,7 +1167,8 @@ app.post('/api/vouchers', async (req, res) => {
       prepared_by: preparedBy,
       status: status,
       submitted_at: saveAsDraft ? null : new Date().toISOString(),
-      invoice_reference: invoiceReference || null
+      invoice_reference: invoiceReference || null,
+      paid_from_account: paidFromAccount || null
     }).select().single();
     
     if (error) throw error;
@@ -1221,7 +1223,7 @@ app.post('/api/vouchers', async (req, res) => {
 
 // Update draft voucher
 app.put('/api/vouchers/:voucherId', async (req, res) => {
-  const { headOfAccount, subHeadOfAccount, narration, narrationItems, deductions, amount, paymentMode, payeeId, invoiceReference } = req.body;
+  const { headOfAccount, subHeadOfAccount, narration, narrationItems, deductions, amount, paymentMode, payeeId, invoiceReference, paidFromAccount } = req.body;
   
   try {
     // First check if voucher exists and is a draft
@@ -1246,6 +1248,7 @@ app.put('/api/vouchers/:voucherId', async (req, res) => {
     if (paymentMode !== undefined) updateData.payment_mode = paymentMode;
     if (payeeId !== undefined) updateData.payee_id = payeeId;
     if (invoiceReference !== undefined) updateData.invoice_reference = invoiceReference;
+    if (paidFromAccount !== undefined) updateData.paid_from_account = paidFromAccount;
     
     const { data: voucher, error } = await supabase.from('vouchers')
       .update(updateData)
@@ -1326,7 +1329,7 @@ app.get('/api/companies/:companyId/vouchers', async (req, res) => {
     const { data: vouchers, error } = await supabase.from('vouchers')
       .select(`
         *,
-        payee:payees(name, alias, mobile),
+        payee:payees(name, alias, mobile, upi_id, bank_account, ifsc, bank_name),
         preparer:users!vouchers_prepared_by_fkey(name, username),
         approver:users!vouchers_approved_by_fkey(name, username),
         company:companies(name, address, gst)
@@ -1355,6 +1358,10 @@ app.get('/api/companies/:companyId/vouchers', async (req, res) => {
       payee_name: v.payee?.name,
       payee_alias: v.payee?.alias,
       payee_mobile: v.payee?.mobile,
+      payee_upi_id: v.payee?.upi_id,
+      payee_bank_account: v.payee?.bank_account,
+      payee_ifsc: v.payee?.ifsc,
+      payee_bank_name: v.payee?.bank_name,
       preparer_name: v.preparer?.name,
       preparer_username: v.preparer?.username,
       approver_name: v.approver?.name,
@@ -1377,7 +1384,7 @@ app.get('/api/vouchers/:voucherId', async (req, res) => {
     const { data: voucher, error } = await supabase.from('vouchers')
       .select(`
         *,
-        payee:payees(name, alias, mobile, bank_account, ifsc, upi_id),
+        payee:payees(name, alias, mobile, bank_account, ifsc, upi_id, bank_name),
         preparer:users!vouchers_prepared_by_fkey(name, username),
         approver:users!vouchers_approved_by_fkey(name, username),
         company:companies(name, address, gst)
@@ -1411,6 +1418,10 @@ app.get('/api/vouchers/:voucherId', async (req, res) => {
       payee_name: voucher.payee?.name,
       payee_alias: voucher.payee?.alias,
       payee_mobile: voucher.payee?.mobile,
+      payee_upi_id: voucher.payee?.upi_id,
+      payee_bank_account: voucher.payee?.bank_account,
+      payee_ifsc: voucher.payee?.ifsc,
+      payee_bank_name: voucher.payee?.bank_name,
       preparer_name: voucher.preparer?.name,
       preparer_username: voucher.preparer?.username,
       approver_name: voucher.approver?.name,
@@ -1983,6 +1994,56 @@ app.post('/api/users/:userId/test-push', async (req, res) => {
         ? `Push notification sent to ${result.sent} device(s)` 
         : 'No devices registered for push notifications'
     });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============ COMPANY PAYMENT ACCOUNTS ============
+
+// List payment accounts for a company
+app.get('/api/companies/:companyId/payment-accounts', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('company_payment_accounts')
+      .select('*')
+      .eq('company_id', req.params.companyId)
+      .order('created_at', { ascending: true });
+    if (error) throw error;
+    res.json(data || []);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Add a payment account
+app.post('/api/payment-accounts', async (req, res) => {
+  const { companyId, label } = req.body;
+  if (!companyId || !label?.trim()) {
+    return res.status(400).json({ error: 'companyId and label are required' });
+  }
+  try {
+    const { data, error } = await supabase
+      .from('company_payment_accounts')
+      .insert({ company_id: companyId, label: label.trim() })
+      .select()
+      .single();
+    if (error) throw error;
+    res.json({ success: true, account: data });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Delete a payment account
+app.delete('/api/payment-accounts/:id', async (req, res) => {
+  try {
+    const { error } = await supabase
+      .from('company_payment_accounts')
+      .delete()
+      .eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
