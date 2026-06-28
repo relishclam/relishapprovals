@@ -13,7 +13,7 @@ A **Suspense Voucher** is an advance payment given to a staff member to cover ex
 | **Accounts** | Creates the voucher, adds top-ups, adds entries on behalf of staff, reviews and approves all entries |
 | **Admin / Super Admin** | Approves or rejects the voucher before it is activated |
 | **Staff / Payee** | Receives an SMS/WhatsApp (Manual) link, submits expense entries and attaches bills — no system login required |
-| **Auditor** | Read-only access to view all records |
+| **Auditor** | Read-only access to view all records; can propose corrections to Head of Account and Sub-Heading on vouchers (subject to Admin batch approval) |
 
 ---
 
@@ -30,13 +30,13 @@ Created by Accounts
         ↓
    Accounts/Admin verifies OTP collected from staff
         ↓
-      open  ←──────────────────── Top-Up added to a closed voucher
+      open  ←──────────────────── Top-Up approved by Admin on a closed voucher
         ↓                         (reopens if was closed)
   (Staff/Accounts add entries, entries get approved)
         ↓
      partial   (some entries approved, balance > 0)
         ↓
-  (all funds accounted for, balance = 0)
+  (Accounts manually closes the voucher)
         ↓
       closed   (SMS links stop working)
 ```
@@ -126,7 +126,7 @@ The upload buttons are disabled until a category is chosen. After each upload th
 
 **After every approval:**
 - The voucher balance is recalculated automatically.
-- If balance reaches zero → voucher status changes to **Closed** and the SMS link is deactivated.
+- The voucher does **not** close automatically — Accounts must manually close it when all funds are accounted for.
 
 **What the created Payment Voucher contains:**
 - The expense bill(s) uploaded by staff for that specific entry.
@@ -169,7 +169,9 @@ When the staff member needs more funds:
 2. Enter the additional amount and a description.
 3. Click **Add Top-Up**.
 
-**Top-ups are automatically approved** — no review needed. The balance increases immediately and an SMS is sent to the staff member with the new balance. If the voucher was closed, it **reopens automatically**.
+The top-up is **submitted for Admin approval** — all Admins receive an in-app notification and the top-up appears in their pending queue. Once an Admin approves it, the balance increases and an SMS is sent to the staff member with the new balance. If the voucher was closed, it **reopens automatically** on approval. Admins can also reject a top-up (with a reason), in which case the balance is unaffected.
+
+> ℹ️ Accounts users and Super Admins can submit top-ups; only Admin / Super Admin can approve or reject them.
 
 ---
 
@@ -280,7 +282,7 @@ Tap **➕ Submit Another Entry** to go back to the form and record the next expe
 Your settlement link **does not expire** after 24 hours. It remains valid as long as your suspense voucher is open. You can bookmark the link and return to it any time.
 
 The link will stop working only when:
-- The accounts team **closes the voucher** (balance reaches zero), OR
+- The accounts team **manually closes the voucher**, OR
 - The accounts team **sends you a new link** (the old one is deactivated).
 
 ---
@@ -293,22 +295,92 @@ If you have spent all your advance and need more funds, ask your accounts team t
 
 ## Summary Table — Who Does What
 
-| Action | Accounts | Admin | Staff (SMS) |
-|---|:---:|:---:|:---:|
-| Create suspense voucher | ✅ | — | — |
-| Approve / reject voucher | — | ✅ | — |
-| Share advance receipt OTP | — | — | ✅ |
-| Verify advance OTP (activate link) | ✅ | ✅ | — |
-| Submit expense entry | ✅ | — | ✅ |
-| Attach bill photo | ✅ | — | ✅ |
-| Upload & classify suspense-level attachment | ✅ | — | — |
-| Review & approve entries | ✅ | — | — |
-| Combine entries into one voucher | ✅ | — | — |
-| Approve payment voucher | — | ✅ | — |
-| Add top-up | ✅ | — | — |
-| Resend SMS link | ✅ | ✅ | — |
-| Close voucher | ✅ | — | — |
-| View / audit all records | ✅ | ✅ | — |
+| Action | Accounts | Admin | Auditor | Staff (SMS) |
+|---|:---:|:---:|:---:|:---:|
+| Create suspense voucher | ✅ | — | — | — |
+| Approve / reject voucher | — | ✅ | — | — |
+| Share advance receipt OTP | — | — | — | ✅ |
+| Verify advance OTP (activate link) | ✅ | ✅ | — | — |
+| Submit expense entry | ✅ | — | — | ✅ |
+| Attach bill photo | ✅ | — | — | ✅ |
+| Upload & classify suspense-level attachment | ✅ | — | — | — |
+| Review & approve entries | ✅ | — | — | — |
+| Combine entries into one voucher | ✅ | — | — | — |
+| Approve payment voucher | — | ✅ | — | — |
+| Add top-up | ✅ | — | — | — |
+| Approve / reject top-up | — | ✅ | — | — |
+| Resend SMS link | ✅ | ✅ | — | — |
+| Close voucher (manual) | ✅ | — | — | — |
+| Propose HOA / Sub-Heading correction | — | — | ✅ | — |
+| Batch-approve HOA corrections | — | ✅ | — | — |
+| View / audit all records | ✅ | ✅ | ✅ | — |
+
+---
+
+---
+
+## 7. Auditor — Proposing Head of Account Corrections
+
+Auditors have read-only access to all vouchers but can **propose corrections** to the **Head of Account** and **Sub-Heading** fields when the value entered by Accounts does not match the organisation's accounting standard (e.g. the Tally or Pramaana chart of accounts).
+
+### Why This Exists
+
+Accounts staff may enter a Head of Account that is informal or non-standard (e.g. "Petrol" instead of the official "Conveyance Expenses"). Auditors can flag and correct these without being able to touch amounts, payees, or any other voucher data.
+
+### How the Auditor Proposes a Correction
+
+1. Open any voucher in the system.
+2. Next to the **Head of Account** (and/or **Sub-Heading**) field, an **✏️ Propose Correction** button is visible to Auditors.
+3. Click it. A modal opens showing:
+   - The **current** Head of Account / Sub-Heading (read-only snapshot).
+   - A **New Head of Account** dropdown (required).
+   - A **New Sub-Heading** dropdown (optional — filters to sub-heads under the chosen HOA).
+   - A **Reason** text field (required — e.g. *"Should be 'Conveyance Expenses' as per Tally chart"*).
+4. Click **Submit Proposal**.
+
+The proposal is saved with status `pending`. The voucher itself is **not changed yet**. Admins are notified of a new pending correction.
+
+> ℹ️ Only one pending proposal per voucher is allowed at a time. A new proposal can be submitted once the existing one is approved or rejected.
+
+---
+
+### How Admin Batch-Approves Corrections
+
+1. In the dashboard, open **HOA Corrections** (shows a badge with the pending count).
+2. A table lists all pending proposals with columns: Voucher No. | Current HOA | Proposed HOA | Proposed Sub-Heading | Reason | Proposed By | Date.
+3. Tick checkboxes to select one or more proposals.
+4. Click **✅ Approve Selected** — a confirmation modal shows the count and the vouchers affected.
+5. Click **Confirm**. All approved proposals are applied atomically: the `head_of_account_id` and/or `sub_head_of_account_id` on each voucher is updated. Each updated voucher records the change as an audit entry.
+6. The Auditor who proposed each correction is notified of the outcome.
+
+To reject a proposal, click **✗ Reject** on any individual row, enter a rejection reason, and confirm. The Auditor is notified.
+
+### Data Model
+
+```
+hoa_correction_proposals
+  id                    UUID PK
+  company_id            UUID FK → companies
+  voucher_id            UUID FK → vouchers
+  proposed_by           UUID FK → users  (Auditor)
+  current_hoa_id        UUID FK → heads_of_account      (snapshot at proposal time)
+  current_sub_hoa_id    UUID FK → sub_heads_of_account  (snapshot, nullable)
+  proposed_hoa_id       UUID FK → heads_of_account      (nullable — no change if NULL)
+  proposed_sub_hoa_id   UUID FK → sub_heads_of_account  (nullable — no change if NULL)
+  reason                TEXT NOT NULL
+  status                TEXT  ('pending' | 'approved' | 'rejected')
+  reviewed_by           UUID FK → users  (Admin who acted)
+  reviewed_at           TIMESTAMPTZ
+  rejection_reason      TEXT
+  created_at            TIMESTAMPTZ
+```
+
+### Key Constraints
+- Only Auditors can create proposals; only Admin / Super Admin can approve or reject.
+- A proposal cannot be submitted if another `pending` proposal already exists for the same voucher.
+- Approval writes directly to the `vouchers` table in a single transaction; no partial writes.
+- The original HOA values are stored in the proposal row forever — providing a full before/after audit trail.
+- Auditors cannot edit amounts, payees, payment mode, narration, or attachments.
 
 ---
 
@@ -316,11 +388,12 @@ If you have spent all your advance and need more funds, ask your accounts team t
 
 1. **One active voucher per staff member** — a new one cannot be created until the current one is closed or rejected.
 2. **OTP is mandatory before activation** — the settlement link is only sent after the staff member's advance receipt is confirmed by OTP. This ensures every disbursement is verified.
-3. **Top-ups reopen a closed voucher** — if a voucher was closed and a top-up is added, it becomes active again.
+3. **Top-ups reopen a closed voucher** — if a voucher was closed and a top-up is added and approved by Admin, it becomes active again.
 4. **The SMS link is permanent** until explicitly revoked — staff can use it any time the voucher is open.
 5. **All entries go through review** — no expense is finalised until an Accounts user approves it.
 6. **Payment vouchers follow the normal approval flow** — vouchers created from settlement entries enter Pending status and require Admin approval. After Admin approval they are immediately completed (no new OTP) because the advance was already OTP-verified at disbursement.
    Each final voucher automatically carries: (a) the expense bills uploaded by staff for that entry, and (b) copies of the suspense-level **Transfer Receipts** uploaded by Accounts — so every voucher is independently auditable.
 7. **Classify every suspense-level upload** — when Accounts uploads an attachment directly to a suspense voucher, they must declare whether it is a 🏦 Transfer Receipt or a 🧾 Expense Bill. Only Transfer Receipts are propagated to final payment vouchers; Expense Bills remain on the suspense voucher. This prevents disbursement proofs and staff invoices from being mixed up across vouchers.
 8. **Combine saves work** — multiple small expenses under the same Head of Account can be combined into one voucher. All bills from every combined entry are preserved.
-9. **Balance is always auto-calculated** — Expenses reduce the balance; Refunds and Top-ups increase it.
+9. **Balance is always auto-calculated** — Expenses reduce the balance; Refunds increase it; Top-ups increase it only after Admin approval.
+10. **Vouchers never close automatically** — even when the balance reaches zero. Accounts must manually close the voucher. This allows for overspend correction, final entry additions, and top-up workflows without unintended lock-out.

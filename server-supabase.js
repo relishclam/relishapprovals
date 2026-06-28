@@ -3943,6 +3943,183 @@ app.post('/api/capture-sessions/:id/upload', async (req, res) => {
   }
 });
 
+// ─── HOA Correction Proposals (Auditor → Admin batch-approve) ────────────────
+
+// Auditor submits a correction proposal for head_of_account / sub_head_of_account
+app.post('/api/vouchers/:id/hoa-corrections', async (req, res) => {
+  try {
+    const { proposedBy, proposedHoa, proposedSubHoa, reason } = req.body;
+    if (!proposedBy || !reason || (!proposedHoa && proposedSubHoa === undefined)) {
+      return res.status(400).json({ error: 'proposedBy, reason, and at least one of proposedHoa / proposedSubHoa are required' });
+    }
+
+    // Verify caller is an auditor for this company
+    const { data: caller } = await supabase.from('users').select('id, name, role').eq('id', proposedBy).single();
+    if (!caller || caller.role !== 'auditor') {
+      return res.status(403).json({ error: 'Only Auditors can propose HOA corrections' });
+    }
+
+    // Load current voucher state
+    const { data: voucher, error: vErr } = await supabase.from('vouchers')
+      .select('id, company_id, serial_number, head_of_account, sub_head_of_account')
+      .eq('id', req.params.id).single();
+    if (vErr || !voucher) return res.status(404).json({ error: 'Voucher not found' });
+
+    // Enforce one pending proposal per voucher
+    const { data: existing } = await supabase.from('hoa_correction_proposals')
+      .select('id').eq('voucher_id', voucher.id).eq('status', 'pending').maybeSingle();
+    if (existing) {
+      return res.status(409).json({ error: 'A pending HOA correction already exists for this voucher. Wait for Admin to review it first.' });
+    }
+
+    const { data: proposal, error: insErr } = await supabase.from('hoa_correction_proposals').insert({
+      company_id:      voucher.company_id,
+      voucher_id:      voucher.id,
+      proposed_by:     proposedBy,
+      current_hoa:     voucher.head_of_account,
+      current_sub_hoa: voucher.sub_head_of_account || null,
+      proposed_hoa:    proposedHoa || null,
+      proposed_sub_hoa: (proposedSubHoa !== undefined ? proposedSubHoa || null : undefined),
+      reason,
+    }).select().single();
+    if (insErr) return res.status(500).json({ error: insErr.message });
+
+    // Notify all Admins
+    const { data: admins } = await supabase.from('users')
+      .select('id').eq('company_id', voucher.company_id).in('role', ['admin', 'super_admin']);
+    const notifications = (admins || []).map(a => ({
+      user_id: a.id,
+      title: '✏️ HOA Correction Proposed',
+      message: `${caller.name} proposed an HOA correction for ${voucher.serial_number}: "${voucher.head_of_account}" → "${proposedHoa || voucher.head_of_account}". Reason: ${reason}`,
+      type: 'info',
+      voucher_id: voucher.id,
+    }));
+    if (notifications.length) await supabase.from('notifications').insert(notifications);
+
+    res.json({ success: true, proposal });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Admin lists HOA correction proposals for their company
+app.get('/api/companies/:companyId/hoa-corrections', async (req, res) => {
+  try {
+    const { status } = req.query;
+    let query = supabase.from('hoa_correction_proposals')
+      .select(`*, proposer:users!proposed_by(id, name), reviewer:users!reviewed_by(id, name), voucher:vouchers!voucher_id(id, serial_number, head_of_account, sub_head_of_account)`)
+      .eq('company_id', req.params.companyId)
+      .order('created_at', { ascending: false });
+    if (status) query = query.eq('status', status);
+    const { data, error } = await query;
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ proposals: data || [] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Admin batch-approves one or more pending proposals
+app.post('/api/companies/:companyId/hoa-corrections/batch-approve', async (req, res) => {
+  try {
+    const { ids, approvedBy } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0 || !approvedBy) {
+      return res.status(400).json({ error: 'ids (array) and approvedBy are required' });
+    }
+
+    // Verify caller is Admin / Super Admin
+    const { data: caller } = await supabase.from('users').select('id, name, role, is_super_admin').eq('id', approvedBy).single();
+    if (!caller || (caller.role !== 'admin' && !caller.is_super_admin)) {
+      return res.status(403).json({ error: 'Only Admin or Super Admin can approve HOA corrections' });
+    }
+
+    // Load all requested proposals (must be pending and belong to this company)
+    const { data: proposals, error: fetchErr } = await supabase.from('hoa_correction_proposals')
+      .select('id, voucher_id, proposed_hoa, proposed_sub_hoa, proposed_by, current_hoa, current_sub_hoa')
+      .in('id', ids)
+      .eq('company_id', req.params.companyId)
+      .eq('status', 'pending');
+    if (fetchErr) return res.status(500).json({ error: fetchErr.message });
+    if (!proposals || proposals.length === 0) return res.status(404).json({ error: 'No matching pending proposals found' });
+
+    const now = new Date().toISOString();
+    const approvedIds = [];
+    const errors = [];
+
+    for (const p of proposals) {
+      // Build the voucher update object — only overwrite fields that have a proposed value
+      const voucherUpdate = {};
+      if (p.proposed_hoa) voucherUpdate.head_of_account = p.proposed_hoa;
+      if (p.proposed_sub_hoa !== null && p.proposed_sub_hoa !== undefined) voucherUpdate.sub_head_of_account = p.proposed_sub_hoa || null;
+
+      if (Object.keys(voucherUpdate).length > 0) {
+        const { error: vErr } = await supabase.from('vouchers').update(voucherUpdate).eq('id', p.voucher_id);
+        if (vErr) { errors.push({ proposalId: p.id, error: vErr.message }); continue; }
+      }
+
+      await supabase.from('hoa_correction_proposals').update({
+        status: 'approved', reviewed_by: approvedBy, reviewed_at: now,
+      }).eq('id', p.id);
+
+      // Notify the Auditor who proposed the correction
+      const { data: voucher } = await supabase.from('vouchers').select('serial_number').eq('id', p.voucher_id).single();
+      await supabase.from('notifications').insert({
+        user_id: p.proposed_by,
+        title: '✅ HOA Correction Approved',
+        message: `Your HOA correction for ${voucher?.serial_number || 'voucher'} was approved by ${caller.name}.`,
+        type: 'success',
+        voucher_id: p.voucher_id,
+      });
+
+      approvedIds.push(p.id);
+    }
+
+    res.json({ success: true, approvedCount: approvedIds.length, errors });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Admin rejects a single pending proposal
+app.post('/api/hoa-corrections/:proposalId/reject', async (req, res) => {
+  try {
+    const { rejectedBy, rejectionReason } = req.body;
+    if (!rejectedBy || !rejectionReason) {
+      return res.status(400).json({ error: 'rejectedBy and rejectionReason are required' });
+    }
+
+    const { data: caller } = await supabase.from('users').select('id, name, role, is_super_admin').eq('id', rejectedBy).single();
+    if (!caller || (caller.role !== 'admin' && !caller.is_super_admin)) {
+      return res.status(403).json({ error: 'Only Admin or Super Admin can reject HOA corrections' });
+    }
+
+    const { data: proposal, error: fetchErr } = await supabase.from('hoa_correction_proposals')
+      .select('id, status, proposed_by, voucher_id').eq('id', req.params.proposalId).single();
+    if (fetchErr || !proposal) return res.status(404).json({ error: 'Proposal not found' });
+    if (proposal.status !== 'pending') return res.status(400).json({ error: 'Proposal is not pending' });
+
+    await supabase.from('hoa_correction_proposals').update({
+      status: 'rejected', reviewed_by: rejectedBy, reviewed_at: new Date().toISOString(), rejection_reason: rejectionReason,
+    }).eq('id', req.params.proposalId);
+
+    // Notify the Auditor
+    const { data: voucher } = await supabase.from('vouchers').select('serial_number').eq('id', proposal.voucher_id).single();
+    await supabase.from('notifications').insert({
+      user_id: proposal.proposed_by,
+      title: '❌ HOA Correction Rejected',
+      message: `Your HOA correction for ${voucher?.serial_number || 'voucher'} was rejected by ${caller.name}. Reason: ${rejectionReason}`,
+      type: 'error',
+      voucher_id: proposal.voucher_id,
+    });
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 // Health check
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });

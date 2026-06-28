@@ -186,6 +186,11 @@ const api = {
   createCaptureSession: (data) => fetch(`${API_BASE}/capture-sessions`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
   getCaptureSession: (id) => fetch(`${API_BASE}/capture-sessions/${id}`).then(r => r.json()),
   uploadToCapture: (id, data) => fetch(`${API_BASE}/capture-sessions/${id}/upload`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
+  // HOA Correction Proposals
+  proposeHoaCorrection: (voucherId, data) => fetch(`${API_BASE}/vouchers/${voucherId}/hoa-corrections`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
+  getHoaCorrections: (companyId, status) => fetch(`${API_BASE}/companies/${companyId}/hoa-corrections${status ? '?status=' + status : ''}`).then(r => r.json()),
+  batchApproveHoaCorrections: (companyId, ids, approvedBy) => fetch(`${API_BASE}/companies/${companyId}/hoa-corrections/batch-approve`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids, approvedBy }) }).then(r => r.json()),
+  rejectHoaCorrection: (proposalId, rejectedBy, rejectionReason) => fetch(`${API_BASE}/hoa-corrections/${proposalId}/reject`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rejectedBy, rejectionReason }) }).then(r => r.json()),
 };
 
 // Format number in Indian style with commas (without Unicode NBSP gaps)
@@ -2662,6 +2667,11 @@ const VoucherList = ({ filter }) => {
         )}
       </div>
 
+      {/* ── HOA CORRECTION PANEL (Admin, all + pending tabs) ── */}
+      {(user.role === 'admin' || user.isSuperAdmin) && (filter === 'all' || filter === 'pending') && (
+        <HoaCorrectionPanel />
+      )}
+
       {/* ── SEARCH PANEL (Completed Vouchers only) ── */}
       {filter === 'completed' && (
         <div className="card" style={{ marginBottom: '1rem' }}>
@@ -2760,6 +2770,8 @@ const VoucherList = ({ filter }) => {
           </div>
           <div className="modal-body">
             <VoucherPreview voucher={selectedVoucher} />
+            {/* HOA Correction Proposal — Auditor only */}
+            <ProposeHoaCorrectionSection voucher={selectedVoucher} />
             {/* Bill Attachments — visible on all statuses */}
             <BillAttachmentPanel
               voucherId={selectedVoucher.id}
@@ -6116,6 +6128,238 @@ const PendingNewVouchersPanel = ({ onViewVoucher }) => {
               <button className="btn btn-secondary" onClick={() => setShowRejectModal(false)}>Cancel</button>
               <button className="btn btn-danger" onClick={confirmReject} disabled={!!actionId}>{actionId ? Icons.loader : '✕'} Confirm Rejection</button>
             </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ── HOA Correction Panel (Admin) ─────────────────────────────────────────────
+const HoaCorrectionPanel = () => {
+  const { user, addToast } = useApp();
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [selected, setSelected] = useState(new Set());
+  const [actionId, setActionId] = useState(null);
+  const [showRejectModal, setShowRejectModal] = useState(false);
+  const [rejectingItem, setRejectingItem] = useState(null);
+  const [rejectReason, setRejectReason] = useState('');
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const data = await api.getHoaCorrections(user.company.id, 'pending');
+      setItems(data.proposals || []);
+    } catch { /* skip */ }
+    setLoading(false);
+  };
+  useEffect(() => { load(); }, [user.company.id]);
+
+  const toggleSelect = (id) => setSelected(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const toggleAll = () => setSelected(selected.size === items.length ? new Set() : new Set(items.map(i => i.id)));
+
+  const handleBatchApprove = async () => {
+    if (selected.size === 0) return;
+    setActionId('batch');
+    const result = await api.batchApproveHoaCorrections(user.company.id, Array.from(selected), user.id);
+    if (result.success) {
+      addToast(`${result.approvedCount} HOA correction(s) approved`, 'success');
+      setSelected(new Set());
+      load();
+    } else addToast(result.error || 'Batch approval failed', 'error');
+    setActionId(null);
+  };
+
+  const openReject = (item) => { setRejectingItem(item); setRejectReason(''); setShowRejectModal(true); };
+  const confirmReject = async () => {
+    if (!rejectReason.trim()) return;
+    setActionId(rejectingItem.id);
+    const result = await api.rejectHoaCorrection(rejectingItem.id, user.id, rejectReason);
+    if (result.success) {
+      addToast('Correction rejected', 'success');
+      setShowRejectModal(false);
+      setSelected(s => { const n = new Set(s); n.delete(rejectingItem.id); return n; });
+      load();
+    } else addToast(result.error || 'Rejection failed', 'error');
+    setActionId(null);
+  };
+
+  if (!loading && items.length === 0) return null;
+
+  return (
+    <div className="card" style={{ marginBottom: '1.25rem', border: '2px solid #0891b2', borderRadius: '10px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '0.85rem', flexWrap: 'wrap' }}>
+        <span style={{ fontSize: '1.25rem' }}>✏️</span>
+        <h3 style={{ fontWeight: 700, fontSize: '0.95rem', color: '#0891b2', margin: 0 }}>Pending HOA Corrections</h3>
+        {items.length > 0 && <span style={{ background: '#0891b2', color: 'white', borderRadius: '12px', padding: '1px 8px', fontSize: '0.75rem', fontWeight: 700 }}>{items.length}</span>}
+        {selected.size > 0 && (
+          <button className="btn btn-sm btn-success" style={{ marginLeft: 'auto' }} disabled={actionId === 'batch'} onClick={handleBatchApprove}>
+            {actionId === 'batch' ? Icons.loader : '✅'} Approve Selected ({selected.size})
+          </button>
+        )}
+      </div>
+      {loading ? (
+        <div style={{ color: '#9ca3af', fontSize: '0.85rem' }}>{Icons.loader} Loading...</div>
+      ) : (
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
+            <thead>
+              <tr style={{ background: '#ecfeff', borderBottom: '2px solid #a5f3fc' }}>
+                <th style={{ padding: '8px 10px', textAlign: 'center', width: 36 }}>
+                  <input type="checkbox" checked={selected.size === items.length && items.length > 0} onChange={toggleAll} />
+                </th>
+                <th style={{ padding: '8px 10px', textAlign: 'left' }}>Voucher</th>
+                <th style={{ padding: '8px 10px', textAlign: 'left' }}>Current HOA</th>
+                <th style={{ padding: '8px 10px', textAlign: 'left' }}>Proposed HOA</th>
+                <th style={{ padding: '8px 10px', textAlign: 'left' }}>Proposed Sub-Heading</th>
+                <th style={{ padding: '8px 10px', textAlign: 'left' }}>Reason</th>
+                <th style={{ padding: '8px 10px', textAlign: 'left' }}>By / Date</th>
+                <th style={{ padding: '8px 10px', textAlign: 'center' }}>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((item, idx) => (
+                <tr key={item.id} style={{ borderBottom: '1px solid #e0f2fe', background: idx % 2 === 0 ? '#fff' : '#f0fdfe' }}>
+                  <td style={{ padding: '8px 10px', textAlign: 'center' }}>
+                    <input type="checkbox" checked={selected.has(item.id)} onChange={() => toggleSelect(item.id)} />
+                  </td>
+                  <td style={{ padding: '8px 10px', fontWeight: 700, color: '#0369a1', whiteSpace: 'nowrap' }}>{item.voucher?.serial_number}</td>
+                  <td style={{ padding: '8px 10px', color: '#6b7280' }}>{item.current_hoa}{item.current_sub_hoa && <span style={{ color: '#9ca3af' }}> → {item.current_sub_hoa}</span>}</td>
+                  <td style={{ padding: '8px 10px', fontWeight: 600, color: '#065f46' }}>{item.proposed_hoa || <span style={{ color: '#9ca3af' }}>—</span>}</td>
+                  <td style={{ padding: '8px 10px', color: '#065f46' }}>{item.proposed_sub_hoa || <span style={{ color: '#9ca3af' }}>—</span>}</td>
+                  <td style={{ padding: '8px 10px', maxWidth: 200 }}>{item.reason}</td>
+                  <td style={{ padding: '8px 10px', whiteSpace: 'nowrap', color: '#6b7280', fontSize: '0.78rem' }}>
+                    {item.proposer?.name}<br />{new Date(item.created_at).toLocaleDateString('en-IN')}
+                  </td>
+                  <td style={{ padding: '8px 10px', textAlign: 'center' }}>
+                    <button className="btn btn-sm btn-danger" style={{ fontSize: '0.78rem' }} disabled={!!actionId} onClick={() => openReject(item)}>✕ Reject</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {showRejectModal && rejectingItem && (
+        <div className="modal-overlay" onClick={() => setShowRejectModal(false)}>
+          <div className="modal" style={{ maxWidth: '420px' }} onClick={e => e.stopPropagation()}>
+            <div className="modal-header"><h3 className="modal-title">Reject HOA Correction</h3><button className="modal-close" onClick={() => setShowRejectModal(false)}>×</button></div>
+            <div className="modal-body">
+              <p style={{ fontSize: '0.85rem', marginBottom: '0.75rem' }}>Rejecting proposal for <strong>{rejectingItem.voucher?.serial_number}</strong> by {rejectingItem.proposer?.name}.</p>
+              <div className="form-group">
+                <label className="form-label">Reason for rejection *</label>
+                <textarea className="form-input" rows={3} value={rejectReason} onChange={e => setRejectReason(e.target.value)} placeholder="e.g. The proposed HOA is also non-standard. Please resubmit with 'Conveyance Expenses'." />
+              </div>
+              <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+                <button className="btn btn-secondary" onClick={() => setShowRejectModal(false)}>Cancel</button>
+                <button className="btn btn-danger" disabled={!rejectReason.trim() || !!actionId} onClick={confirmReject}>{actionId ? Icons.loader : '✕ Confirm Reject'}</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ── Propose HOA Correction (Auditor, shown inside voucher modal) ──────────────
+const ProposeHoaCorrectionSection = ({ voucher, onProposed }) => {
+  const { user, addToast } = useApp();
+  const [headsData, setHeadsData] = useState([]);
+  const [subHeadsData, setSubHeadsData] = useState([]);
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState({ proposedHoa: '', proposedSubHoa: '', reason: '' });
+  const [loading, setLoading] = useState(false);
+  const [existingPending, setExistingPending] = useState(null);
+  const [checkingPending, setCheckingPending] = useState(false);
+
+  useEffect(() => {
+    if (user.role !== 'auditor') return;
+    api.getHeadsOfAccount(user.company.id).then(data => { if (Array.isArray(data)) setHeadsData(data); });
+    // Check if a pending proposal already exists for this voucher
+    setCheckingPending(true);
+    api.getHoaCorrections(user.company.id, 'pending').then(data => {
+      const existing = (data.proposals || []).find(p => p.voucher_id === voucher.id);
+      setExistingPending(existing || null);
+      setCheckingPending(false);
+    });
+  }, [voucher.id, user.company.id, user.role]);
+
+  useEffect(() => {
+    if (!form.proposedHoa) { setSubHeadsData([]); setForm(f => ({ ...f, proposedSubHoa: '' })); return; }
+    const head = headsData.find(h => h.name === form.proposedHoa);
+    if (head) api.getSubHeadsOfAccount(head.id).then(data => setSubHeadsData(Array.isArray(data) ? data : []));
+    else setSubHeadsData([]);
+  }, [form.proposedHoa, headsData]);
+
+  if (user.role !== 'auditor') return null;
+
+  const handleSubmit = async () => {
+    if (!form.reason.trim()) { addToast('Please provide a reason for the correction', 'error'); return; }
+    if (!form.proposedHoa && !form.proposedSubHoa) { addToast('Propose at least one change (HOA or Sub-Heading)', 'error'); return; }
+    setLoading(true);
+    const result = await api.proposeHoaCorrection(voucher.id, {
+      proposedBy: user.id,
+      proposedHoa: form.proposedHoa || null,
+      proposedSubHoa: form.proposedSubHoa || null,
+      reason: form.reason.trim(),
+    });
+    setLoading(false);
+    if (result.success) {
+      addToast('Correction proposal submitted — Admin has been notified', 'success');
+      setShowForm(false);
+      setExistingPending(result.proposal);
+      if (onProposed) onProposed();
+    } else addToast(result.error || 'Submission failed', 'error');
+  };
+
+  return (
+    <div style={{ marginTop: '1rem', padding: '0.85rem 1rem', background: '#ecfeff', borderRadius: '8px', border: '1.5px solid #a5f3fc' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: checkingPending || existingPending || showForm ? '0.75rem' : 0 }}>
+        <span style={{ fontSize: '1rem' }}>✏️</span>
+        <span style={{ fontWeight: 700, fontSize: '0.9rem', color: '#0891b2' }}>Head of Account Correction</span>
+        {!showForm && !existingPending && !checkingPending && (
+          <button className="btn btn-sm" style={{ marginLeft: 'auto', background: '#0891b2', color: 'white', border: 'none', borderRadius: '6px', padding: '0.3rem 0.75rem', fontSize: '0.8rem', cursor: 'pointer', fontWeight: 600 }} onClick={() => { setForm({ proposedHoa: voucher.head_of_account || '', proposedSubHoa: voucher.sub_head_of_account || '', reason: '' }); setShowForm(true); }}>
+            ✏️ Propose Correction
+          </button>
+        )}
+      </div>
+      {checkingPending && <div style={{ fontSize: '0.82rem', color: '#6b7280' }}>{Icons.loader} Checking...</div>}
+      {existingPending && !showForm && (
+        <div style={{ fontSize: '0.82rem', background: '#fef3c7', borderRadius: '6px', padding: '0.6rem 0.75rem', border: '1px solid #fcd34d' }}>
+          <strong style={{ color: '#92400e' }}>⏳ Pending proposal:</strong>{' '}
+          <span style={{ color: '#78350f' }}>"{existingPending.proposed_hoa || voucher.head_of_account}"</span>
+          {existingPending.proposed_sub_hoa && <span style={{ color: '#78350f' }}> → {existingPending.proposed_sub_hoa}</span>}
+          <span style={{ color: '#9ca3af', marginLeft: '0.4rem' }}>— awaiting Admin approval</span>
+        </div>
+      )}
+      {showForm && (
+        <div>
+          <div style={{ fontSize: '0.82rem', color: '#374151', marginBottom: '0.6rem' }}>
+            <strong>Current:</strong> {voucher.head_of_account}{voucher.sub_head_of_account && ` → ${voucher.sub_head_of_account}`}
+          </div>
+          <div className="form-group">
+            <label className="form-label" style={{ fontSize: '0.82rem' }}>New Head of Account</label>
+            <select className="form-select" value={form.proposedHoa} onChange={e => setForm(f => ({ ...f, proposedHoa: e.target.value, proposedSubHoa: '' }))}>
+              <option value="">— unchanged —</option>
+              {headsData.map(h => <option key={h.id} value={h.name}>{h.name}</option>)}
+            </select>
+          </div>
+          <div className="form-group">
+            <label className="form-label" style={{ fontSize: '0.82rem' }}>New Sub-Heading <span style={{ color: '#9ca3af' }}>(optional)</span></label>
+            <select className="form-select" value={form.proposedSubHoa} onChange={e => setForm(f => ({ ...f, proposedSubHoa: e.target.value }))} disabled={!form.proposedHoa && subHeadsData.length === 0}>
+              <option value="">— unchanged / none —</option>
+              {subHeadsData.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
+            </select>
+          </div>
+          <div className="form-group">
+            <label className="form-label" style={{ fontSize: '0.82rem' }}>Reason * <span style={{ color: '#9ca3af' }}>(e.g. "Should be 'Conveyance Expenses' per Tally chart")</span></label>
+            <textarea className="form-input" rows={2} value={form.reason} onChange={e => setForm(f => ({ ...f, reason: e.target.value }))} placeholder="Explain why the current HOA is incorrect..." />
+          </div>
+          <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+            <button className="btn btn-secondary btn-sm" onClick={() => setShowForm(false)}>Cancel</button>
+            <button className="btn btn-sm" style={{ background: '#0891b2', color: 'white', border: 'none', borderRadius: '6px', padding: '0.4rem 1rem', fontSize: '0.82rem', cursor: 'pointer', fontWeight: 600 }} disabled={loading} onClick={handleSubmit}>{loading ? Icons.loader : '📤 Submit Proposal'}</button>
           </div>
         </div>
       )}
