@@ -1807,17 +1807,7 @@ app.post('/api/vouchers/:voucherId/resend-otp', async (req, res) => {
 app.delete('/api/vouchers/:voucherId', async (req, res) => {
   try {
     const actor = await getActorRole(req.body.deletedBy);
-    const isAdmin = actor.role === 'admin' || actor.is_super_admin;
-    const isAccounts = actor.role === 'accounts';
-
-    // Accounts role may only delete vouchers that are still in 'awaiting_payment'
-    if (!isAdmin && isAccounts) {
-      const { data: v } = await supabase.from('vouchers')
-        .select('status').eq('id', req.params.voucherId).single();
-      if (!v || v.status !== 'awaiting_payment') {
-        return res.status(403).json({ error: 'Accounts role can only delete vouchers in Awaiting Payment status' });
-      }
-    } else if (!isAdmin) {
+    if (actor.role !== 'admin' && !actor.is_super_admin) {
       return res.status(403).json({ error: 'Unauthorized: Only Approvers or Super Admin can delete vouchers' });
     }
     

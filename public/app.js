@@ -2882,7 +2882,7 @@ const VoucherList = ({ filter }) => {
           <div className="modal-header" style={{background: '#f5841f', color: 'white'}}>
             <h3 className="modal-title" style={{color: 'white'}}>Voucher Details</h3>
             <div style={{display: 'flex', gap: '0.5rem', alignItems: 'center'}}>
-              {(user.role === 'admin' || user.isSuperAdmin || (user.role === 'accounts' && selectedVoucher.status === 'awaiting_payment')) && (
+              {(user.role === 'admin' || user.isSuperAdmin) && (
                 <button className="btn btn-sm btn-danger" onClick={(e) => { e.stopPropagation(); setShowDeleteModal(true); }}>
                   🗑️ <span className="btn-text">Delete</span>
                 </button>
