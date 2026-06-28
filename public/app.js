@@ -2862,6 +2862,7 @@ const VoucherList = ({ filter }) => {
                 {v.status === 'completed' && v.payment_mode !== 'Cash' && (user.role === 'admin' || user.isSuperAdmin) && (<button className="btn btn-sm" style={{background:'#f59e0b',color:'white',border:'none',borderRadius:'6px',padding:'0.3rem 0.65rem',fontSize:'0.8rem',cursor:'pointer',fontWeight:600}} onClick={() => handleMarkAwaitingPayment(v)}>📤 Queue</button>)}
                 {v.status === 'awaiting_payment' && (<button className="btn btn-sm" style={{background:'#25d366',color:'white',border:'none',borderRadius:'6px',padding:'0.3rem 0.65rem',fontSize:'0.8rem',cursor:'pointer',fontWeight:600}} onClick={() => shareOnWhatsApp([v])}>💬 WA</button>)}
                 {v.status === 'awaiting_payment' && (user.role === 'admin' || user.isSuperAdmin) && (<button className="btn btn-sm" style={{background:'#22c55e',color:'white',border:'none',borderRadius:'6px',padding:'0.3rem 0.65rem',fontSize:'0.8rem',cursor:'pointer',fontWeight:600}} onClick={() => { setMarkPaidVoucher(v); setShowMarkPaidModal(true); }}>✅ Paid</button>)}
+                {v.status === 'paid' && (<span style={{background:'#dcfce7',color:'#166534',border:'1px solid #86efac',borderRadius:'6px',padding:'0.25rem 0.65rem',fontSize:'0.8rem',fontWeight:700,letterSpacing:'0.02em'}}>✅ PAID</span>)}
               </div></td>
             </tr>))}
           </tbody></table></div>
