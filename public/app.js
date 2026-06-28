@@ -141,7 +141,7 @@ const api = {
   getVoucherDocument: (voucherId) => fetch(`${API_BASE}/vouchers/${voucherId}/document`).then(r => r.json()),
   // Payment tracking APIs (Phase-2)
   markAwaitingPayment: (voucherId, markedBy) => fetch(`${API_BASE}/vouchers/${voucherId}/mark-awaiting-payment`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ markedBy }) }).then(r => r.json()),
-  markPaid: (voucherId, paidBy, paymentReference, paymentNotes) => fetch(`${API_BASE}/vouchers/${voucherId}/mark-paid`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ paidBy, paymentReference, paymentNotes }) }).then(r => r.json()),
+  markPaid: (voucherId, paidBy, paymentReference, paymentNotes, receiptData, receiptMimeType) => fetch(`${API_BASE}/vouchers/${voucherId}/mark-paid`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ paidBy, paymentReference, paymentNotes, receiptData: receiptData || undefined, receiptMimeType: receiptMimeType || undefined }) }).then(r => r.json()),
   getNotifications: (userId) => fetch(`${API_BASE}/users/${userId}/notifications`).then(r => r.json()),
   markAllNotificationsRead: (userId) => fetch(`${API_BASE}/users/${userId}/notifications/read-all`, { method: 'POST' }).then(r => r.json()),
   getHeadsOfAccount: (companyId) => fetch(`${API_BASE}/heads-of-account?companyId=${companyId}`).then(r => r.json()),
@@ -2018,6 +2018,9 @@ const VoucherList = ({ filter }) => {
   const [markPaidVoucher, setMarkPaidVoucher] = useState(null);
   const [paymentReference, setPaymentReference] = useState('');
   const [paymentNotes, setPaymentNotes] = useState('');
+  const [paymentReceiptData, setPaymentReceiptData] = useState('');
+  const [paymentReceiptMimeType, setPaymentReceiptMimeType] = useState('');
+  const [paymentReceiptPreview, setPaymentReceiptPreview] = useState('');
   
   // Edit Draft state
   const [showEditModal, setShowEditModal] = useState(false);
@@ -2627,18 +2630,39 @@ const VoucherList = ({ filter }) => {
     setLoading(false);
   };
 
+  const handlePaymentReceiptUpload = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) { addToast('Receipt must be under 5 MB', 'error'); return; }
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const base64 = ev.target.result.split(',')[1];
+      setPaymentReceiptData(base64);
+      setPaymentReceiptMimeType(file.type);
+      setPaymentReceiptPreview(file.type.startsWith('image/') ? ev.target.result : 'pdf');
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const clearMarkPaidModal = () => {
+    setShowMarkPaidModal(false);
+    setMarkPaidVoucher(null);
+    setPaymentReference('');
+    setPaymentNotes('');
+    setPaymentReceiptData('');
+    setPaymentReceiptMimeType('');
+    setPaymentReceiptPreview('');
+  };
+
   const handleMarkPaid = async () => {
-    if (!paymentReference.trim()) { addToast('Please enter a UTR / transaction reference', 'error'); return; }
+    if (!paymentReference.trim() && !paymentReceiptData) { addToast('Enter a UTR reference or upload a receipt — at least one is required', 'error'); return; }
     setLoading(true);
     try {
-      const result = await api.markPaid(markPaidVoucher.id, user.id, paymentReference.trim(), paymentNotes.trim());
+      const result = await api.markPaid(markPaidVoucher.id, user.id, paymentReference.trim(), paymentNotes.trim(), paymentReceiptData, paymentReceiptMimeType);
       if (result.success) {
         addToast('Voucher marked as paid! ✅', 'success');
         refreshVouchers();
-        setShowMarkPaidModal(false);
-        setMarkPaidVoucher(null);
-        setPaymentReference('');
-        setPaymentNotes('');
+        clearMarkPaidModal();
         if (showModal) setShowModal(false);
       } else addToast(result.error || 'Failed', 'error');
     } catch { addToast('Failed', 'error'); }
@@ -2858,7 +2882,7 @@ const VoucherList = ({ filter }) => {
           <div className="modal-header" style={{background: '#f5841f', color: 'white'}}>
             <h3 className="modal-title" style={{color: 'white'}}>Voucher Details</h3>
             <div style={{display: 'flex', gap: '0.5rem', alignItems: 'center'}}>
-              {(user.role === 'admin' || user.isSuperAdmin) && (
+              {(user.role === 'admin' || user.isSuperAdmin || (user.role === 'accounts' && selectedVoucher.status === 'awaiting_payment')) && (
                 <button className="btn btn-sm btn-danger" onClick={(e) => { e.stopPropagation(); setShowDeleteModal(true); }}>
                   🗑️ <span className="btn-text">Delete</span>
                 </button>
@@ -2879,6 +2903,34 @@ const VoucherList = ({ filter }) => {
               voucherType="regular"
               companyId={user.company.id}
             />
+            {/* Payment confirmation panel — shown for paid vouchers */}
+            {selectedVoucher.status === 'paid' && (selectedVoucher.payment_reference || selectedVoucher.payment_receipt_url || selectedVoucher.payment_notes) && (
+              <div style={{background:'#f0fdf4',border:'1px solid #86efac',borderRadius:'8px',padding:'1rem',marginTop:'1rem'}}>
+                <p style={{fontWeight:600,color:'#166534',marginBottom:'0.6rem',display:'flex',alignItems:'center',gap:'0.4rem'}}>✅ Payment Record</p>
+                {selectedVoucher.payment_reference && (
+                  <div style={{display:'flex',justifyContent:'space-between',fontSize:'0.9rem',marginBottom:'0.3rem'}}>
+                    <span style={{color:'#166534'}}>UTR / Ref</span>
+                    <strong style={{fontFamily:'monospace'}}>{selectedVoucher.payment_reference}</strong>
+                  </div>
+                )}
+                {selectedVoucher.payment_notes && (
+                  <div style={{fontSize:'0.85rem',color:'#166534',marginBottom:'0.5rem'}}>{selectedVoucher.payment_notes}</div>
+                )}
+                {selectedVoucher.payment_receipt_url && (
+                  <div style={{marginTop:'0.5rem'}}>
+                    {selectedVoucher.payment_receipt_url.match(/\.(jpg|jpeg|png|webp|gif)(\?|$)/i) ? (
+                      <a href={selectedVoucher.payment_receipt_url} target="_blank" rel="noopener noreferrer">
+                        <img src={selectedVoucher.payment_receipt_url} alt="Payment receipt" style={{width:'100%',maxHeight:'220px',objectFit:'contain',borderRadius:'6px',border:'1px solid #bbf7d0',cursor:'pointer'}} />
+                      </a>
+                    ) : (
+                      <a href={selectedVoucher.payment_receipt_url} target="_blank" rel="noopener noreferrer" className="btn btn-secondary" style={{width:'100%',justifyContent:'center',fontSize:'0.85rem'}}>
+                        📄 View Payment Receipt
+                      </a>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
             {/* Document Upload Section - for awaiting_document status */}
             {selectedVoucher.status === 'awaiting_document' && (selectedVoucher.prepared_by === user.id || user.role === 'admin' || user.isSuperAdmin) && !selectedVoucher.document_url && (
               <div className="document-upload-section" style={{background: '#fef3c7', padding: '1.5rem', borderRadius: '8px', marginTop: '1rem', textAlign: 'center'}}>
@@ -3010,30 +3062,58 @@ const VoucherList = ({ filter }) => {
       )}
       {/* Mark as Paid Modal (Phase-2) */}
       {showMarkPaidModal && markPaidVoucher && (
-        <div className="modal-overlay" onClick={() => { setShowMarkPaidModal(false); setPaymentReference(''); setPaymentNotes(''); }}><div className="modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-overlay" onClick={clearMarkPaidModal}><div className="modal" onClick={(e) => e.stopPropagation()}>
           <div className="modal-header" style={{background:'#22c55e',color:'white'}}>
             <h3 className="modal-title" style={{color:'white'}}>✅ Mark as Paid — {markPaidVoucher.serial_number}</h3>
-            <button className="modal-close" style={{color:'white'}} onClick={() => { setShowMarkPaidModal(false); setPaymentReference(''); setPaymentNotes(''); }}>×</button>
+            <button className="modal-close" style={{color:'white'}} onClick={clearMarkPaidModal}>×</button>
           </div>
           <div className="modal-body">
-            <div style={{background:'#f0fdf4',borderRadius:'8px',padding:'0.75rem 1rem',marginBottom:'1rem',border:'1px solid #86efac',fontSize:'0.9rem'}}>
+            {/* Voucher summary */}
+            <div style={{background:'#f0fdf4',borderRadius:'8px',padding:'0.75rem 1rem',marginBottom:'1.25rem',border:'1px solid #86efac',fontSize:'0.9rem'}}>
               <div style={{display:'flex',justifyContent:'space-between',marginBottom:'0.3rem'}}><span style={{color:'#166534'}}>Payee</span><strong>{markPaidVoucher.payee_name}</strong></div>
               <div style={{display:'flex',justifyContent:'space-between',marginBottom:'0.3rem'}}><span style={{color:'#166534'}}>Amount</span><strong style={{fontFamily:'monospace'}}>₹{parseFloat(markPaidVoucher.amount).toLocaleString('en-IN',{minimumFractionDigits:2})}</strong></div>
               <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#166534'}}>Mode</span><strong>{markPaidVoucher.payment_mode}</strong></div>
             </div>
+            {/* Hint */}
+            <p style={{fontSize:'0.8rem',color:'#6b7280',marginBottom:'1rem',background:'#f9fafb',padding:'0.5rem 0.75rem',borderRadius:'6px',border:'1px solid #e5e7eb'}}>
+              💡 Provide a UTR / transaction reference <strong>and/or</strong> upload the payment receipt — at least one is required.
+            </p>
+            {/* UTR */}
             <div className="form-group">
-              <label className="form-label">UTR / Transaction Reference <span style={{color:'#dc2626'}}>*</span></label>
+              <label className="form-label">UTR / Transaction Reference</label>
               <input type="text" className="form-input" placeholder="e.g. 409312345678 or TXNXXXXXXXX" value={paymentReference} onChange={(e) => setPaymentReference(e.target.value)} />
-              <p style={{fontSize:'0.75rem',color:'#666',marginTop:'0.25rem'}}>Enter the UTR for NEFT/IMPS/RTGS or the UPI transaction ID</p>
+              <p style={{fontSize:'0.75rem',color:'#888',marginTop:'0.25rem'}}>UTR for NEFT/IMPS/RTGS · UPI Transaction ID · Cheque No.</p>
             </div>
+            {/* Receipt upload */}
+            <div className="form-group">
+              <label className="form-label">Payment Receipt / Screenshot <span style={{color:'#888',fontWeight:400}}>(optional)</span></label>
+              {paymentReceiptPreview ? (
+                <div style={{position:'relative',marginBottom:'0.5rem'}}>
+                  {paymentReceiptPreview === 'pdf' ? (
+                    <div style={{background:'#f3f4f6',border:'1px solid #d1d5db',borderRadius:'8px',padding:'1rem',textAlign:'center',fontSize:'0.9rem',color:'#374151'}}>
+                      📄 PDF receipt selected
+                    </div>
+                  ) : (
+                    <img src={paymentReceiptPreview} alt="Receipt preview" style={{width:'100%',maxHeight:'180px',objectFit:'contain',borderRadius:'8px',border:'1px solid #d1d5db',background:'#f9fafb'}} />
+                  )}
+                  <button onClick={() => { setPaymentReceiptData(''); setPaymentReceiptMimeType(''); setPaymentReceiptPreview(''); }} style={{position:'absolute',top:'6px',right:'6px',background:'rgba(0,0,0,0.55)',color:'white',border:'none',borderRadius:'50%',width:'24px',height:'24px',cursor:'pointer',fontSize:'0.85rem',lineHeight:'1'}}>×</button>
+                </div>
+              ) : (
+                <label style={{display:'flex',alignItems:'center',gap:'0.5rem',padding:'0.65rem 1rem',border:'2px dashed #d1d5db',borderRadius:'8px',cursor:'pointer',color:'#6b7280',fontSize:'0.9rem',transition:'border-color 0.2s'}} onMouseEnter={e=>e.currentTarget.style.borderColor='#22c55e'} onMouseLeave={e=>e.currentTarget.style.borderColor='#d1d5db'}>
+                  📎 Click to upload receipt (image or PDF, max 5 MB)
+                  <input type="file" accept="image/*,.pdf" style={{display:'none'}} onChange={handlePaymentReceiptUpload} />
+                </label>
+              )}
+            </div>
+            {/* Notes */}
             <div className="form-group">
               <label className="form-label">Notes <span style={{color:'#888',fontWeight:400}}>(optional)</span></label>
               <textarea className="form-input" rows={2} placeholder="e.g. Paid via HDFC Net Banking on 29-Jun-2026" value={paymentNotes} onChange={(e) => setPaymentNotes(e.target.value)} />
             </div>
           </div>
           <div className="modal-footer">
-            <button className="btn btn-secondary" onClick={() => { setShowMarkPaidModal(false); setPaymentReference(''); setPaymentNotes(''); }}>Cancel</button>
-            <button className="btn btn-success" onClick={handleMarkPaid} disabled={loading || !paymentReference.trim()}>{loading && Icons.loader}✅ Confirm Payment</button>
+            <button className="btn btn-secondary" onClick={clearMarkPaidModal}>Cancel</button>
+            <button className="btn btn-success" onClick={handleMarkPaid} disabled={loading || (!paymentReference.trim() && !paymentReceiptData)}>{loading && Icons.loader}✅ Confirm Payment</button>
           </div>
         </div></div>
       )}

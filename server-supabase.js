@@ -1807,7 +1807,17 @@ app.post('/api/vouchers/:voucherId/resend-otp', async (req, res) => {
 app.delete('/api/vouchers/:voucherId', async (req, res) => {
   try {
     const actor = await getActorRole(req.body.deletedBy);
-    if (actor.role !== 'admin' && !actor.is_super_admin) {
+    const isAdmin = actor.role === 'admin' || actor.is_super_admin;
+    const isAccounts = actor.role === 'accounts';
+
+    // Accounts role may only delete vouchers that are still in 'awaiting_payment'
+    if (!isAdmin && isAccounts) {
+      const { data: v } = await supabase.from('vouchers')
+        .select('status').eq('id', req.params.voucherId).single();
+      if (!v || v.status !== 'awaiting_payment') {
+        return res.status(403).json({ error: 'Accounts role can only delete vouchers in Awaiting Payment status' });
+      }
+    } else if (!isAdmin) {
       return res.status(403).json({ error: 'Unauthorized: Only Approvers or Super Admin can delete vouchers' });
     }
     
@@ -4164,8 +4174,10 @@ app.post('/api/vouchers/:voucherId/mark-awaiting-payment', async (req, res) => {
 
 // Mark voucher as paid: awaiting_payment → paid (Admin/SuperAdmin)
 app.post('/api/vouchers/:voucherId/mark-paid', async (req, res) => {
-  const { paidBy, paymentReference, paymentNotes } = req.body;
+  const { paidBy, paymentReference, paymentNotes, receiptData, receiptMimeType } = req.body;
   if (!paidBy) return res.status(400).json({ error: 'paidBy is required' });
+  if (!paymentReference && !receiptData)
+    return res.status(400).json({ error: 'Please enter a UTR reference or upload a receipt — at least one is required' });
 
   try {
     const { data: voucher, error: vErr } = await supabase.from('vouchers')
@@ -4176,10 +4188,27 @@ app.post('/api/vouchers/:voucherId/mark-paid', async (req, res) => {
     if (!['awaiting_payment', 'completed'].includes(voucher.status))
       return res.status(400).json({ error: `Voucher must be awaiting_payment to mark as paid (current: ${voucher.status})` });
 
+    // Upload receipt if provided
+    let receiptUrl = null;
+    if (receiptData && receiptMimeType) {
+      const ext = receiptMimeType === 'application/pdf' ? 'pdf'
+        : receiptMimeType.startsWith('image/') ? receiptMimeType.split('/')[1]
+        : 'jpg';
+      const fileName = `payment-receipts/${req.params.voucherId}/receipt_${Date.now()}.${ext}`;
+      const buffer = Buffer.from(receiptData, 'base64');
+      const { error: storageErr } = await supabase.storage
+        .from('voucher-documents')
+        .upload(fileName, buffer, { contentType: receiptMimeType, upsert: true });
+      if (storageErr) throw storageErr;
+      const { data: urlData } = supabase.storage.from('voucher-documents').getPublicUrl(fileName);
+      receiptUrl = urlData.publicUrl;
+    }
+
     const { error: upErr } = await supabase.from('vouchers').update({
       status: 'paid',
       payment_reference: paymentReference || null,
       payment_notes: paymentNotes || null,
+      payment_receipt_url: receiptUrl,
       paid_by: paidBy,
       paid_at: new Date().toISOString()
     }).eq('id', req.params.voucherId);
@@ -4201,7 +4230,7 @@ app.post('/api/vouchers/:voucherId/mark-paid', async (req, res) => {
       '/'
     );
 
-    console.log(`   ✅ Voucher ${voucher.serial_number} marked paid by ${paidBy} — UTR: ${paymentReference || 'N/A'}`);
+    console.log(`   ✅ Voucher ${voucher.serial_number} marked paid by ${paidBy} — UTR: ${paymentReference || 'N/A'} | Receipt: ${receiptUrl ? 'uploaded' : 'none'}`);
     res.json({ success: true, message: 'Voucher marked as paid.' });
   } catch (error) {
     console.error('mark-paid error:', error.message);
