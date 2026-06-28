@@ -139,6 +139,9 @@ const api = {
   uploadVoucherDocument: (voucherId, documentData, mimeType, uploadedBy) => fetch(`${API_BASE}/vouchers/${voucherId}/upload-document`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ documentData, mimeType, uploadedBy }) }).then(r => r.json()),
   approveWithAttestation: (voucherId, approvedBy, attestationNotes) => fetch(`${API_BASE}/vouchers/${voucherId}/approve-with-attestation`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ approvedBy, attestationNotes }) }).then(r => r.json()),
   getVoucherDocument: (voucherId) => fetch(`${API_BASE}/vouchers/${voucherId}/document`).then(r => r.json()),
+  // Payment tracking APIs (Phase-2)
+  markAwaitingPayment: (voucherId, markedBy) => fetch(`${API_BASE}/vouchers/${voucherId}/mark-awaiting-payment`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ markedBy }) }).then(r => r.json()),
+  markPaid: (voucherId, paidBy, paymentReference, paymentNotes) => fetch(`${API_BASE}/vouchers/${voucherId}/mark-paid`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ paidBy, paymentReference, paymentNotes }) }).then(r => r.json()),
   getNotifications: (userId) => fetch(`${API_BASE}/users/${userId}/notifications`).then(r => r.json()),
   markAllNotificationsRead: (userId) => fetch(`${API_BASE}/users/${userId}/notifications/read-all`, { method: 'POST' }).then(r => r.json()),
   getHeadsOfAccount: (companyId) => fetch(`${API_BASE}/heads-of-account?companyId=${companyId}`).then(r => r.json()),
@@ -914,6 +917,7 @@ const Dashboard = () => {
     pending: vouchers.filter(v => v.status === 'pending').length, 
     approved: vouchers.filter(v => ['approved', 'awaiting_payee_otp'].includes(v.status)).length, 
     completed: vouchers.filter(v => v.status === 'completed').length, 
+    awaitingPayment: vouchers.filter(v => v.status === 'awaiting_payment').length,
     total: vouchers.filter(v => v.status !== 'draft').length 
   };
   return (
@@ -926,6 +930,9 @@ const Dashboard = () => {
         <div className="stat-card"><div className="stat-icon orange">⏱</div><div className="stat-value">{stats.pending}</div><div className="stat-label">Pending Approval</div></div>
         <div className="stat-card"><div className="stat-icon purple">📋</div><div className="stat-value">{stats.approved}</div><div className="stat-label">Approved / Awaiting OTP</div></div>
         <div className="stat-card"><div className="stat-icon green">✓</div><div className="stat-value">{stats.completed}</div><div className="stat-label">Completed</div></div>
+        {stats.awaitingPayment > 0 && (
+          <div className="stat-card" style={{borderColor:'#fbbf24',background:'#fffbeb'}} onClick={() => {}} title="Click sidebar to view"><div className="stat-icon" style={{background:'#fef3c7',color:'#b45309'}}>💳</div><div className="stat-value" style={{color:'#b45309'}}>{stats.awaitingPayment}</div><div className="stat-label">Awaiting Payment</div></div>
+        )}
         <div className="stat-card"><div className="stat-icon teal">📄</div><div className="stat-value">{stats.total}</div><div className="stat-label">Total Vouchers</div></div>
       </div>
       <div className="card">
@@ -2005,6 +2012,13 @@ const VoucherList = ({ filter }) => {
   const [showAttestationModal, setShowAttestationModal] = useState(false);
   const [attestationNotes, setAttestationNotes] = useState('');
   
+  // Payment tracking state (Phase-2)
+  const [selectedRows, setSelectedRows] = useState(new Set());
+  const [showMarkPaidModal, setShowMarkPaidModal] = useState(false);
+  const [markPaidVoucher, setMarkPaidVoucher] = useState(null);
+  const [paymentReference, setPaymentReference] = useState('');
+  const [paymentNotes, setPaymentNotes] = useState('');
+  
   // Edit Draft state
   const [showEditModal, setShowEditModal] = useState(false);
   const [editForm, setEditForm] = useState({ headOfAccount: '', subHeadOfAccount: '', narration: '', narrationItems: [], deductions: [], payeeId: '', paymentMode: 'UPI', amount: '', invoiceReference: '', paidFromAccount: '' });
@@ -2067,11 +2081,16 @@ const VoucherList = ({ filter }) => {
     }
   }, [editForm.narrationItems, useNarrationTable]);
 
+  // Clear bulk selection when tab changes
+  useEffect(() => { setSelectedRows(new Set()); }, [filter]);
+
   const baseFiltered = vouchers.filter(v => { 
     if (filter === 'draft') return v.status === 'draft';
     if (filter === 'pending') return v.status === 'pending'; 
     if (filter === 'approved') return ['approved', 'awaiting_payee_otp'].includes(v.status); 
     if (filter === 'completed') return v.status === 'completed'; 
+    if (filter === 'awaiting_payment') return v.status === 'awaiting_payment';
+    if (filter === 'paid') return v.status === 'paid';
     return true; 
   });
 
@@ -2597,11 +2616,71 @@ const VoucherList = ({ filter }) => {
       setLoading(false);
     }
   };
+
+  const handleMarkAwaitingPayment = async (v) => {
+    setLoading(true);
+    try {
+      const result = await api.markAwaitingPayment(v.id, user.id);
+      if (result.success) { addToast('Voucher queued for payment 💳', 'success'); refreshVouchers(); }
+      else addToast(result.error || 'Failed', 'error');
+    } catch { addToast('Failed', 'error'); }
+    setLoading(false);
+  };
+
+  const handleMarkPaid = async () => {
+    if (!paymentReference.trim()) { addToast('Please enter a UTR / transaction reference', 'error'); return; }
+    setLoading(true);
+    try {
+      const result = await api.markPaid(markPaidVoucher.id, user.id, paymentReference.trim(), paymentNotes.trim());
+      if (result.success) {
+        addToast('Voucher marked as paid! ✅', 'success');
+        refreshVouchers();
+        setShowMarkPaidModal(false);
+        setMarkPaidVoucher(null);
+        setPaymentReference('');
+        setPaymentNotes('');
+        if (showModal) setShowModal(false);
+      } else addToast(result.error || 'Failed', 'error');
+    } catch { addToast('Failed', 'error'); }
+    setLoading(false);
+  };
+
+  const generateWhatsAppMessage = (list) => {
+    const company = user.company.name;
+    const today = new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+    if (list.length === 1) {
+      const v = list[0];
+      const detail = v.payment_mode === 'UPI' && v.payee_upi_id
+        ? `UPI ID: ${v.payee_upi_id}`
+        : v.payment_mode === 'Account Transfer' && v.payee_bank_account
+          ? `A/C: ${v.payee_bank_account}${v.payee_ifsc ? ` · IFSC: ${v.payee_ifsc}` : ''}`
+          : '';
+      return `💳 *Payment Due — ${company}*\n\n` +
+        `Voucher: ${v.serial_number}\n` +
+        `Payee: ${v.payee_name}\n` +
+        `Amount: ₹${parseFloat(v.amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}\n` +
+        `Mode: ${v.payment_mode}\n` +
+        (detail ? `${detail}\n` : '') +
+        (v.invoice_reference ? `Invoice Ref: ${v.invoice_reference}\n` : '') +
+        `\n_Please arrange payment at earliest._`;
+    }
+    const total = list.reduce((s, v) => s + parseFloat(v.amount || 0), 0);
+    const lines = list.map((v, i) =>
+      `${i + 1}. *${v.serial_number}* | ${v.payee_name} | ₹${parseFloat(v.amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })} | ${v.payment_mode}`
+    ).join('\n');
+    return `💳 *Payment List — ${company}*\n📅 ${today}\n\n${lines}\n\n*Total: ₹${total.toLocaleString('en-IN', { minimumFractionDigits: 2 })} (${list.length} vouchers)*\n_Please arrange all payments._`;
+  };
+
+  const shareOnWhatsApp = (list) => {
+    const msg = generateWhatsAppMessage(list);
+    window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
+  };
+
   const handleReject = async () => { setLoading(true); try { await api.rejectVoucher(selectedVoucher.id, user.id, rejectReason); addToast('Voucher rejected', 'info'); refreshVouchers(); setShowRejectModal(false); setShowModal(false); } catch { addToast('Failed', 'error'); } setLoading(false); };
   const handleComplete = async () => { if (payeeOtp.length < 6) { addToast('Enter complete OTP', 'error'); return; } setLoading(true); try { const result = await api.completeVoucher(selectedVoucher.id, payeeOtp); if (result.success) { addToast('Voucher completed!', 'success'); refreshVouchers(); setShowModal(false); setPayeeOtp(''); } else addToast(result.error, 'error'); } catch { addToast('Failed', 'error'); } setLoading(false); };
   const handleResend = async () => { try { await api.resendPayeeOtp(selectedVoucher.id); addToast('OTP resent', 'success'); } catch { addToast('Failed', 'error'); } };
   const handleDelete = async () => { setLoading(true); try { const result = await api.deleteVoucher(selectedVoucher.id, user.id); if (result.success) { addToast('Voucher deleted', 'success'); refreshVouchers(); setShowDeleteModal(false); setShowModal(false); } else addToast(result.error || 'Failed to delete', 'error'); } catch { addToast('Failed to delete voucher', 'error'); } setLoading(false); };
-  const titles = { all: 'All Vouchers', draft: 'Saved Drafts', pending: 'Pending Approval', approved: 'Approved / Awaiting OTP', completed: 'Completed Vouchers' };
+  const titles = { all: 'All Vouchers', draft: 'Saved Drafts', pending: 'Pending Approval', approved: 'Approved / Awaiting OTP', completed: 'Completed Vouchers', awaiting_payment: 'Awaiting Payment', paid: 'Paid Vouchers' };
 
   const handleDownloadExcel = () => {
     if (!excelDateFrom || !excelDateTo) { addToast('Select date range', 'error'); return; }
@@ -2747,11 +2826,33 @@ const VoucherList = ({ filter }) => {
 
       <div className="card"><div className="card-body" style={{ padding: 0 }}>
         {filtered.length === 0 ? <div className="empty-state">{Icons.fileText}<p>No vouchers found</p></div> : (
-          <div className="table-container"><table className="table"><thead><tr><th>Serial No.</th><th>Head of Account</th><th>Payee</th><th>Amount</th><th>Mode</th><th>Status</th><th>Date</th><th>Actions</th></tr></thead><tbody>
-            {filtered.map(v => (<tr key={v.id}><td className="text-mono fw-600">{v.serial_number}{v.attachment_count > 0 && <span title={`${v.attachment_count} attachment${v.attachment_count > 1 ? 's' : ''}`} style={{marginLeft: '6px', color: '#f5841f', verticalAlign: 'middle', display: 'inline-flex'}}>{Icons.paperclip}</span>}</td><td>{v.head_of_account}</td><td>{v.payee_name}</td><td className="fw-600">{formatRupees(v.amount, 0)}</td><td>{v.payment_mode}</td><td><span className={`status-badge status-${v.status}`}>{v.status.replace(/_/g, ' ')}</span></td><td>{new Date(v.created_at).toLocaleDateString('en-IN')}</td><td><div style={{display:'flex',gap:'0.4rem',flexWrap:'wrap'}}><button className="btn btn-sm btn-secondary" onClick={() => openVoucher(v)}>{Icons.eye} View</button>{v.status === 'completed' && v.payment_mode !== 'Cash' && (user.role === 'admin' || user.isSuperAdmin || (user.role === 'accounts' && v.payment_mode === 'Account Transfer')) && (<button className="btn btn-sm" style={{background:'#16a34a',color:'white',border:'none',borderRadius:'6px',padding:'0.3rem 0.65rem',fontSize:'0.8rem',cursor:'pointer',fontWeight:600}} onClick={() => setPayNowVoucher(v)}>💳 Pay Now</button>)}</div></td></tr>))}
+          <div className="table-container"><table className="table"><thead><tr>
+            {filter === 'awaiting_payment' && <th style={{width:'36px'}}><input type="checkbox" onChange={(e) => { if (e.target.checked) setSelectedRows(new Set(filtered.map(v => v.id))); else setSelectedRows(new Set()); }} checked={selectedRows.size === filtered.length && filtered.length > 0} style={{width:'16px',height:'16px',cursor:'pointer'}} /></th>}
+            <th>Serial No.</th><th>Head of Account</th><th>Payee</th><th>Amount</th><th>Mode</th><th>Status</th><th>Date</th><th>Actions</th></tr></thead><tbody>
+            {filtered.map(v => (<tr key={v.id}>
+              {filter === 'awaiting_payment' && <td><input type="checkbox" checked={selectedRows.has(v.id)} onChange={(e) => { const next = new Set(selectedRows); e.target.checked ? next.add(v.id) : next.delete(v.id); setSelectedRows(next); }} style={{width:'16px',height:'16px',cursor:'pointer'}} /></td>}
+              <td className="text-mono fw-600">{v.serial_number}{v.attachment_count > 0 && <span title={`${v.attachment_count} attachment${v.attachment_count > 1 ? 's' : ''}`} style={{marginLeft: '6px', color: '#f5841f', verticalAlign: 'middle', display: 'inline-flex'}}>{Icons.paperclip}</span>}</td><td>{v.head_of_account}</td><td>{v.payee_name}</td><td className="fw-600">{formatRupees(v.amount, 0)}</td><td>{v.payment_mode}</td><td><span className={`status-badge status-${v.status}`}>{v.status.replace(/_/g, ' ')}</span></td><td>{new Date(v.created_at).toLocaleDateString('en-IN')}</td>
+              <td><div style={{display:'flex',gap:'0.4rem',flexWrap:'wrap',alignItems:'center'}}>
+                <button className="btn btn-sm btn-secondary" onClick={() => openVoucher(v)}>{Icons.eye} View</button>
+                {v.status === 'completed' && v.payment_mode !== 'Cash' && (user.role === 'admin' || user.isSuperAdmin || (user.role === 'accounts' && v.payment_mode === 'Account Transfer')) && (<button className="btn btn-sm" style={{background:'#16a34a',color:'white',border:'none',borderRadius:'6px',padding:'0.3rem 0.65rem',fontSize:'0.8rem',cursor:'pointer',fontWeight:600}} onClick={() => setPayNowVoucher(v)}>💳 Pay Now</button>)}
+                {v.status === 'completed' && v.payment_mode !== 'Cash' && (user.role === 'admin' || user.isSuperAdmin) && (<button className="btn btn-sm" style={{background:'#f59e0b',color:'white',border:'none',borderRadius:'6px',padding:'0.3rem 0.65rem',fontSize:'0.8rem',cursor:'pointer',fontWeight:600}} onClick={() => handleMarkAwaitingPayment(v)}>📤 Queue</button>)}
+                {v.status === 'awaiting_payment' && (<button className="btn btn-sm" style={{background:'#25d366',color:'white',border:'none',borderRadius:'6px',padding:'0.3rem 0.65rem',fontSize:'0.8rem',cursor:'pointer',fontWeight:600}} onClick={() => shareOnWhatsApp([v])}>💬 WA</button>)}
+                {v.status === 'awaiting_payment' && (user.role === 'admin' || user.isSuperAdmin) && (<button className="btn btn-sm" style={{background:'#22c55e',color:'white',border:'none',borderRadius:'6px',padding:'0.3rem 0.65rem',fontSize:'0.8rem',cursor:'pointer',fontWeight:600}} onClick={() => { setMarkPaidVoucher(v); setShowMarkPaidModal(true); }}>✅ Paid</button>)}
+              </div></td>
+            </tr>))}
           </tbody></table></div>
         )}
       </div></div>
+      {/* Floating WhatsApp bulk-share bar */}
+      {selectedRows.size > 0 && (
+        <div style={{position:'fixed',bottom:'24px',left:'50%',transform:'translateX(-50%)',background:'#1a1a2e',color:'white',borderRadius:'12px',padding:'0.75rem 1.25rem',display:'flex',alignItems:'center',gap:'1rem',boxShadow:'0 8px 32px rgba(0,0,0,0.35)',zIndex:9999,minWidth:'300px',justifyContent:'space-between'}}>
+          <span style={{fontWeight:600,fontSize:'0.9rem'}}>✓ {selectedRows.size} selected</span>
+          <div style={{display:'flex',gap:'0.5rem'}}>
+            <button style={{background:'#25d366',color:'white',border:'none',borderRadius:'8px',padding:'0.4rem 0.9rem',fontWeight:600,cursor:'pointer',fontSize:'0.85rem'}} onClick={() => { const list = filtered.filter(v => selectedRows.has(v.id)); shareOnWhatsApp(list); }}>💬 Share on WhatsApp</button>
+            <button style={{background:'rgba(255,255,255,0.15)',color:'white',border:'1px solid rgba(255,255,255,0.3)',borderRadius:'8px',padding:'0.4rem 0.7rem',cursor:'pointer',fontSize:'0.85rem'}} onClick={() => setSelectedRows(new Set())}>✕</button>
+          </div>
+        </div>
+      )}
       {showModal && selectedVoucher && (
         <div className="modal-overlay" onClick={() => setShowModal(false)}><div className="modal modal-lg" onClick={(e) => e.stopPropagation()}>
           <div className="modal-header" style={{background: '#f5841f', color: 'white'}}>
@@ -2828,6 +2929,14 @@ const VoucherList = ({ filter }) => {
               </div>
             )}
           </div>
+          {selectedVoucher.status === 'awaiting_payment' && (
+            <div className="modal-footer" style={{background:'#fefce8',justifyContent:'space-between',flexWrap:'wrap',gap:'0.5rem'}}>
+              <button style={{background:'#25d366',color:'white',border:'none',borderRadius:'8px',padding:'0.5rem 1rem',fontWeight:600,cursor:'pointer',display:'flex',alignItems:'center',gap:'0.4rem'}} onClick={() => shareOnWhatsApp([selectedVoucher])}>💬 Share on WhatsApp</button>
+              {(user.role === 'admin' || user.isSuperAdmin) && (
+                <button className="btn btn-success" onClick={() => { setMarkPaidVoucher(selectedVoucher); setShowMarkPaidModal(true); }}>✅ Mark as Paid</button>
+              )}
+            </div>
+          )}
           {(user.role === 'admin' || user.isSuperAdmin) && selectedVoucher.status === 'pending' && (
             <div className="modal-footer"><button className="btn btn-danger" onClick={() => setShowRejectModal(true)}>{Icons.x} Reject</button><button className="btn btn-success" onClick={handleApprove} disabled={loading}>{loading && Icons.loader}{Icons.check} Approve & Send Payee OTP</button></div>
           )}
@@ -2896,6 +3005,35 @@ const VoucherList = ({ filter }) => {
             <button className="btn btn-success" onClick={handleApproveWithAttestation} disabled={loading || !attestationNotes.trim()}>
               {loading && Icons.loader}{Icons.fileCheck} Attest & Complete Voucher
             </button>
+          </div>
+        </div></div>
+      )}
+      {/* Mark as Paid Modal (Phase-2) */}
+      {showMarkPaidModal && markPaidVoucher && (
+        <div className="modal-overlay" onClick={() => { setShowMarkPaidModal(false); setPaymentReference(''); setPaymentNotes(''); }}><div className="modal" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-header" style={{background:'#22c55e',color:'white'}}>
+            <h3 className="modal-title" style={{color:'white'}}>✅ Mark as Paid — {markPaidVoucher.serial_number}</h3>
+            <button className="modal-close" style={{color:'white'}} onClick={() => { setShowMarkPaidModal(false); setPaymentReference(''); setPaymentNotes(''); }}>×</button>
+          </div>
+          <div className="modal-body">
+            <div style={{background:'#f0fdf4',borderRadius:'8px',padding:'0.75rem 1rem',marginBottom:'1rem',border:'1px solid #86efac',fontSize:'0.9rem'}}>
+              <div style={{display:'flex',justifyContent:'space-between',marginBottom:'0.3rem'}}><span style={{color:'#166534'}}>Payee</span><strong>{markPaidVoucher.payee_name}</strong></div>
+              <div style={{display:'flex',justifyContent:'space-between',marginBottom:'0.3rem'}}><span style={{color:'#166534'}}>Amount</span><strong style={{fontFamily:'monospace'}}>₹{parseFloat(markPaidVoucher.amount).toLocaleString('en-IN',{minimumFractionDigits:2})}</strong></div>
+              <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#166534'}}>Mode</span><strong>{markPaidVoucher.payment_mode}</strong></div>
+            </div>
+            <div className="form-group">
+              <label className="form-label">UTR / Transaction Reference <span style={{color:'#dc2626'}}>*</span></label>
+              <input type="text" className="form-input" placeholder="e.g. 409312345678 or TXNXXXXXXXX" value={paymentReference} onChange={(e) => setPaymentReference(e.target.value)} />
+              <p style={{fontSize:'0.75rem',color:'#666',marginTop:'0.25rem'}}>Enter the UTR for NEFT/IMPS/RTGS or the UPI transaction ID</p>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Notes <span style={{color:'#888',fontWeight:400}}>(optional)</span></label>
+              <textarea className="form-input" rows={2} placeholder="e.g. Paid via HDFC Net Banking on 29-Jun-2026" value={paymentNotes} onChange={(e) => setPaymentNotes(e.target.value)} />
+            </div>
+          </div>
+          <div className="modal-footer">
+            <button className="btn btn-secondary" onClick={() => { setShowMarkPaidModal(false); setPaymentReference(''); setPaymentNotes(''); }}>Cancel</button>
+            <button className="btn btn-success" onClick={handleMarkPaid} disabled={loading || !paymentReference.trim()}>{loading && Icons.loader}✅ Confirm Payment</button>
           </div>
         </div></div>
       )}
@@ -8469,7 +8607,7 @@ const App = () => {
   const contextValue = { user, vouchers, notifications, addToast, refreshVouchers, refreshNotifications };
   const renderPage = () => {
     if (user.role === 'auditor') return <VoucherList filter="completed" />;
-    switch(currentPage) { case 'dashboard': return <Dashboard />; case 'create': return (user.role === 'accounts' || user.isSuperAdmin) ? <CreateVoucher /> : <Dashboard />; case 'drafts': return (user.role === 'accounts' || user.isSuperAdmin) ? <VoucherList filter="draft" /> : <Dashboard />; case 'pending': return <VoucherList filter="pending" />; case 'approved': return <VoucherList filter="approved" />; case 'completed': return <VoucherList filter="completed" />; case 'all': return <VoucherList filter="all" />; case 'users': return user.isSuperAdmin ? <UsersManagement /> : <Dashboard />; case 'payees': return (user.role === 'accounts' || user.isSuperAdmin) ? <PayeesManagement /> : <Dashboard />; case 'accounts': return (user.role === 'accounts' || user.isSuperAdmin) ? <AccountsManagement /> : <Dashboard />; case 'pay-from-accounts': return (user.role === 'accounts' || user.isSuperAdmin) ? <PaymentAccountsManagement /> : <Dashboard />; case 'suspense': return <SuspenseVoucherList onViewDetail={(id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); }} />; case 'create-suspense': return (user.role === 'accounts' || user.isSuperAdmin) ? <SuspenseVoucherForm onCreated={() => { setCurrentPage('suspense'); }} onViewDetail={(id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); }} /> : <Dashboard />; case 'suspense-detail': return suspenseDetailId ? <SuspenseVoucherDetail suspenseId={suspenseDetailId} onBack={() => setCurrentPage('suspense')} /> : <SuspenseVoucherList onViewDetail={(id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); }} />; default: return <Dashboard />; } };
+    switch(currentPage) { case 'dashboard': return <Dashboard />; case 'create': return (user.role === 'accounts' || user.isSuperAdmin) ? <CreateVoucher /> : <Dashboard />; case 'drafts': return (user.role === 'accounts' || user.isSuperAdmin) ? <VoucherList filter="draft" /> : <Dashboard />; case 'pending': return <VoucherList filter="pending" />; case 'approved': return <VoucherList filter="approved" />; case 'completed': return <VoucherList filter="completed" />; case 'awaiting_payment': return <VoucherList filter="awaiting_payment" />; case 'paid': return <VoucherList filter="paid" />; case 'all': return <VoucherList filter="all" />; case 'users': return user.isSuperAdmin ? <UsersManagement /> : <Dashboard />; case 'payees': return (user.role === 'accounts' || user.isSuperAdmin) ? <PayeesManagement /> : <Dashboard />; case 'accounts': return (user.role === 'accounts' || user.isSuperAdmin) ? <AccountsManagement /> : <Dashboard />; case 'pay-from-accounts': return (user.role === 'accounts' || user.isSuperAdmin) ? <PaymentAccountsManagement /> : <Dashboard />; case 'suspense': return <SuspenseVoucherList onViewDetail={(id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); }} />; case 'create-suspense': return (user.role === 'accounts' || user.isSuperAdmin) ? <SuspenseVoucherForm onCreated={() => { setCurrentPage('suspense'); }} onViewDetail={(id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); }} /> : <Dashboard />; case 'suspense-detail': return suspenseDetailId ? <SuspenseVoucherDetail suspenseId={suspenseDetailId} onBack={() => setCurrentPage('suspense')} /> : <SuspenseVoucherList onViewDetail={(id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); }} />; default: return <Dashboard />; } };
 
   const handleNavClick = (page) => {
     try { localStorage.setItem('relish_page', page); } catch {}
@@ -8572,6 +8710,10 @@ const App = () => {
               <div className={`nav-item ${currentPage === 'pending' ? 'active' : ''}`} onClick={() => handleNavClick('pending')}>{Icons.clock} Pending Approval</div>
               <div className={`nav-item ${currentPage === 'approved' ? 'active' : ''}`} onClick={() => handleNavClick('approved')}>{Icons.smartphone} Awaiting OTP</div>
               <div className={`nav-item ${currentPage === 'completed' ? 'active' : ''}`} onClick={() => handleNavClick('completed')}>{Icons.checkCircle} Completed</div>
+              <div className={`nav-item ${currentPage === 'awaiting_payment' ? 'active' : ''}`} onClick={() => handleNavClick('awaiting_payment')} style={{display:'flex',alignItems:'center',gap:'0.4rem'}}>
+                <span>💳 Awaiting Payment</span>
+                {vouchers.filter(v => v.status === 'awaiting_payment').length > 0 && <span style={{background:'#f59e0b',color:'white',borderRadius:'10px',padding:'1px 7px',fontSize:'0.7rem',marginLeft:'auto',lineHeight:'1.4'}}>{vouchers.filter(v => v.status === 'awaiting_payment').length}</span>}
+              </div>
               <div className={`nav-item ${currentPage === 'all' ? 'active' : ''}`} onClick={() => handleNavClick('all')}>{Icons.fileText} All Vouchers</div>
             </div>
             <div className="nav-section"><div className="nav-section-title">Suspense Accounts</div>
@@ -8631,6 +8773,10 @@ const App = () => {
                   <div className={`nav-item ${currentPage === 'pending' ? 'active' : ''}`} onClick={() => handleNavClick('pending')}>{Icons.clock} Pending Approval</div>
                   <div className={`nav-item ${currentPage === 'approved' ? 'active' : ''}`} onClick={() => handleNavClick('approved')}>{Icons.smartphone} Awaiting OTP</div>
                   <div className={`nav-item ${currentPage === 'completed' ? 'active' : ''}`} onClick={() => handleNavClick('completed')}>{Icons.checkCircle} Completed</div>
+                  <div className={`nav-item ${currentPage === 'awaiting_payment' ? 'active' : ''}`} onClick={() => handleNavClick('awaiting_payment')} style={{display:'flex',alignItems:'center',gap:'0.4rem'}}>
+                    <span>💳 Awaiting Payment</span>
+                    {vouchers.filter(v => v.status === 'awaiting_payment').length > 0 && <span style={{background:'#f59e0b',color:'white',borderRadius:'10px',padding:'1px 7px',fontSize:'0.7rem',marginLeft:'auto',lineHeight:'1.4'}}>{vouchers.filter(v => v.status === 'awaiting_payment').length}</span>}
+                  </div>
                   <div className={`nav-item ${currentPage === 'all' ? 'active' : ''}`} onClick={() => handleNavClick('all')}>{Icons.fileText} All Vouchers</div>
                 </div>
                 <div className="nav-section"><div className="nav-section-title">Suspense Accounts</div>

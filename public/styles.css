@@ -276,6 +276,8 @@ body {
 .status-awaiting_payee_otp { background: rgba(123,75,148,0.1); color: var(--relish-purple); }
 .status-awaiting_document { background: rgba(59,130,246,0.15); color: #2563eb; }
 .status-completed { background: rgba(16,185,129,0.1); color: var(--success); }
+.status-awaiting_payment { background: rgba(245,158,11,0.18); color: #b45309; font-weight: 600; }
+.status-paid { background: rgba(5,150,105,0.15); color: #065f46; font-weight: 600; }
 .status-rejected { background: rgba(239,68,68,0.1); color: var(--error); }
 
 .otp-container { display: flex; gap: 0.75rem; justify-content: center; margin: 1.5rem 0; flex-wrap: wrap; }

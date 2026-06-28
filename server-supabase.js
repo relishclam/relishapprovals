@@ -4120,6 +4120,95 @@ app.post('/api/hoa-corrections/:proposalId/reject', async (req, res) => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ==========================================
+// PAYMENT TRACKING ENDPOINTS (Phase-2)
+// ==========================================
+
+// Queue voucher for payment: completed → awaiting_payment (Admin/SuperAdmin)
+app.post('/api/vouchers/:voucherId/mark-awaiting-payment', async (req, res) => {
+  const { markedBy } = req.body;
+  if (!markedBy) return res.status(400).json({ error: 'markedBy is required' });
+
+  try {
+    const { data: voucher, error: vErr } = await supabase.from('vouchers')
+      .select('*, preparer:users!vouchers_prepared_by_fkey(name)')
+      .eq('id', req.params.voucherId).single();
+
+    if (vErr || !voucher) return res.status(404).json({ error: 'Voucher not found' });
+    if (voucher.status !== 'completed')
+      return res.status(400).json({ error: `Voucher must be completed to queue for payment (current: ${voucher.status})` });
+
+    const { error: upErr } = await supabase.from('vouchers').update({
+      status: 'awaiting_payment',
+      queued_for_payment_by: markedBy,
+      queued_at: new Date().toISOString()
+    }).eq('id', req.params.voucherId);
+
+    if (upErr) throw upErr;
+
+    await supabase.from('notifications').insert({
+      user_id: voucher.prepared_by,
+      title: '💳 Payment Queued',
+      message: `Voucher ${voucher.serial_number} is now queued for payment.`,
+      type: 'info',
+      voucher_id: req.params.voucherId
+    });
+
+    console.log(`   💳 Voucher ${voucher.serial_number} queued for payment by ${markedBy}`);
+    res.json({ success: true, message: 'Voucher queued for payment.' });
+  } catch (error) {
+    console.error('mark-awaiting-payment error:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Mark voucher as paid: awaiting_payment → paid (Admin/SuperAdmin)
+app.post('/api/vouchers/:voucherId/mark-paid', async (req, res) => {
+  const { paidBy, paymentReference, paymentNotes } = req.body;
+  if (!paidBy) return res.status(400).json({ error: 'paidBy is required' });
+
+  try {
+    const { data: voucher, error: vErr } = await supabase.from('vouchers')
+      .select('*, preparer:users!vouchers_prepared_by_fkey(name)')
+      .eq('id', req.params.voucherId).single();
+
+    if (vErr || !voucher) return res.status(404).json({ error: 'Voucher not found' });
+    if (!['awaiting_payment', 'completed'].includes(voucher.status))
+      return res.status(400).json({ error: `Voucher must be awaiting_payment to mark as paid (current: ${voucher.status})` });
+
+    const { error: upErr } = await supabase.from('vouchers').update({
+      status: 'paid',
+      payment_reference: paymentReference || null,
+      payment_notes: paymentNotes || null,
+      paid_by: paidBy,
+      paid_at: new Date().toISOString()
+    }).eq('id', req.params.voucherId);
+
+    if (upErr) throw upErr;
+
+    await supabase.from('notifications').insert({
+      user_id: voucher.prepared_by,
+      title: '✅ Payment Completed',
+      message: `Voucher ${voucher.serial_number} has been paid.${paymentReference ? ` UTR: ${paymentReference}` : ''}`,
+      type: 'completed',
+      voucher_id: req.params.voucherId
+    });
+
+    sendPushNotification(
+      voucher.prepared_by,
+      '✅ Payment Done',
+      `Voucher ${voucher.serial_number} paid.${paymentReference ? ` UTR: ${paymentReference}` : ''}`,
+      '/'
+    );
+
+    console.log(`   ✅ Voucher ${voucher.serial_number} marked paid by ${paidBy} — UTR: ${paymentReference || 'N/A'}`);
+    res.json({ success: true, message: 'Voucher marked as paid.' });
+  } catch (error) {
+    console.error('mark-paid error:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Health check
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
