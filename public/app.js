@@ -929,7 +929,7 @@ const Dashboard = () => {
         )}
         <div className="stat-card"><div className="stat-icon orange">⏱</div><div className="stat-value">{stats.pending}</div><div className="stat-label">Pending Approval</div></div>
         <div className="stat-card"><div className="stat-icon purple">📋</div><div className="stat-value">{stats.approved}</div><div className="stat-label">Approved / Awaiting OTP</div></div>
-        <div className="stat-card"><div className="stat-icon green">✓</div><div className="stat-value">{stats.completed}</div><div className="stat-label">Completed</div></div>
+        <div className="stat-card"><div className="stat-icon green">✓</div><div className="stat-value">{stats.completed}</div><div className="stat-label">OTP Verified</div></div>
         {stats.awaitingPayment > 0 && (
           <div className="stat-card" style={{borderColor:'#fbbf24',background:'#fffbeb'}} onClick={() => {}} title="Click sidebar to view"><div className="stat-icon" style={{background:'#fef3c7',color:'#b45309'}}>💳</div><div className="stat-value" style={{color:'#b45309'}}>{stats.awaitingPayment}</div><div className="stat-label">Awaiting Payment</div></div>
         )}
@@ -940,7 +940,7 @@ const Dashboard = () => {
         <div className="card-body" style={{ padding: 0 }}>
           {vouchers.length === 0 ? <div className="empty-state">{Icons.fileText}<p>No vouchers yet</p></div> : (
             <div className="table-container"><table className="table"><thead><tr><th>Serial No.</th><th>Payee</th><th>Amount</th><th>Status</th><th>Date</th></tr></thead><tbody>
-              {vouchers.slice(0, 5).map(v => (<tr key={v.id}><td className="text-mono fw-600">{v.serial_number}{v.attachment_count > 0 && <span title={`${v.attachment_count} attachment${v.attachment_count > 1 ? 's' : ''}`} style={{marginLeft: '6px', color: '#f5841f', verticalAlign: 'middle', display: 'inline-flex'}}>{Icons.paperclip}</span>}</td><td>{v.payee_name}</td><td className="fw-600">{formatRupees(v.amount, 0)}</td><td><span className={`status-badge status-${v.status}`}>{v.status.replace(/_/g, ' ')}</span></td><td>{new Date(v.created_at).toLocaleDateString('en-IN')}</td></tr>))}
+              {vouchers.slice(0, 5).map(v => (<tr key={v.id}><td className="text-mono fw-600">{v.serial_number}{v.attachment_count > 0 && <span title={`${v.attachment_count} attachment${v.attachment_count > 1 ? 's' : ''}`} style={{marginLeft: '6px', color: '#f5841f', verticalAlign: 'middle', display: 'inline-flex'}}>{Icons.paperclip}</span>}</td><td>{v.payee_name}</td><td className="fw-600">{formatRupees(v.amount, 0)}</td><td><span className={`status-badge status-${v.status}`}>{v.status === 'completed' ? 'OTP Verified' : v.status === 'awaiting_payment' ? 'Awaiting Payment' : v.status === 'paid' ? 'Paid' : v.status.replace(/_/g, ' ')}</span></td><td>{new Date(v.created_at).toLocaleDateString('en-IN')}</td></tr>))}
             </tbody></table></div>
           )}
         </div>
@@ -2704,7 +2704,7 @@ const VoucherList = ({ filter }) => {
   const handleComplete = async () => { if (payeeOtp.length < 6) { addToast('Enter complete OTP', 'error'); return; } setLoading(true); try { const result = await api.completeVoucher(selectedVoucher.id, payeeOtp); if (result.success) { addToast('Voucher completed!', 'success'); refreshVouchers(); setShowModal(false); setPayeeOtp(''); } else addToast(result.error, 'error'); } catch { addToast('Failed', 'error'); } setLoading(false); };
   const handleResend = async () => { try { await api.resendPayeeOtp(selectedVoucher.id); addToast('OTP resent', 'success'); } catch { addToast('Failed', 'error'); } };
   const handleDelete = async () => { setLoading(true); try { const result = await api.deleteVoucher(selectedVoucher.id, user.id); if (result.success) { addToast('Voucher deleted', 'success'); refreshVouchers(); setShowDeleteModal(false); setShowModal(false); } else addToast(result.error || 'Failed to delete', 'error'); } catch { addToast('Failed to delete voucher', 'error'); } setLoading(false); };
-  const titles = { all: 'All Vouchers', draft: 'Saved Drafts', pending: 'Pending Approval', approved: 'Approved / Awaiting OTP', completed: 'Completed Vouchers', awaiting_payment: 'Awaiting Payment', paid: 'Paid Vouchers' };
+  const titles = { all: 'All Vouchers', draft: 'Saved Drafts', pending: 'Pending Approval', approved: 'Approved / Awaiting OTP', completed: 'OTP Verified', awaiting_payment: 'Awaiting Payment', paid: 'Paid Vouchers' };
 
   const handleDownloadExcel = () => {
     if (!excelDateFrom || !excelDateTo) { addToast('Select date range', 'error'); return; }
@@ -2855,7 +2855,7 @@ const VoucherList = ({ filter }) => {
             <th>Serial No.</th><th>Head of Account</th><th>Payee</th><th>Amount</th><th>Mode</th><th>Status</th><th>Date</th><th>Actions</th></tr></thead><tbody>
             {filtered.map(v => (<tr key={v.id}>
               {filter === 'awaiting_payment' && <td><input type="checkbox" checked={selectedRows.has(v.id)} onChange={(e) => { const next = new Set(selectedRows); e.target.checked ? next.add(v.id) : next.delete(v.id); setSelectedRows(next); }} style={{width:'16px',height:'16px',cursor:'pointer'}} /></td>}
-              <td className="text-mono fw-600">{v.serial_number}{v.attachment_count > 0 && <span title={`${v.attachment_count} attachment${v.attachment_count > 1 ? 's' : ''}`} style={{marginLeft: '6px', color: '#f5841f', verticalAlign: 'middle', display: 'inline-flex'}}>{Icons.paperclip}</span>}</td><td>{v.head_of_account}</td><td>{v.payee_name}</td><td className="fw-600">{formatRupees(v.amount, 0)}</td><td>{v.payment_mode}</td><td><span className={`status-badge status-${v.status}`}>{v.status.replace(/_/g, ' ')}</span></td><td>{new Date(v.created_at).toLocaleDateString('en-IN')}</td>
+              <td className="text-mono fw-600">{v.serial_number}{v.attachment_count > 0 && <span title={`${v.attachment_count} attachment${v.attachment_count > 1 ? 's' : ''}`} style={{marginLeft: '6px', color: '#f5841f', verticalAlign: 'middle', display: 'inline-flex'}}>{Icons.paperclip}</span>}</td><td>{v.head_of_account}</td><td>{v.payee_name}</td><td className="fw-600">{formatRupees(v.amount, 0)}</td><td>{v.payment_mode}</td><td><span className={`status-badge status-${v.status}`}>{v.status === 'completed' ? 'OTP Verified' : v.status === 'awaiting_payment' ? 'Awaiting Payment' : v.status === 'paid' ? 'Paid' : v.status.replace(/_/g, ' ')}</span></td><td>{new Date(v.created_at).toLocaleDateString('en-IN')}</td>
               <td><div style={{display:'flex',gap:'0.4rem',flexWrap:'wrap',alignItems:'center'}}>
                 <button className="btn btn-sm btn-secondary" onClick={() => openVoucher(v)}>{Icons.eye} View</button>
                 {v.status === 'completed' && v.payment_mode !== 'Cash' && (user.role === 'admin' || user.isSuperAdmin || (user.role === 'accounts' && v.payment_mode === 'Account Transfer')) && (<button className="btn btn-sm" style={{background:'#16a34a',color:'white',border:'none',borderRadius:'6px',padding:'0.3rem 0.65rem',fontSize:'0.8rem',cursor:'pointer',fontWeight:600}} onClick={() => setPayNowVoucher(v)}>💳 Pay Now</button>)}
@@ -8790,7 +8790,7 @@ const App = () => {
               {(user.role === 'accounts' || user.isSuperAdmin) && <div className={`nav-item ${currentPage === 'drafts' ? 'active' : ''}`} onClick={() => handleNavClick('drafts')}>📝 Drafts</div>}
               <div className={`nav-item ${currentPage === 'pending' ? 'active' : ''}`} onClick={() => handleNavClick('pending')}>{Icons.clock} Pending Approval</div>
               <div className={`nav-item ${currentPage === 'approved' ? 'active' : ''}`} onClick={() => handleNavClick('approved')}>{Icons.smartphone} Awaiting OTP</div>
-              <div className={`nav-item ${currentPage === 'completed' ? 'active' : ''}`} onClick={() => handleNavClick('completed')}>{Icons.checkCircle} Completed</div>
+              <div className={`nav-item ${currentPage === 'completed' ? 'active' : ''}`} onClick={() => handleNavClick('completed')}>{Icons.checkCircle} OTP Verified</div>
               <div className={`nav-item ${currentPage === 'awaiting_payment' ? 'active' : ''}`} onClick={() => handleNavClick('awaiting_payment')} style={{display:'flex',alignItems:'center',gap:'0.4rem'}}>
                 <span>💳 Awaiting Payment</span>
                 {vouchers.filter(v => v.status === 'awaiting_payment').length > 0 && <span style={{background:'#f59e0b',color:'white',borderRadius:'10px',padding:'1px 7px',fontSize:'0.7rem',marginLeft:'auto',lineHeight:'1.4'}}>{vouchers.filter(v => v.status === 'awaiting_payment').length}</span>}
@@ -8853,7 +8853,7 @@ const App = () => {
                   {(user.role === 'accounts' || user.isSuperAdmin) && <div className={`nav-item ${currentPage === 'drafts' ? 'active' : ''}`} onClick={() => handleNavClick('drafts')}>📝 Drafts</div>}
                   <div className={`nav-item ${currentPage === 'pending' ? 'active' : ''}`} onClick={() => handleNavClick('pending')}>{Icons.clock} Pending Approval</div>
                   <div className={`nav-item ${currentPage === 'approved' ? 'active' : ''}`} onClick={() => handleNavClick('approved')}>{Icons.smartphone} Awaiting OTP</div>
-                  <div className={`nav-item ${currentPage === 'completed' ? 'active' : ''}`} onClick={() => handleNavClick('completed')}>{Icons.checkCircle} Completed</div>
+                  <div className={`nav-item ${currentPage === 'completed' ? 'active' : ''}`} onClick={() => handleNavClick('completed')}>{Icons.checkCircle} OTP Verified</div>
                   <div className={`nav-item ${currentPage === 'awaiting_payment' ? 'active' : ''}`} onClick={() => handleNavClick('awaiting_payment')} style={{display:'flex',alignItems:'center',gap:'0.4rem'}}>
                     <span>💳 Awaiting Payment</span>
                     {vouchers.filter(v => v.status === 'awaiting_payment').length > 0 && <span style={{background:'#f59e0b',color:'white',borderRadius:'10px',padding:'1px 7px',fontSize:'0.7rem',marginLeft:'auto',lineHeight:'1.4'}}>{vouchers.filter(v => v.status === 'awaiting_payment').length}</span>}
