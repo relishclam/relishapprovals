@@ -4198,7 +4198,7 @@ app.post('/api/vouchers/:voucherId/mark-paid', async (req, res) => {
       const ext = receiptMimeType === 'application/pdf' ? 'pdf'
         : receiptMimeType.startsWith('image/') ? receiptMimeType.split('/')[1]
         : 'jpg';
-      const fileName = `payment-receipts/${req.params.voucherId}/receipt_${Date.now()}.${ext}`;
+      const fileName = `${voucher.company_id}/payment-receipts/${req.params.voucherId}/receipt_${Date.now()}.${ext}`;
       const buffer = Buffer.from(receiptData, 'base64');
       const { error: storageErr } = await supabase.storage
         .from('voucher-bills')
