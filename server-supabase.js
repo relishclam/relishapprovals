@@ -1887,19 +1887,18 @@ app.post('/api/users/:userId/push-subscription', async (req, res) => {
       return res.status(400).json({ error: 'Invalid subscription' });
     }
     
-    // Delete existing subscriptions for this endpoint
-    await supabase.from('push_subscriptions')
-      .delete()
-      .eq('endpoint', subscription.endpoint);
+    if (!subscription.keys || !subscription.keys.p256dh || !subscription.keys.auth) {
+      return res.status(400).json({ error: 'Invalid subscription: missing keys' });
+    }
     
-    // Insert new subscription
-    const { error } = await supabase.from('push_subscriptions').insert({
+    // Upsert subscription (handles duplicate endpoints atomically)
+    const { error } = await supabase.from('push_subscriptions').upsert({
       user_id: userId,
       endpoint: subscription.endpoint,
       p256dh: subscription.keys.p256dh,
       auth: subscription.keys.auth,
       subscription_json: JSON.stringify(subscription)
-    });
+    }, { onConflict: 'endpoint' });
     
     if (error) throw error;
     

@@ -8417,11 +8417,15 @@ const App = () => {
       
       // Send subscription to server
       if (user) {
-        await fetch(`${API_BASE}/users/${user.id}/push-subscription`, {
+        const saveRes = await fetch(`${API_BASE}/users/${user.id}/push-subscription`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(subscription.toJSON())
         });
+        if (!saveRes.ok) {
+          const errData = await saveRes.json().catch(() => ({}));
+          throw new Error(errData.error || `Server error ${saveRes.status}`);
+        }
         console.log('Push subscription saved to server');
       }
       
