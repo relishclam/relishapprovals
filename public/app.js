@@ -43,6 +43,7 @@ const Icons = {
   unlock: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg>,
   wallet: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><path d="M18 12a2 2 0 0 0 0 4h4v-4Z"/></svg>,
   paperclip: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>,
+  receiptCheck: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 2v20l2-1 2 1 2-1 2 1 2-1 2 1 2-1 2 1V2l-2 1-2-1-2 1-2-1-2 1-2-1-2 1-2-1Z"/><path d="m9 12 2 2 4-4"/></svg>,
   qrCode: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect width="5" height="5" x="3" y="3" rx="1"/><rect width="5" height="5" x="16" y="3" rx="1"/><rect width="5" height="5" x="3" y="16" rx="1"/><path d="M21 16h-3a2 2 0 0 0-2 2v3"/><path d="M21 21v.01"/><path d="M12 7v3a2 2 0 0 1-2 2H7"/><path d="M3 12h.01"/><path d="M12 3h.01"/><path d="M12 16v.01"/><path d="M16 12h1"/><path d="M21 12v.01"/><path d="M12 21v-1"/></svg>,
 };
 
@@ -941,7 +942,7 @@ const Dashboard = () => {
         <div className="card-body" style={{ padding: 0 }}>
           {vouchers.length === 0 ? <div className="empty-state">{Icons.fileText}<p>No vouchers yet</p></div> : (
             <div className="table-container"><table className="table"><thead><tr><th>Serial No.</th><th>Payee</th><th>Amount</th><th>Status</th><th>Date</th></tr></thead><tbody>
-              {vouchers.slice(0, 5).map(v => (<tr key={v.id}><td className="text-mono fw-600">{v.serial_number}{v.attachment_count > 0 && <span title={`${v.attachment_count} attachment${v.attachment_count > 1 ? 's' : ''}`} style={{marginLeft: '6px', color: '#f5841f', verticalAlign: 'middle', display: 'inline-flex'}}>{Icons.paperclip}</span>}</td><td>{v.payee_name}</td><td className="fw-600">{formatRupees(v.amount, 0)}</td><td><span className={`status-badge status-${v.status}`}>{v.status === 'completed' ? 'OTP Verified' : v.status === 'awaiting_payment' ? 'Awaiting Payment' : v.status === 'paid' ? 'Paid' : v.status.replace(/_/g, ' ')}</span></td><td>{new Date(v.created_at).toLocaleDateString('en-IN')}</td></tr>))}
+              {vouchers.slice(0, 5).map(v => (<tr key={v.id}><td className="text-mono fw-600">{v.serial_number}{v.attachment_count > 0 && <span title={`${v.attachment_count} bill attachment${v.attachment_count > 1 ? 's' : ''}`} style={{marginLeft: '6px', color: '#f5841f', verticalAlign: 'middle', display: 'inline-flex'}}>{Icons.paperclip}</span>}{v.payment_receipt_url && <span title="Payment receipt attached" style={{marginLeft: '4px', color: '#16a34a', verticalAlign: 'middle', display: 'inline-flex'}}>{Icons.receiptCheck}</span>}</td><td>{v.payee_name}</td><td className="fw-600">{formatRupees(v.amount, 0)}</td><td><span className={`status-badge status-${v.status}`}>{v.status === 'completed' ? 'OTP Verified' : v.status === 'awaiting_payment' ? 'Awaiting Payment' : v.status === 'paid' ? 'Paid' : v.status.replace(/_/g, ' ')}</span></td><td>{new Date(v.created_at).toLocaleDateString('en-IN')}</td></tr>))}
             </tbody></table></div>
           )}
         </div>
@@ -2045,6 +2046,66 @@ const VoucherList = ({ filter }) => {
   const [searchTo, setSearchTo] = useState('');
   const hasSearchFilters = searchNum || searchHead || searchPayee || searchDate || searchFrom || searchTo;
 
+  // ── Android UPI Bridge ──────────────────────────────────────────────────────
+  // Keep a ref pointing at current context/state values so window.onUpiResult
+  // always reads fresh values without needing to be re-registered each render.
+  const upiCtxRef = React.useRef({});
+  upiCtxRef.current = { user, vouchers, addToast, refreshVouchers,
+    setPayNowVoucher, setMarkPaidVoucher, setShowMarkPaidModal, setPaymentReference };
+
+  useEffect(() => {
+    // Register the global handler that the Android wrapper calls after the
+    // native UPI intent returns.  Runs once on mount; reads live state via ref.
+    window.onUpiResult = async function(result) {
+      // Cancel the visibilitychange fallback — onUpiResult took precedence.
+      if (window._upiVisibilityHandler) {
+        document.removeEventListener('visibilitychange', window._upiVisibilityHandler);
+        window._upiVisibilityHandler = null;
+      }
+
+      const pending = window._upiPending;
+      if (!pending) return;
+      window._upiPending = null; // clear immediately — prevent double-processing
+
+      const { user: u, vouchers: vList, addToast: toast, refreshVouchers: refresh,
+        setPayNowVoucher: spnv, setMarkPaidVoucher: smpv,
+        setShowMarkPaidModal: ssmp, setPaymentReference: spr } = upiCtxRef.current;
+
+      if (result.status === 'SUCCESS') {
+        try {
+          await api.markPaid(pending.voucherId, u.id, result.txnId || result.txnRef || '', '', null, null);
+          toast('✓ Payment confirmed — ' + pending.voucherSerial + ' marked as paid', 'success');
+          spnv(null);
+          refresh();
+        } catch (err) {
+          // Payment succeeded at the bank but the DB update failed.
+          // Open the Mark Paid panel with UTR pre-filled for manual confirmation.
+          const v = vList.find(x => x.id === pending.voucherId) || { id: pending.voucherId };
+          smpv(v);
+          spr(result.txnId || result.txnRef || '');
+          ssmp(true);
+          toast('Payment succeeded — please confirm manually', 'warning');
+        }
+      } else if (result.status === 'FAILURE') {
+        if (result.error === 'NO_UPI_APP') {
+          toast('No UPI app found on this device', 'error');
+        } else {
+          toast('✗ Payment failed or was cancelled', 'error');
+        }
+        // Leave Pay Now modal open so the user can retry.
+      } else {
+        // UNKNOWN — UPI app returned no data (GPay pending-processing case).
+        toast('Payment status unclear — please mark manually', 'warning');
+        const v = vList.find(x => x.id === pending.voucherId) || { id: pending.voucherId };
+        smpv(v);
+        ssmp(true);
+      }
+    };
+
+    return () => { delete window.onUpiResult; };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // ── /Android UPI Bridge ─────────────────────────────────────────────────────
+
   // Load payees and heads for edit modal
   useEffect(() => {
     api.getPayees(user.company.id).then(setPayees);
@@ -2867,7 +2928,7 @@ const VoucherList = ({ filter }) => {
             <th>Serial No.</th><th>Head of Account</th><th>Payee</th><th>Amount</th><th>Mode</th><th>Status</th><th>Date</th><th>Actions</th></tr></thead><tbody>
             {filtered.map(v => (<tr key={v.id}>
               {filter === 'awaiting_payment' && <td><input type="checkbox" checked={selectedRows.has(v.id)} onChange={(e) => { const next = new Set(selectedRows); e.target.checked ? next.add(v.id) : next.delete(v.id); setSelectedRows(next); }} style={{width:'16px',height:'16px',cursor:'pointer'}} /></td>}
-              <td className="text-mono fw-600">{v.serial_number}{v.attachment_count > 0 && <span title={`${v.attachment_count} attachment${v.attachment_count > 1 ? 's' : ''}`} style={{marginLeft: '6px', color: '#f5841f', verticalAlign: 'middle', display: 'inline-flex'}}>{Icons.paperclip}</span>}</td><td>{v.head_of_account}</td><td>{v.payee_name}</td><td className="fw-600">{formatRupees(v.amount, 0)}</td><td>{v.payment_mode}</td><td><span className={`status-badge status-${v.status}`}>{v.status === 'completed' ? 'OTP Verified' : v.status === 'awaiting_payment' ? 'Awaiting Payment' : v.status === 'paid' ? 'Paid' : v.status.replace(/_/g, ' ')}</span></td><td>{new Date(v.created_at).toLocaleDateString('en-IN')}</td>
+              <td className="text-mono fw-600">{v.serial_number}{v.attachment_count > 0 && <span title={`${v.attachment_count} bill attachment${v.attachment_count > 1 ? 's' : ''}`} style={{marginLeft: '6px', color: '#f5841f', verticalAlign: 'middle', display: 'inline-flex'}}>{Icons.paperclip}</span>}{v.payment_receipt_url && <span title="Payment receipt attached" style={{marginLeft: '4px', color: '#16a34a', verticalAlign: 'middle', display: 'inline-flex'}}>{Icons.receiptCheck}</span>}</td><td>{v.head_of_account}</td><td>{v.payee_name}</td><td className="fw-600">{formatRupees(v.amount, 0)}</td><td>{v.payment_mode}</td><td><span className={`status-badge status-${v.status}`}>{v.status === 'completed' ? 'OTP Verified' : v.status === 'awaiting_payment' ? 'Awaiting Payment' : v.status === 'paid' ? 'Paid' : v.status.replace(/_/g, ' ')}</span></td><td>{new Date(v.created_at).toLocaleDateString('en-IN')}</td>
               <td><div style={{display:'flex',gap:'0.4rem',flexWrap:'wrap',alignItems:'center'}}>
                 <button className="btn btn-sm btn-secondary" onClick={() => openVoucher(v)}>{Icons.eye} View</button>
                 {/* OTP Verified → Accounts queues non-Cash vouchers (UPI or Account Transfer) */}
@@ -3423,7 +3484,38 @@ const VoucherList = ({ filter }) => {
                 {v.payment_mode === 'UPI' && v.payee_upi_id && isMobile && (
                   <div style={{textAlign:'center'}}>
                     <p style={{fontSize:'0.85rem',color:'#555',marginBottom:'1rem'}}>Tap below to open your UPI app with details pre-filled.</p>
-                    <a href={upiUrl} style={{display:'inline-block',background:'#16a34a',color:'white',padding:'0.75rem 2rem',borderRadius:'8px',fontWeight:700,textDecoration:'none',fontSize:'1rem'}}>Open UPI App →</a>
+                    <a
+                      href={upiUrl}
+                      onClick={() => {
+                        // Step 1: store pending state so onUpiResult (or the
+                        // visibilitychange fallback) knows which voucher to act on.
+                        window._upiPending = {
+                          voucherId:       v.id,
+                          voucherSerial:   v.serial_number,
+                          amount:          v.amount,
+                          paidFromAccount: v.paid_from_account || null
+                        };
+                        // Step 3: register visibilitychange fallback in case the
+                        // Android wrapper does not call onUpiResult (rare).
+                        if (!window._upiVisibilityHandler) {
+                          document.addEventListener('visibilitychange',
+                            window._upiVisibilityHandler = function() {
+                              if (document.visibilityState === 'visible' && window._upiPending) {
+                                const p = window._upiPending;
+                                window._upiPending = null;
+                                document.removeEventListener('visibilitychange', window._upiVisibilityHandler);
+                                window._upiVisibilityHandler = null;
+                                const ctx = upiCtxRef.current;
+                                const voucher = ctx.vouchers.find(x => x.id === p.voucherId) || { id: p.voucherId };
+                                ctx.setMarkPaidVoucher(voucher);
+                                ctx.setShowMarkPaidModal(true);
+                              }
+                            }
+                          );
+                        }
+                      }}
+                      style={{display:'inline-block',background:'#16a34a',color:'white',padding:'0.75rem 2rem',borderRadius:'8px',fontWeight:700,textDecoration:'none',fontSize:'1rem'}}
+                    >Open UPI App →</a>
                     <p style={{fontSize:'0.75rem',color:'#888',marginTop:'0.75rem'}}>UPI ID: <code>{v.payee_upi_id}</code></p>
                   </div>
                 )}
