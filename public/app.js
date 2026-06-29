@@ -2336,6 +2336,37 @@ const VoucherList = ({ filter }) => {
       return words.trim() + ' Only';
     };
     
+    // Helper to render attachment links and payment receipt for print
+    const renderAttachments = (v) => {
+      const atts = v.attachments || [];
+      const hasPaymentReceipt = !!v.payment_receipt_url;
+      if (atts.length === 0 && !hasPaymentReceipt) return '';
+
+      let html = '<div style="margin-top:18px;border-top:2px dashed #e5e7eb;padding-top:14px">';
+
+      if (atts.length > 0) {
+        html += `<div style="font-weight:700;font-size:10px;color:#92400e;margin-bottom:8px;text-transform:uppercase;letter-spacing:0.06em">&#128206; Bill / Invoice Attachments (${atts.length})</div>`;
+        html += '<table style="width:100%;border-collapse:collapse;font-size:10px;margin-bottom:6px">';
+        html += '<thead><tr style="background:#fef3c7"><th style="padding:5px 8px;text-align:left;border:1px solid #fcd34d;font-weight:600">File Name</th><th style="padding:5px 8px;text-align:left;border:1px solid #fcd34d;font-weight:600">Link</th></tr></thead><tbody>';
+        atts.forEach((a, i) => {
+          const name = a.file_name || `Attachment ${i + 1}`;
+          html += `<tr style="background:${i % 2 === 0 ? '#fff' : '#fffbeb'}">
+            <td style="padding:5px 8px;border:1px solid #fef3c7;font-weight:600;white-space:nowrap">${name}</td>
+            <td style="padding:5px 8px;border:1px solid #fef3c7;word-break:break-all"><a href="${a.public_url}" style="color:#2563eb;text-decoration:none;font-size:9px">${a.public_url}</a></td>
+          </tr>`;
+        });
+        html += '</tbody></table>';
+      }
+
+      if (hasPaymentReceipt) {
+        html += `<div style="margin-top:${atts.length > 0 ? '10px' : '0'};font-weight:700;font-size:10px;color:#166534;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.06em">&#9989; Payment Receipt</div>`;
+        html += `<div style="font-size:9px;word-break:break-all;padding:5px 8px;background:#f0fdf4;border:1px solid #86efac;border-radius:4px"><a href="${v.payment_receipt_url}" style="color:#16a34a;text-decoration:none">${v.payment_receipt_url}</a></div>`;
+      }
+
+      html += '</div>';
+      return html;
+    };
+
     // Helper to render narration items table with enhanced styling
     const renderNarrationItems = (v) => {
       const items = typeof v.narration_items === 'string' 
@@ -2565,6 +2596,7 @@ const VoucherList = ({ filter }) => {
           <div class="signature-label">Payee Signature</div>
         </div>
       </div>
+      ${renderAttachments(v)}
     </div>
   `).join('')}
   

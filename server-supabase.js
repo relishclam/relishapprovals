@@ -1419,6 +1419,12 @@ app.get('/api/vouchers/:voucherId', async (req, res) => {
       }
     }
     
+    const { data: attachments } = await supabase
+      .from('voucher_attachments')
+      .select('id, file_name, public_url, mime_type, uploaded_at')
+      .eq('voucher_id', req.params.voucherId)
+      .order('uploaded_at', { ascending: true });
+
     res.json({
       ...voucher,
       payee_name: voucher.payee?.name,
@@ -1435,7 +1441,8 @@ app.get('/api/vouchers/:voucherId', async (req, res) => {
       company_name: voucher.company?.name,
       company_address: voucher.company?.address,
       company_gst: voucher.company?.gst,
-      suspense_serial: suspenseSerial
+      suspense_serial: suspenseSerial,
+      attachments: attachments || []
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
