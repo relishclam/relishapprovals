@@ -66,14 +66,20 @@ const saveOtpSession = async (mobile, sessionId, purpose, voucherId = null, susp
   return !error;
 };
 
-const getOtpSession = async (mobile) => {
-  const { data, error } = await supabase.from('otp_sessions')
+const getOtpSession = async (mobile, voucherId = null) => {
+  let query = supabase.from('otp_sessions')
     .select('*')
     .eq('mobile', mobile)
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .single();
-  
+    .order('created_at', { ascending: false });
+
+  // When a voucherId is provided, fetch only the session tied to that voucher
+  // (prevents a newer login OTP from shadowing the payee-verification session)
+  if (voucherId) {
+    query = query.eq('voucher_id', voucherId);
+  }
+
+  const { data, error } = await query.limit(1).single();
+
   if (error || !data) return null;
   
   // Check if session is expired (15 minutes)
@@ -1693,20 +1699,21 @@ app.post('/api/vouchers/:voucherId/complete', async (req, res) => {
     const formattedMobile = formatMobile(voucher.payee.mobile);
     console.log(`   Payee Mobile: ${formattedMobile}`);
     
-    const session = await getOtpSession(formattedMobile);
+    const session = await getOtpSession(formattedMobile, req.params.voucherId);
     
     if (!session) {
-      console.log(`   ❌ No OTP session found in DB for payee: ${formattedMobile}`);
-      return res.status(400).json({ error: 'No OTP session found. Please click "Resend OTP" first.' });
+      console.log(`   ❌ No OTP session found in DB for payee: ${formattedMobile}, voucher: ${req.params.voucherId}`);
+      return res.status(400).json({ error: 'No OTP session found. Please click "Resend OTP" to send a fresh OTP.' });
     }
     
-    console.log(`   📝 Session found: ${session.sessionId.substring(0, 8)}...`);
+    console.log(`   📝 Session found: ${session.sessionId.substring(0, 8)}... (purpose: ${session.purpose})`);
     
     const result = await call2FactorAPI(`/SMS/VERIFY/${session.sessionId}/${otp}`, `Verify Payee OTP for voucher ${req.params.voucherId}`);
     
     if (!result.success || result.data.Details !== 'OTP Matched') {
-      console.log(`   ❌ OTP verification failed: ${result.data?.Details || result.error}`);
-      return res.status(400).json({ error: 'Invalid OTP', details: result.data?.Details });
+      const detail = result.data?.Details || result.error || 'Unknown error';
+      console.log(`   ❌ OTP verification failed: ${detail}`);
+      return res.status(400).json({ error: 'Invalid OTP', details: detail });
     }
     
     // Clear the session
@@ -4123,12 +4130,16 @@ app.post('/api/hoa-corrections/:proposalId/reject', async (req, res) => {
 // PAYMENT TRACKING ENDPOINTS (Phase-2)
 // ==========================================
 
-// Queue voucher for payment: completed → awaiting_payment (Admin/SuperAdmin)
+// Queue voucher for payment: completed → awaiting_payment (Accounts/SuperAdmin)
 app.post('/api/vouchers/:voucherId/mark-awaiting-payment', async (req, res) => {
   const { markedBy } = req.body;
   if (!markedBy) return res.status(400).json({ error: 'markedBy is required' });
 
   try {
+    const actor = await getActorRole(markedBy);
+    if (actor.role !== 'accounts' && !actor.is_super_admin)
+      return res.status(403).json({ error: 'Only Accounts users can queue vouchers for payment' });
+
     const { data: voucher, error: vErr } = await supabase.from('vouchers')
       .select('*, preparer:users!vouchers_prepared_by_fkey(name)')
       .eq('id', req.params.voucherId).single();
@@ -4161,7 +4172,7 @@ app.post('/api/vouchers/:voucherId/mark-awaiting-payment', async (req, res) => {
   }
 });
 
-// Mark voucher as paid: awaiting_payment → paid (Admin/SuperAdmin)
+// Mark voucher as paid: awaiting_payment|completed → paid (Accounts/SuperAdmin)
 app.post('/api/vouchers/:voucherId/mark-paid', async (req, res) => {
   const { paidBy, paymentReference, paymentNotes, receiptData, receiptMimeType } = req.body;
   if (!paidBy) return res.status(400).json({ error: 'paidBy is required' });
@@ -4169,13 +4180,17 @@ app.post('/api/vouchers/:voucherId/mark-paid', async (req, res) => {
     return res.status(400).json({ error: 'Please enter a UTR reference or upload a receipt — at least one is required' });
 
   try {
+    const actor = await getActorRole(paidBy);
+    if (actor.role !== 'accounts' && !actor.is_super_admin)
+      return res.status(403).json({ error: 'Only Accounts users can confirm payment' });
+
     const { data: voucher, error: vErr } = await supabase.from('vouchers')
       .select('*, preparer:users!vouchers_prepared_by_fkey(name)')
       .eq('id', req.params.voucherId).single();
 
     if (vErr || !voucher) return res.status(404).json({ error: 'Voucher not found' });
     if (!['awaiting_payment', 'completed'].includes(voucher.status))
-      return res.status(400).json({ error: `Voucher must be awaiting_payment to mark as paid (current: ${voucher.status})` });
+      return res.status(400).json({ error: `Voucher must be awaiting_payment or completed to mark as paid (current: ${voucher.status})` });
 
     // Upload receipt if provided
     let receiptUrl = null;
@@ -4223,6 +4238,40 @@ app.post('/api/vouchers/:voucherId/mark-paid', async (req, res) => {
     res.json({ success: true, message: 'Voucher marked as paid.' });
   } catch (error) {
     console.error('mark-paid error:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Dequeue voucher: awaiting_payment → completed (defer payment)
+app.post('/api/vouchers/:voucherId/dequeue-payment', async (req, res) => {
+  const { dequeuedBy } = req.body;
+  if (!dequeuedBy) return res.status(400).json({ error: 'dequeuedBy is required' });
+
+  try {
+    const actor = await getActorRole(dequeuedBy);
+    if (actor.role !== 'accounts' && actor.role !== 'admin' && !actor.is_super_admin)
+      return res.status(403).json({ error: 'Unauthorized' });
+
+    const { data: voucher, error: vErr } = await supabase.from('vouchers')
+      .select('serial_number, status')
+      .eq('id', req.params.voucherId).single();
+
+    if (vErr || !voucher) return res.status(404).json({ error: 'Voucher not found' });
+    if (voucher.status !== 'awaiting_payment')
+      return res.status(400).json({ error: `Voucher is not in the payment queue (current: ${voucher.status})` });
+
+    const { error: upErr } = await supabase.from('vouchers').update({
+      status: 'completed',
+      queued_for_payment_by: null,
+      queued_at: null
+    }).eq('id', req.params.voucherId);
+
+    if (upErr) throw upErr;
+
+    console.log(`   ↩ Voucher ${voucher.serial_number} deferred (removed from payment queue) by ${dequeuedBy}`);
+    res.json({ success: true, message: 'Voucher deferred — returned to OTP Verified.' });
+  } catch (error) {
+    console.error('dequeue-payment error:', error.message);
     res.status(500).json({ error: error.message });
   }
 });

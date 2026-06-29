@@ -142,6 +142,7 @@ const api = {
   // Payment tracking APIs (Phase-2)
   markAwaitingPayment: (voucherId, markedBy) => fetch(`${API_BASE}/vouchers/${voucherId}/mark-awaiting-payment`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ markedBy }) }).then(r => r.json()),
   markPaid: (voucherId, paidBy, paymentReference, paymentNotes, receiptData, receiptMimeType) => fetch(`${API_BASE}/vouchers/${voucherId}/mark-paid`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ paidBy, paymentReference, paymentNotes, receiptData: receiptData || undefined, receiptMimeType: receiptMimeType || undefined }) }).then(r => r.json()),
+  dequeuePayment: (voucherId, dequeuedBy) => fetch(`${API_BASE}/vouchers/${voucherId}/dequeue-payment`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dequeuedBy }) }).then(r => r.json()),
   getNotifications: (userId) => fetch(`${API_BASE}/users/${userId}/notifications`).then(r => r.json()),
   markAllNotificationsRead: (userId) => fetch(`${API_BASE}/users/${userId}/notifications/read-all`, { method: 'POST' }).then(r => r.json()),
   getHeadsOfAccount: (companyId) => fetch(`${API_BASE}/heads-of-account?companyId=${companyId}`).then(r => r.json()),
@@ -2630,6 +2631,17 @@ const VoucherList = ({ filter }) => {
     setLoading(false);
   };
 
+  const handleDequeuePayment = async (v) => {
+    if (!window.confirm(`Remove ${v.serial_number} from the payment queue?\nIt will return to “OTP Verified” so payment can be deferred.`)) return;
+    setLoading(true);
+    try {
+      const result = await api.dequeuePayment(v.id, user.id);
+      if (result.success) { addToast('Payment deferred — voucher returned to OTP Verified 🔙', 'info'); refreshVouchers(); }
+      else addToast(result.error || 'Failed', 'error');
+    } catch { addToast('Failed', 'error'); }
+    setLoading(false);
+  };
+
   const handlePaymentReceiptUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -2701,7 +2713,7 @@ const VoucherList = ({ filter }) => {
   };
 
   const handleReject = async () => { setLoading(true); try { await api.rejectVoucher(selectedVoucher.id, user.id, rejectReason); addToast('Voucher rejected', 'info'); refreshVouchers(); setShowRejectModal(false); setShowModal(false); } catch { addToast('Failed', 'error'); } setLoading(false); };
-  const handleComplete = async () => { if (payeeOtp.length < 6) { addToast('Enter complete OTP', 'error'); return; } setLoading(true); try { const result = await api.completeVoucher(selectedVoucher.id, payeeOtp); if (result.success) { addToast('Voucher completed!', 'success'); refreshVouchers(); setShowModal(false); setPayeeOtp(''); } else addToast(result.error, 'error'); } catch { addToast('Failed', 'error'); } setLoading(false); };
+  const handleComplete = async () => { if (loading) return; if (payeeOtp.length < 6) { addToast('Enter complete OTP', 'error'); return; } setLoading(true); try { const result = await api.completeVoucher(selectedVoucher.id, payeeOtp); if (result.success) { addToast('Voucher completed!', 'success'); refreshVouchers(); setShowModal(false); setPayeeOtp(''); } else { const msg = result.details ? `${result.error}: ${result.details}` : result.error; addToast(msg, 'error'); } } catch { addToast('Failed to verify OTP', 'error'); } setLoading(false); };
   const handleResend = async () => { try { await api.resendPayeeOtp(selectedVoucher.id); addToast('OTP resent', 'success'); } catch { addToast('Failed', 'error'); } };
   const handleDelete = async () => { setLoading(true); try { const result = await api.deleteVoucher(selectedVoucher.id, user.id); if (result.success) { addToast('Voucher deleted', 'success'); refreshVouchers(); setShowDeleteModal(false); setShowModal(false); } else addToast(result.error || 'Failed to delete', 'error'); } catch { addToast('Failed to delete voucher', 'error'); } setLoading(false); };
   const titles = { all: 'All Vouchers', draft: 'Saved Drafts', pending: 'Pending Approval', approved: 'Approved / Awaiting OTP', completed: 'OTP Verified', awaiting_payment: 'Awaiting Payment', paid: 'Paid Vouchers' };
@@ -2858,10 +2870,18 @@ const VoucherList = ({ filter }) => {
               <td className="text-mono fw-600">{v.serial_number}{v.attachment_count > 0 && <span title={`${v.attachment_count} attachment${v.attachment_count > 1 ? 's' : ''}`} style={{marginLeft: '6px', color: '#f5841f', verticalAlign: 'middle', display: 'inline-flex'}}>{Icons.paperclip}</span>}</td><td>{v.head_of_account}</td><td>{v.payee_name}</td><td className="fw-600">{formatRupees(v.amount, 0)}</td><td>{v.payment_mode}</td><td><span className={`status-badge status-${v.status}`}>{v.status === 'completed' ? 'OTP Verified' : v.status === 'awaiting_payment' ? 'Awaiting Payment' : v.status === 'paid' ? 'Paid' : v.status.replace(/_/g, ' ')}</span></td><td>{new Date(v.created_at).toLocaleDateString('en-IN')}</td>
               <td><div style={{display:'flex',gap:'0.4rem',flexWrap:'wrap',alignItems:'center'}}>
                 <button className="btn btn-sm btn-secondary" onClick={() => openVoucher(v)}>{Icons.eye} View</button>
-                {v.status === 'completed' && v.payment_mode !== 'Cash' && (user.role === 'admin' || user.isSuperAdmin || (user.role === 'accounts' && v.payment_mode === 'Account Transfer')) && (<button className="btn btn-sm" style={{background:'#16a34a',color:'white',border:'none',borderRadius:'6px',padding:'0.3rem 0.65rem',fontSize:'0.8rem',cursor:'pointer',fontWeight:600}} onClick={() => setPayNowVoucher(v)}>💳 Pay Now</button>)}
-                {v.status === 'completed' && v.payment_mode !== 'Cash' && (user.role === 'admin' || user.isSuperAdmin) && (<button className="btn btn-sm" style={{background:'#f59e0b',color:'white',border:'none',borderRadius:'6px',padding:'0.3rem 0.65rem',fontSize:'0.8rem',cursor:'pointer',fontWeight:600}} onClick={() => handleMarkAwaitingPayment(v)}>📤 Queue</button>)}
+                {/* OTP Verified → Accounts queues non-Cash vouchers (UPI or Account Transfer) */}
+                {v.status === 'completed' && v.payment_mode !== 'Cash' && (user.role === 'accounts' || user.isSuperAdmin) && (<button className="btn btn-sm" style={{background:'#f59e0b',color:'white',border:'none',borderRadius:'6px',padding:'0.3rem 0.65rem',fontSize:'0.8rem',cursor:'pointer',fontWeight:600}} onClick={() => handleMarkAwaitingPayment(v)} disabled={loading}>📤 Queue</button>)}
+                {/* OTP Verified → Accounts clicks Pay Now for Account Transfer (direct payment path) */}
+                {v.status === 'completed' && v.payment_mode === 'Account Transfer' && (user.role === 'accounts' || user.isSuperAdmin) && (<button className="btn btn-sm" style={{background:'#16a34a',color:'white',border:'none',borderRadius:'6px',padding:'0.3rem 0.65rem',fontSize:'0.8rem',cursor:'pointer',fontWeight:600}} onClick={() => setPayNowVoucher(v)}>💳 Pay Now</button>)}
+                {/* Awaiting Payment → Admin opens UPI app or views bank details to make payment */}
+                {v.status === 'awaiting_payment' && v.payment_mode !== 'Cash' && (user.role === 'admin' || user.isSuperAdmin) && (<button className="btn btn-sm" style={{background:'#16a34a',color:'white',border:'none',borderRadius:'6px',padding:'0.3rem 0.65rem',fontSize:'0.8rem',cursor:'pointer',fontWeight:600}} onClick={() => setPayNowVoucher(v)}>💳 Pay Now</button>)}
+                {/* Awaiting Payment: WhatsApp share (any role) */}
                 {v.status === 'awaiting_payment' && (<button className="btn btn-sm" style={{background:'#25d366',color:'white',border:'none',borderRadius:'6px',padding:'0.3rem 0.65rem',fontSize:'0.8rem',cursor:'pointer',fontWeight:600}} onClick={() => shareOnWhatsApp([v])}>💬 WA</button>)}
-                {v.status === 'awaiting_payment' && (user.role === 'admin' || user.isSuperAdmin) && (<button className="btn btn-sm" style={{background:'#22c55e',color:'white',border:'none',borderRadius:'6px',padding:'0.3rem 0.65rem',fontSize:'0.8rem',cursor:'pointer',fontWeight:600}} onClick={() => { setMarkPaidVoucher(v); setShowMarkPaidModal(true); }}>✅ Paid</button>)}
+                {/* Awaiting Payment → Accounts confirms payment (upload UTR / receipt) */}
+                {v.status === 'awaiting_payment' && (user.role === 'accounts' || user.isSuperAdmin) && (<button className="btn btn-sm" style={{background:'#22c55e',color:'white',border:'none',borderRadius:'6px',padding:'0.3rem 0.65rem',fontSize:'0.8rem',cursor:'pointer',fontWeight:600}} onClick={() => { setMarkPaidVoucher(v); setShowMarkPaidModal(true); }}>✅ Confirm Paid</button>)}
+                {/* Awaiting Payment → Defer: remove from queue back to OTP Verified */}
+                {v.status === 'awaiting_payment' && (user.role === 'accounts' || user.role === 'admin' || user.isSuperAdmin) && (<button className="btn btn-sm" style={{background:'#6b7280',color:'white',border:'none',borderRadius:'6px',padding:'0.3rem 0.65rem',fontSize:'0.8rem',cursor:'pointer',fontWeight:600}} onClick={() => handleDequeuePayment(v)} disabled={loading}>↩ Defer</button>)}
                 {v.status === 'paid' && (<span style={{background:'#dcfce7',color:'#166534',border:'1px solid #86efac',borderRadius:'6px',padding:'0.25rem 0.65rem',fontSize:'0.8rem',fontWeight:700,letterSpacing:'0.02em'}}>✅ PAID</span>)}
               </div></td>
             </tr>))}
@@ -3432,6 +3452,10 @@ const VoucherList = ({ filter }) => {
               </div>
               <div className="modal-footer">
                 <button className="btn btn-secondary" onClick={() => setPayNowVoucher(null)}>Close</button>
+                {/* Account Transfer in OTP Verified: Accounts can proceed directly to confirm payment */}
+                {v.status === 'completed' && v.payment_mode === 'Account Transfer' && (user.role === 'accounts' || user.isSuperAdmin) && (
+                  <button className="btn btn-success" onClick={() => { setPayNowVoucher(null); setMarkPaidVoucher(v); setShowMarkPaidModal(true); }}>✅ Confirm Payment →</button>
+                )}
               </div>
             </div>
           </div>
