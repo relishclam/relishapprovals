@@ -4201,11 +4201,14 @@ app.post('/api/vouchers/:voucherId/mark-paid', async (req, res) => {
       const fileName = `payment-receipts/${req.params.voucherId}/receipt_${Date.now()}.${ext}`;
       const buffer = Buffer.from(receiptData, 'base64');
       const { error: storageErr } = await supabase.storage
-        .from('voucher-documents')
+        .from('voucher-bills')
         .upload(fileName, buffer, { contentType: receiptMimeType, upsert: true });
-      if (storageErr) throw storageErr;
-      const { data: urlData } = supabase.storage.from('voucher-documents').getPublicUrl(fileName);
-      receiptUrl = urlData.publicUrl;
+      if (storageErr) {
+        console.warn('Receipt upload failed (storage):', storageErr.message, '— continuing without receipt URL');
+      } else {
+        const { data: urlData } = supabase.storage.from('voucher-bills').getPublicUrl(fileName);
+        receiptUrl = urlData.publicUrl;
+      }
     }
 
     const { error: upErr } = await supabase.from('vouchers').update({
