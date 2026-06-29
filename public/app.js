@@ -2698,13 +2698,13 @@ const VoucherList = ({ filter }) => {
         `Mode: ${v.payment_mode}\n` +
         (detail ? `${detail}\n` : '') +
         (v.invoice_reference ? `Invoice Ref: ${v.invoice_reference}\n` : '') +
-        `\n_Please arrange payment at earliest._`;
+        `\nhttps://relishvoucher.vercel.app`;
     }
     const total = list.reduce((s, v) => s + parseFloat(v.amount || 0), 0);
     const lines = list.map((v, i) =>
       `${i + 1}. *${v.serial_number}* | ${v.payee_name} | ₹${parseFloat(v.amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })} | ${v.payment_mode}`
     ).join('\n');
-    return `💳 *Payment List — ${company}*\n📅 ${today}\n\n${lines}\n\n*Total: ₹${total.toLocaleString('en-IN', { minimumFractionDigits: 2 })} (${list.length} vouchers)*\n_Please arrange all payments._`;
+    return `💳 *Payment List — ${company}*\n📅 ${today}\n\n${lines}\n\n*Total: ₹${total.toLocaleString('en-IN', { minimumFractionDigits: 2 })} (${list.length} vouchers)*\n\nhttps://relishvoucher.vercel.app`;
   };
 
   const shareOnWhatsApp = (list) => {
