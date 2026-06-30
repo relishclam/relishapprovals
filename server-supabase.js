@@ -6,6 +6,13 @@ const fetch = require('node-fetch');
 const webpush = require('web-push');
 const crypto = require('crypto');
 const { createClient } = require('@supabase/supabase-js');
+const bcrypt = require('bcryptjs');
+const {
+  generateRegistrationOptions,
+  verifyRegistrationResponse,
+  generateAuthenticationOptions,
+  verifyAuthenticationResponse,
+} = require('@simplewebauthn/server');
 
 const app = express();
 app.use(cors());
@@ -29,6 +36,14 @@ const TWOFACTOR_API_KEY = process.env.TWOFACTOR_API_KEY;
 const TWOFACTOR_BASE_URL = 'https://2factor.in/API/V1';
 const TWOFACTOR_TEMPLATE_NAME = process.env.TWOFACTOR_TEMPLATE_NAME || 'Relish-Approvals';
 // Template: "Dear #VAR1#, Your ClamFlow OTP is #VAR2#." - Sender ID: Relish
+
+// WebAuthn (Passkey) Configuration
+// WEBAUTHN_RP_ID    = registrable domain of the app, e.g. relishvoucher.vercel.app  (no https://)
+// WEBAUTHN_ORIGIN   = full origin, e.g. https://relishvoucher.vercel.app
+// For local dev: WEBAUTHN_RP_ID=localhost  WEBAUTHN_ORIGIN=http://localhost:3001
+const WEBAUTHN_RP_NAME = 'Relish Approvals';
+const WEBAUTHN_RP_ID   = process.env.WEBAUTHN_RP_ID   || 'relishvoucher.vercel.app';
+const WEBAUTHN_ORIGIN  = process.env.WEBAUTHN_ORIGIN  || 'https://relishvoucher.vercel.app';
 
 // Web Push Configuration (VAPID Keys)
 // Generate your own keys using: npx web-push generate-vapid-keys
@@ -94,6 +109,42 @@ const getOtpSession = async (mobile, voucherId = null) => {
 
 const deleteOtpSession = async (mobile) => {
   await supabase.from('otp_sessions').delete().eq('mobile', mobile);
+};
+
+// WebAuthn challenge helpers (serverless-safe, stored in DB with 5-min expiry)
+const saveWebAuthnChallenge = async (userId, challenge, type) => {
+  await supabase.from('webauthn_challenges').delete().eq('user_id', userId).eq('type', type);
+  const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+  const { error } = await supabase.from('webauthn_challenges').insert({ user_id: userId, challenge, type, expires_at: expiresAt });
+  if (error) console.error('Error saving WebAuthn challenge:', error);
+  return !error;
+};
+
+const getAndDeleteWebAuthnChallenge = async (userId, type) => {
+  const { data, error } = await supabase.from('webauthn_challenges')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('type', type)
+    .gt('expires_at', new Date().toISOString())
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .single();
+  if (error || !data) return null;
+  await supabase.from('webauthn_challenges').delete().eq('id', data.id);
+  return data.challenge;
+};
+
+// Look up a challenge by its value (used for company_select tokens)
+const getAndDeleteChallengeByValue = async (challengeValue, type) => {
+  const { data, error } = await supabase.from('webauthn_challenges')
+    .select('*')
+    .eq('challenge', challengeValue)
+    .eq('type', type)
+    .gt('expires_at', new Date().toISOString())
+    .single();
+  if (error || !data) return null;
+  await supabase.from('webauthn_challenges').delete().eq('id', data.id);
+  return data; // returns full row including user_id
 };
 
 // Helper function to format mobile number for 2Factor API (needs 91XXXXXXXXXX format)
@@ -602,140 +653,127 @@ app.get('/api/users/:userId/session', async (req, res) => {
 
 // Login
 app.post('/api/users/login', async (req, res) => {
-  const { username, otp, companyId } = req.body;
-  if (!username) return res.status(400).json({ error: 'Username is required' });
-  
+  const { username, otp, companyId, password, companySelectToken } = req.body;
+
   try {
-    // Case-insensitive username search - trim whitespace
-    const cleanUsername = username.trim();
-    const { data: user, error } = await supabase.from('users')
-      .select('*')
-      .ilike('username', cleanUsername)
-      .single();
-    
-    if (error) {
-      console.error('Login query error:', error.message, 'for username:', cleanUsername);
-      return res.status(404).json({ error: 'User not found' });
-    }
-    if (!user) return res.status(404).json({ error: 'User not found' });
-    if (!user.mobile_verified) return res.status(400).json({ error: 'Mobile not verified' });
-    
-    // Get all companies this user has access to
-    const { data: userCompanies, error: ucError } = await supabase
-      .from('user_companies')
-      .select(`
-        company_id,
-        role,
-        is_primary,
-        companies:company_id (id, name, address, gst)
-      `)
-      .eq('user_id', user.id);
-    
-    // Fallback to legacy single company if user_companies table is empty
-    let companies = userCompanies || [];
-    if (companies.length === 0) {
-      // User hasn't been migrated yet, use legacy company_id
-      const { data: legacyCompany } = await supabase.from('companies')
-        .select('*')
-        .eq('id', user.company_id)
-        .single();
-      
-      if (legacyCompany) {
-        companies = [{
-          company_id: legacyCompany.id,
-          role: user.role,
-          is_primary: true,
-          companies: legacyCompany
-        }];
-      }
-    }
-    
-    if (companies.length === 0) {
-      return res.status(400).json({ error: 'User has no company access' });
-    }
-    
-    // Always require company selection if no company selected yet
-    // EXCEPT for staff users — they only have one company and go straight to their settlement page
-    if (!companyId && user.role !== 'staff') {
-      return res.json({
-        requiresCompanySelection: true,
-        companies: companies.map(uc => ({
-          id: uc.companies.id,
-          name: uc.companies.name,
-          role: uc.role
-        })),
-        userId: user.id,
-        userName: user.name
-      });
-    }
-    
-    // Determine which company to log into
-    // Staff users auto-select their single company; others must have sent companyId
-    let selectedCompany, selectedRole;
-    if (user.role === 'staff') {
-      const primaryMatch = companies.find(uc => uc.is_primary) || companies[0];
-      if (!primaryMatch) return res.status(400).json({ error: 'Staff user has no company access' });
-      selectedCompany = primaryMatch.companies;
-      selectedRole = primaryMatch.role;
+    let user;
+
+    // ── Path A: Post-auth company selection (companySelectToken) ─────────────
+    // Sent when a multi-company user has already authenticated and is picking a company.
+    if (companySelectToken) {
+      if (!companyId) return res.status(400).json({ error: 'companyId is required' });
+      const row = await getAndDeleteChallengeByValue(companySelectToken, 'company_select');
+      if (!row) return res.status(400).json({ error: 'Session expired. Please log in again.' });
+      const { data: foundUser } = await supabase.from('users').select('*').eq('id', row.user_id).single();
+      if (!foundUser) return res.status(404).json({ error: 'User not found' });
+      user = foundUser;
     } else {
-      const match = companies.find(uc => uc.company_id === companyId);
-      if (!match) {
-        return res.status(403).json({ error: 'User does not have access to this company' });
+      // ── Path B: Normal authentication ───────────────────────────────────────
+      if (!username) return res.status(400).json({ error: 'Username is required' });
+      const cleanUsername = username.trim();
+      const { data: foundUser, error: userErr } = await supabase.from('users')
+        .select('*').ilike('username', cleanUsername).single();
+      if (userErr) {
+        console.error('Login query error:', userErr.message, 'for username:', cleanUsername);
+        return res.status(404).json({ error: 'User not found' });
       }
-      selectedCompany = match.companies;
-      selectedRole = match.role;
-    }
-    
-    // First login requires OTP
-    if (!user.last_login) {
-      if (!otp) {
-        try {
-          const formattedMobile = formatMobile(user.mobile);
-          const response = await fetch(`${TWOFACTOR_BASE_URL}/${TWOFACTOR_API_KEY}/SMS/${formattedMobile}/AUTOGEN`);
-          const data = await response.json();
-          
-          if (data.Status === 'Success') {
-            await saveOtpSession(formattedMobile, data.Details, 'first_login');
-            return res.json({ requiresOtp: true, message: 'First login requires OTP. Sent to registered mobile.' });
-          } else {
-            console.error('2Factor OTP send error:', data.Details);
+      if (!foundUser) return res.status(404).json({ error: 'User not found' });
+      if (!foundUser.mobile_verified) return res.status(400).json({ error: 'Mobile not verified' });
+      user = foundUser;
+
+      // ── Authentication: OTP (no password set) or Password ───────────────────
+      if (!user.password_hash) {
+        if (!otp) {
+          try {
+            const formattedMobile = formatMobile(user.mobile);
+            const response = await fetch(`${TWOFACTOR_BASE_URL}/${TWOFACTOR_API_KEY}/SMS/${formattedMobile}/AUTOGEN/${TWOFACTOR_TEMPLATE_NAME}`);
+            const data = await response.json();
+            if (data.Status === 'Success') {
+              await saveOtpSession(formattedMobile, data.Details, 'first_login');
+              return res.json({ requiresOtp: true, message: 'An OTP has been sent to your registered mobile. Verify to set your password.' });
+            } else {
+              console.error('2Factor OTP send error:', data.Details);
+              return res.status(500).json({ error: 'Failed to send OTP' });
+            }
+          } catch (err) {
+            console.error('2Factor OTP send error:', err.message);
             return res.status(500).json({ error: 'Failed to send OTP' });
           }
-        } catch (err) {
-          console.error('2Factor OTP send error:', err.message);
-          return res.status(500).json({ error: 'Failed to send OTP' });
-        }
-      } else {
-        // OTP provided, verify it
-        try {
-          const formattedMobile = formatMobile(user.mobile);
-          const session = await getOtpSession(formattedMobile);
-          
-          if (!session) {
-            return res.status(400).json({ error: 'No OTP session found. Please request a new OTP.' });
+        } else {
+          try {
+            const formattedMobile = formatMobile(user.mobile);
+            const session = await getOtpSession(formattedMobile);
+            if (!session) return res.status(400).json({ error: 'No OTP session found. Please request a new OTP.' });
+            const verifyRes = await fetch(`${TWOFACTOR_BASE_URL}/${TWOFACTOR_API_KEY}/SMS/VERIFY/${session.sessionId}/${otp}`);
+            const verifyData = await verifyRes.json();
+            if (verifyData.Status !== 'Success' || verifyData.Details !== 'OTP Matched') {
+              return res.status(400).json({ error: 'Invalid OTP' });
+            }
+            await deleteOtpSession(formattedMobile);
+            const setupToken = crypto.randomBytes(32).toString('hex');
+            await supabase.from('otp_sessions').insert({ mobile: formattedMobile, session_id: setupToken, purpose: 'password_setup', voucher_id: null });
+            return res.json({ requiresPasswordSetup: true, userId: user.id, userName: user.name, setupToken });
+          } catch (err) {
+            console.error('OTP verify error:', err.message);
+            return res.status(500).json({ error: 'OTP verification failed' });
           }
-          
-          const response = await fetch(`${TWOFACTOR_BASE_URL}/${TWOFACTOR_API_KEY}/SMS/VERIFY/${session.sessionId}/${otp}`);
-          const data = await response.json();
-          
-          if (data.Status !== 'Success' || data.Details !== 'OTP Matched') {
-            return res.status(400).json({ error: 'Invalid OTP' });
-          }
-          
-          // Clear the session
-          await deleteOtpSession(formattedMobile);
-        } catch (err) {
-          console.error('2Factor OTP verify error:', err.message);
-          return res.status(500).json({ error: 'OTP verification failed' });
         }
       }
+
+      if (!password) {
+        const { data: creds } = await supabase.from('webauthn_credentials')
+          .select('credential_id, device_name, transports').eq('user_id', user.id);
+        const credentialIds = (creds || []).map(c => c.credential_id);
+        return res.json({ requiresPassword: true, hasWebAuthn: credentialIds.length > 0, credentialIds, userId: user.id, userName: user.name });
+      }
+
+      const passwordValid = await bcrypt.compare(password, user.password_hash);
+      if (!passwordValid) return res.status(400).json({ error: 'Incorrect password' });
     }
-    
-    // Update last login
-    await supabase.from('users')
-      .update({ last_login: new Date().toISOString() })
-      .eq('id', user.id);
-    
+
+    // ── Post-authentication: Company selection (RBAC-driven) ─────────────────
+    const { data: userCompanies } = await supabase
+      .from('user_companies')
+      .select('company_id, role, is_primary, companies:company_id (id, name, address, gst)')
+      .eq('user_id', user.id);
+
+    let companies = userCompanies || [];
+    if (companies.length === 0) {
+      const { data: legacyCompany } = await supabase.from('companies').select('*').eq('id', user.company_id).single();
+      if (legacyCompany) companies = [{ company_id: legacyCompany.id, role: user.role, is_primary: true, companies: legacyCompany }];
+    }
+    if (companies.length === 0) return res.status(400).json({ error: 'User has no company access' });
+
+    let selectedCompany, selectedRole;
+    if (user.role === 'staff') {
+      // Staff always auto-select their primary company
+      const primary = companies.find(uc => uc.is_primary) || companies[0];
+      if (!primary) return res.status(400).json({ error: 'Staff user has no company access' });
+      selectedCompany = primary.companies; selectedRole = primary.role;
+    } else if (companies.length === 1) {
+      // Single company — auto-select, no prompt needed
+      selectedCompany = companies[0].companies; selectedRole = companies[0].role;
+    } else if (!companyId) {
+      // Multiple companies — identity verified, now ask which company to use.
+      // Issue a short-lived token so the client doesn't have to re-authenticate.
+      const token = crypto.randomBytes(32).toString('hex');
+      await saveWebAuthnChallenge(user.id, token, 'company_select');
+      return res.json({
+        requiresCompanySelection: true,
+        companies: companies.map(uc => ({ id: uc.companies.id, name: uc.companies.name, role: uc.role })),
+        userId: user.id,
+        userName: user.name,
+        companySelectToken: token,
+      });
+    } else {
+      const match = companies.find(uc => uc.company_id === companyId);
+      if (!match) return res.status(403).json({ error: 'User does not have access to this company' });
+      selectedCompany = match.companies; selectedRole = match.role;
+    }
+
+    // ── Update last_login ─────────────────────────────────────────────────────
+    await supabase.from('users').update({ last_login: new Date().toISOString() }).eq('id', user.id);
+
     // Get unread notifications count
     const { count } = await supabase.from('notifications')
       .select('*', { count: 'exact', head: true })
@@ -809,6 +847,337 @@ app.post('/api/users/login', async (req, res) => {
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
+  }
+});
+
+// ── Password management endpoints ────────────────────────────────────────────
+
+// Set or change password (requires setupToken issued after OTP verification, OR currentPassword for logged-in change)
+app.post('/api/users/:userId/set-password', async (req, res) => {
+  const { userId } = req.params;
+  const { newPassword, setupToken, currentPassword } = req.body;
+
+  if (!newPassword || newPassword.length < 6) {
+    return res.status(400).json({ error: 'Password must be at least 6 characters' });
+  }
+
+  try {
+    const { data: user, error: userErr } = await supabase.from('users').select('*').eq('id', userId).single();
+    if (userErr || !user) return res.status(404).json({ error: 'User not found' });
+
+    // Either verify setupToken (post-OTP path) or currentPassword (change-password path)
+    if (setupToken) {
+      const formattedMobile = formatMobile(user.mobile);
+      const { data: session } = await supabase.from('otp_sessions')
+        .select('*')
+        .eq('mobile', formattedMobile)
+        .eq('session_id', setupToken)
+        .eq('purpose', 'password_setup')
+        .single();
+      if (!session) return res.status(400).json({ error: 'Invalid or expired setup token. Please log in again.' });
+      const age = Date.now() - new Date(session.created_at).getTime();
+      if (age > 15 * 60 * 1000) {
+        await supabase.from('otp_sessions').delete().eq('id', session.id);
+        return res.status(400).json({ error: 'Setup token expired. Please log in again.' });
+      }
+      await supabase.from('otp_sessions').delete().eq('id', session.id);
+    } else if (currentPassword) {
+      if (!user.password_hash) return res.status(400).json({ error: 'No existing password set' });
+      const valid = await bcrypt.compare(currentPassword, user.password_hash);
+      if (!valid) return res.status(400).json({ error: 'Current password is incorrect' });
+    } else {
+      return res.status(400).json({ error: 'Either setupToken or currentPassword is required' });
+    }
+
+    const hash = await bcrypt.hash(newPassword, 12);
+    await supabase.from('users').update({ password_hash: hash, password_set_at: new Date().toISOString() }).eq('id', userId);
+    return res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Forgot password — step 1: send OTP; step 2 (with otp): verify & issue setupToken
+app.post('/api/auth/forgot-password', async (req, res) => {
+  const { username, otp } = req.body;
+  if (!username) return res.status(400).json({ error: 'Username is required' });
+
+  try {
+    const { data: user } = await supabase.from('users').select('*').ilike('username', username.trim()).single();
+    if (!user || !user.mobile_verified) return res.status(404).json({ error: 'User not found' });
+
+    const formattedMobile = formatMobile(user.mobile);
+
+    if (!otp) {
+      const response = await fetch(`${TWOFACTOR_BASE_URL}/${TWOFACTOR_API_KEY}/SMS/${formattedMobile}/AUTOGEN/${TWOFACTOR_TEMPLATE_NAME}`);
+      const data = await response.json();
+      if (data.Status !== 'Success') return res.status(500).json({ error: 'Failed to send OTP' });
+      await saveOtpSession(formattedMobile, data.Details, 'password_reset');
+      return res.json({ requiresOtp: true, message: 'OTP sent to registered mobile.' });
+    }
+
+    // Verify OTP
+    const session = await getOtpSession(formattedMobile);
+    if (!session) return res.status(400).json({ error: 'No OTP session found. Please request again.' });
+
+    const verifyRes = await fetch(`${TWOFACTOR_BASE_URL}/${TWOFACTOR_API_KEY}/SMS/VERIFY/${session.sessionId}/${otp}`);
+    const verifyData = await verifyRes.json();
+    if (verifyData.Status !== 'Success' || verifyData.Details !== 'OTP Matched') {
+      return res.status(400).json({ error: 'Invalid OTP' });
+    }
+    await deleteOtpSession(formattedMobile);
+
+    const setupToken = crypto.randomBytes(32).toString('hex');
+    await supabase.from('otp_sessions').insert({ mobile: formattedMobile, session_id: setupToken, purpose: 'password_setup', voucher_id: null });
+    return res.json({ requiresPasswordSetup: true, userId: user.id, userName: user.name, setupToken });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Super Admin: clear a user's password (forces them to re-set via OTP on next login)
+app.delete('/api/users/:userId/password', async (req, res) => {
+  const { userId } = req.params;
+  const { requesterId } = req.body;
+  if (!requesterId) return res.status(400).json({ error: 'requesterId is required' });
+
+  try {
+    const { data: requester } = await supabase.from('users').select('is_super_admin').eq('id', requesterId).single();
+    if (!requester?.is_super_admin) return res.status(403).json({ error: 'Super Admin access required' });
+
+    await supabase.from('users').update({ password_hash: null, password_set_at: null }).eq('id', userId);
+    // Also revoke all WebAuthn credentials so the user must re-set everything
+    await supabase.from('webauthn_credentials').delete().eq('user_id', userId);
+    return res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── WebAuthn / Passkey endpoints ─────────────────────────────────────────────
+
+// 1. Generate registration options (called before device registration)
+app.post('/api/auth/webauthn/register/options', async (req, res) => {
+  const { userId } = req.body;
+  if (!userId) return res.status(400).json({ error: 'userId is required' });
+
+  try {
+    const { data: user } = await supabase.from('users').select('id, name, username').eq('id', userId).single();
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    // Get existing credentials to exclude re-registration of the same device
+    const { data: existingCreds } = await supabase.from('webauthn_credentials').select('credential_id, transports').eq('user_id', userId);
+    const excludeCredentials = (existingCreds || []).map(c => ({
+      id: c.credential_id,
+      transports: c.transports || [],
+    }));
+
+    const options = await generateRegistrationOptions({
+      rpName: WEBAUTHN_RP_NAME,
+      rpID: WEBAUTHN_RP_ID,
+      userID: Buffer.from(user.id),
+      userName: user.username,
+      userDisplayName: user.name,
+      attestationType: 'none',
+      authenticatorSelection: {
+        authenticatorAttachment: 'platform',
+        residentKey: 'preferred',
+        userVerification: 'preferred',
+      },
+      excludeCredentials,
+    });
+
+    await saveWebAuthnChallenge(userId, options.challenge, 'registration');
+    return res.json(options);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 2. Verify registration response (saves the new credential)
+app.post('/api/auth/webauthn/register/verify', async (req, res) => {
+  const { userId, response, deviceName } = req.body;
+  if (!userId || !response) return res.status(400).json({ error: 'userId and response are required' });
+
+  try {
+    const expectedChallenge = await getAndDeleteWebAuthnChallenge(userId, 'registration');
+    if (!expectedChallenge) return res.status(400).json({ error: 'Challenge expired or not found. Please try again.' });
+
+    const verification = await verifyRegistrationResponse({
+      response,
+      expectedChallenge,
+      expectedOrigin: WEBAUTHN_ORIGIN,
+      expectedRPID: WEBAUTHN_RP_ID,
+      requireUserVerification: false,
+    });
+
+    if (!verification.verified || !verification.registrationInfo) {
+      return res.status(400).json({ error: 'Device verification failed' });
+    }
+
+    const { credential } = verification.registrationInfo;
+    const credToStore = {
+      id: credential.id,
+      publicKey: Buffer.from(credential.publicKey).toString('base64'),
+      counter: credential.counter,
+      transports: credential.transports || [],
+    };
+
+    const { data: saved, error: saveErr } = await supabase.from('webauthn_credentials').insert({
+      user_id: userId,
+      credential_id: credential.id,
+      public_key_json: JSON.stringify(credToStore),
+      sign_count: credential.counter,
+      device_name: deviceName || 'My Device',
+      transports: credential.transports || [],
+    }).select('id, credential_id, device_name').single();
+
+    if (saveErr) return res.status(500).json({ error: 'Failed to save device credential' });
+    return res.json({ success: true, credentialId: saved.credential_id, deviceName: saved.device_name });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 3. Generate authentication options (called before device-lock login)
+app.post('/api/auth/webauthn/login/options', async (req, res) => {
+  const { username } = req.body;
+  if (!username) return res.status(400).json({ error: 'username is required' });
+
+  try {
+    const { data: user } = await supabase.from('users').select('id, password_hash').ilike('username', username.trim()).single();
+    if (!user || !user.password_hash) return res.status(404).json({ error: 'User not found or password not set' });
+
+    const { data: creds } = await supabase.from('webauthn_credentials').select('credential_id, transports').eq('user_id', user.id);
+    if (!creds || creds.length === 0) return res.status(400).json({ error: 'No registered devices for this user' });
+
+    const allowCredentials = creds.map(c => ({ id: c.credential_id, transports: c.transports || [] }));
+
+    const options = await generateAuthenticationOptions({
+      rpID: WEBAUTHN_RP_ID,
+      allowCredentials,
+      userVerification: 'preferred',
+    });
+
+    await saveWebAuthnChallenge(user.id, options.challenge, 'authentication');
+    return res.json(options);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 4. Verify authentication response (WebAuthn login — returns full user object)
+app.post('/api/auth/webauthn/login/verify', async (req, res) => {
+  const { username, response, companyId } = req.body;
+  if (!username || !response) return res.status(400).json({ error: 'username and response are required' });
+
+  try {
+    const cleanUsername = username.trim();
+    const { data: user, error: userErr } = await supabase.from('users').select('*').ilike('username', cleanUsername).single();
+    if (userErr || !user) return res.status(404).json({ error: 'User not found' });
+
+    const expectedChallenge = await getAndDeleteWebAuthnChallenge(user.id, 'authentication');
+    if (!expectedChallenge) return res.status(400).json({ error: 'Challenge expired. Please try again.' });
+
+    // Find the matching credential
+    const credentialId = response.id;
+    const { data: storedCred } = await supabase.from('webauthn_credentials').select('*').eq('credential_id', credentialId).eq('user_id', user.id).single();
+    if (!storedCred) return res.status(400).json({ error: 'Device not registered for this user' });
+
+    const parsed = JSON.parse(storedCred.public_key_json);
+    const credential = {
+      id: parsed.id,
+      publicKey: Buffer.from(parsed.publicKey, 'base64'),
+      counter: storedCred.sign_count,
+      transports: storedCred.transports || [],
+    };
+
+    const verification = await verifyAuthenticationResponse({
+      response,
+      expectedChallenge,
+      expectedOrigin: WEBAUTHN_ORIGIN,
+      expectedRPID: WEBAUTHN_RP_ID,
+      credential,
+      requireUserVerification: false,
+    });
+
+    if (!verification.verified) return res.status(400).json({ error: 'Device verification failed' });
+
+    // Update sign count and last_used
+    await supabase.from('webauthn_credentials').update({ sign_count: verification.authenticationInfo.newCounter, last_used_at: new Date().toISOString() }).eq('id', storedCred.id);
+
+    // Post-auth company selection (same logic as main login endpoint)
+    const { data: userCompanies } = await supabase.from('user_companies').select('company_id, role, is_primary, companies:company_id(id,name,address,gst)').eq('user_id', user.id);
+    let companies = userCompanies || [];
+    if (companies.length === 0) {
+      const { data: legacyCompany } = await supabase.from('companies').select('*').eq('id', user.company_id).single();
+      if (legacyCompany) companies = [{ company_id: legacyCompany.id, role: user.role, is_primary: true, companies: legacyCompany }];
+    }
+    if (companies.length === 0) return res.status(400).json({ error: 'User has no company access' });
+
+    let selectedCompany, selectedRole;
+    if (user.role === 'staff') {
+      const primary = companies.find(uc => uc.is_primary) || companies[0];
+      selectedCompany = primary.companies; selectedRole = primary.role;
+    } else if (companies.length === 1) {
+      selectedCompany = companies[0].companies; selectedRole = companies[0].role;
+    } else if (!companyId) {
+      // Multiple companies — issue companySelectToken so client doesn't need to re-do biometric
+      const token = crypto.randomBytes(32).toString('hex');
+      await saveWebAuthnChallenge(user.id, token, 'company_select');
+      return res.json({
+        requiresCompanySelection: true,
+        companies: companies.map(uc => ({ id: uc.companies.id, name: uc.companies.name, role: uc.role })),
+        userId: user.id,
+        userName: user.name,
+        companySelectToken: token,
+      });
+    } else {
+      const match = companies.find(uc => uc.company_id === companyId);
+      if (!match) return res.status(403).json({ error: 'User does not have access to this company' });
+      selectedCompany = match.companies; selectedRole = match.role;
+    }
+
+    await supabase.from('users').update({ last_login: new Date().toISOString() }).eq('id', user.id);
+    const { count } = await supabase.from('notifications').select('*', { count: 'exact', head: true }).eq('user_id', user.id).eq('read', false);
+
+    return res.json({
+      success: true,
+      user: {
+        id: user.id, name: user.name, username: user.username, mobile: user.mobile,
+        role: selectedRole, isSuperAdmin: !!user.is_super_admin,
+        company: selectedCompany,
+        companies: companies.map(uc => ({ id: uc.companies.id, name: uc.companies.name, role: uc.role, isPrimary: uc.is_primary })),
+        unreadNotifications: count || 0,
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// List registered WebAuthn devices for a user
+app.get('/api/users/:userId/webauthn-credentials', async (req, res) => {
+  const { userId } = req.params;
+  try {
+    const { data } = await supabase.from('webauthn_credentials')
+      .select('id, credential_id, device_name, created_at, last_used_at, transports')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false });
+    return res.json(data || []);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Remove a registered device
+app.delete('/api/users/:userId/webauthn-credentials/:credentialId', async (req, res) => {
+  const { userId, credentialId } = req.params;
+  try {
+    await supabase.from('webauthn_credentials').delete().eq('user_id', userId).eq('credential_id', credentialId);
+    return res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 

@@ -185,3 +185,88 @@ Voucher list (status=completed, mode≠Cash, authorised role)
 | Account Transfer | `bank_account`, `ifsc`, `bank_name` |
 
 These are set when creating or editing a payee. The `bank_name` column was added in `migrations/023_add_pay_now_fields.sql`.
+
+---
+
+## Payment Tracking — Awaiting Payment & Paid
+
+> Added by `migrations/026_add_payment_tracking.sql` and `migrations/027_add_payment_receipt_url.sql`.
+
+**Pay Now** (above) is a modal that *assists* execution of a payment — it does not record that the payment actually happened. The **Payment Tracking** feature closes that loop by moving a voucher through two final statuses after it is `completed`.
+
+### Status Flow
+
+```
+completed
+    ↓
+awaiting_payment   (Accounts queues the voucher — optional holding step)
+    ↓
+paid               (Accounts confirms payment with UTR / receipt)
+```
+
+Accounts can also skip the queue and go directly from `completed` → `paid`.
+
+---
+
+### New Voucher Statuses
+
+| Status | Description |
+|---|---|
+| `awaiting_payment` | Voucher is `completed` and queued for payment by Accounts |
+| `paid` | Payment has been confirmed — UTR reference and/or receipt uploaded |
+
+---
+
+### API Endpoints
+
+| Method | Route | Description | Auth |
+|---|---|---|---|
+| `POST` | `/api/vouchers/:id/mark-awaiting-payment` | Move `completed → awaiting_payment`. Body: `{ markedBy }` | Accounts / Super Admin |
+| `POST` | `/api/vouchers/:id/mark-paid` | Confirm payment (`awaiting_payment\|completed → paid`). Body: `{ paidBy, paymentReference?, paymentNotes?, receiptData?, receiptMimeType? }` | Accounts / Super Admin |
+| `POST` | `/api/vouchers/:id/dequeue-payment` | Defer payment back to `completed`. Body: `{ dequeuedBy }` | Accounts / Admin / Super Admin |
+
+**Validation on `mark-paid`:** At least one of `paymentReference` (UTR/transaction ID) or `receiptData` (base64 receipt image/PDF) must be provided. Returns `400` otherwise.
+
+---
+
+### New Database Fields (on `vouchers` table)
+
+| Column | Type | Notes |
+|---|---|---|
+| `status` | `TEXT` | Extended to include `awaiting_payment` and `paid` |
+| `queued_for_payment_by` | `UUID` | FK → `users(id)` — who queued the voucher |
+| `queued_at` | `TIMESTAMPTZ` | When the voucher was queued |
+| `payment_reference` | `TEXT` | UTR number / transaction reference |
+| `payment_notes` | `TEXT` | Optional free-text payment notes |
+| `payment_receipt_url` | `TEXT` | Public URL of the uploaded payment receipt (stored in `voucher-bills` bucket) |
+| `paid_by` | `UUID` | FK → `users(id)` — who confirmed payment |
+| `paid_at` | `TIMESTAMPTZ` | When payment was confirmed |
+
+---
+
+### Mark-Paid Receipt Upload
+
+When `receiptData` is provided (base64-encoded image or PDF), the receipt is:
+
+1. Decoded and uploaded to Supabase Storage: `voucher-bills/{companyId}/payment-receipts/{voucherId}/receipt_{timestamp}.{ext}`
+2. The public URL is stored in `vouchers.payment_receipt_url`
+3. If storage upload fails, the payment is still confirmed (with a console warning) — the process does not abort
+
+---
+
+### Notifications
+
+| Event | Who is Notified |
+|---|---|
+| Voucher queued (`awaiting_payment`) | Voucher preparer — in-app notification |
+| Payment confirmed (`paid`) | Voucher preparer — in-app + push notification |
+
+---
+
+### Roles
+
+| Action | Accounts | Admin | Super Admin |
+|---|:---:|:---:|:---:|
+| Queue for payment (`awaiting_payment`) | ✅ | — | ✅ |
+| Confirm payment (`paid`) | ✅ | — | ✅ |
+| Dequeue (defer back to `completed`) | ✅ | ✅ | ✅ |

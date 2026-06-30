@@ -210,13 +210,16 @@ npm start
 
 | Role | Username Format | Capabilities |
 |------|----------------|--------------|
-| **Accounts** | `Accounts-[FirstName]` | Create vouchers, save drafts, submit for approval, enter payee OTP, upload documents |
-| **Admin** | `Approve-[FirstName]` | Approve/reject vouchers, send payee OTP, attest documents, delete vouchers |
-| **Super Admin** | `Approve-[FirstName]` + `is_super_admin` flag | All admin privileges + onboard/edit/delete users, manage multi-company access |
+| **Accounts** | `Accounts-[FirstName]` | Create vouchers & drafts, submit for approval, enter payee OTP, upload documents, manage suspense vouchers, review settlement entries, queue & confirm payments |
+| **Admin** | `Approve-[FirstName]` | Approve/reject vouchers & top-ups, send payee OTP, attest documents, delete vouchers, approve HOA corrections |
+| **Super Admin** | `Approve-[FirstName]` + `is_super_admin` flag | All Admin privileges + onboard/edit/delete users, manage multi-company access |
+| **Auditor** | `Audit-[FirstName]` | Read-only access to all vouchers; can propose Head of Account / Sub-Heading corrections (subject to Admin batch-approval) |
+| **Staff** | `Staff-[FirstName]` | System login (auto-redirected to active settlement form); can also submit expenses via SMS link without logging in |
 
 - Users can belong to multiple companies with **different roles per company**
 - Company-specific data is isolated; users only see data for their selected company
 - **Self-registration is disabled** — only Super Admins can onboard new users
+- Auditor and Staff users do not require an Aadhar number for onboarding
 
 ---
 
@@ -233,11 +236,17 @@ npm start
 
 ### User Onboarding (Super Admin Only)
 ```
-1. Super Admin fills: Name, Mobile, Aadhar, Role, Company Access
-2. System generates username (Accounts-[First] or Approve-[First])
+1. Super Admin fills: Name, Mobile, Aadhar (optional for Auditor/Staff), Role, Company Access
+2. System generates username:
+   - Accounts-[First]  (accounts role)
+   - Approve-[First]   (admin role)
+   - Audit-[First]     (auditor role)
+   - Staff-[First]     (staff role)
 3. OTP sent to new user's mobile for verification
 4. User verified → can login
 ```
+
+> **Staff login note:** Staff users are auto-assigned their single company on login (no company selection step) and receive their active settlement token automatically if a live suspense voucher exists.
 
 ### OTP Details
 - **Provider**: 2Factor.in (Transactional SMS)
@@ -285,8 +294,12 @@ npm start
 | `pending` | Submitted, awaiting admin approval |
 | `awaiting_payee_otp` | Approved, OTP sent to payee for verification |
 | `awaiting_document` | Approved, requires document upload (ad-hoc payees) |
-| `completed` | Fully verified, payment can be initiated |
+| `completed` | Fully verified; payment can be initiated |
+| `awaiting_payment` | Queued for payment by Accounts |
+| `paid` | Payment confirmed with UTR reference and/or receipt |
 | `rejected` | Rejected by admin (with reason) |
+
+> Suspense-settlement vouchers (`is_suspense_settlement = true`) skip the OTP step on Admin approval and go directly to `completed` — the advance disbursement was already OTP-confirmed at the suspense voucher level.
 
 ---
 
@@ -310,10 +323,11 @@ npm start
 
 | Method | Endpoint | Description | Auth |
 |--------|----------|-------------|------|
-| POST | `/api/admin/onboard-user` | Onboard new user. Body: `{ adminId, adminMobile, companyId, name, mobile, aadhar, role, companyAccess[] }` | Super Admin |
-| PUT | `/api/users/:userId` | Update user details. Body: `{ name, mobile, aadhar, role, requesterId }` | Super Admin |
+| POST | `/api/admin/onboard-user` | Onboard new user. Body: `{ adminId, adminMobile, companyId, name, mobile, aadhar?, role, companyAccess[] }` | Super Admin |
+| PUT | `/api/users/:userId` | Update user details. Body: `{ name, mobile, aadhar?, role, requesterId }` | Super Admin |
 | DELETE | `/api/users/:userId` | Delete user (only if no vouchers). Body: `{ requesterId }` | Super Admin |
 | POST | `/api/users/:userId/verify-mobile` | Mark user mobile as verified | — |
+| GET | `/api/users/:userId/session` | Refresh session — returns current user profile (used on app load) | — |
 | GET | `/api/users/:userId/companies` | Get user's company access list | — |
 | PUT | `/api/users/:userId/companies` | Update multi-company access. Body: `{ companyAccess[], requesterId }` | Super Admin |
 | POST | `/api/users/:userId/switch-company` | Switch active company. Body: `{ companyId }` | — |
@@ -329,25 +343,34 @@ npm start
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/api/payees` | Add payee. Body: `{ companyId, name, alias?, mobile, bankAccount?, ifsc?, upiId?, isGlobal?, payeeType?, requiresOtp? }` |
+| POST | `/api/payees` | Add payee. Body: `{ companyId, name, alias?, mobile, bankAccount?, ifsc?, upiId?, bankName?, isGlobal?, payeeType?, requiresOtp?, isStaff? }` |
 | GET | `/api/companies/:companyId/payees` | List payees (includes global payees) |
 | PUT | `/api/payees/:payeeId` | Update payee |
 | DELETE | `/api/payees/:payeeId` | Delete payee |
+| POST | `/api/payees/:payeeId/create-staff-login` | Create a `Staff-[Name]` system login for a staff payee. Body: `{ requesterId, aadhar }` | Super Admin |
 
 ### Vouchers
 
 | Method | Endpoint | Description | Auth |
 |--------|----------|-------------|------|
-| POST | `/api/vouchers` | Create voucher or draft. Body: `{ companyId, headOfAccount, subHeadOfAccount?, narration?, narrationItems?, amount, paymentMode, payeeId, preparedBy, saveAsDraft?, invoiceReference? }` | Accounts / Super Admin |
-| GET | `/api/companies/:companyId/vouchers` | List all vouchers for a company | — |
-| GET | `/api/vouchers/:voucherId` | Get single voucher with full details | — |
+| POST | `/api/vouchers` | Create voucher or draft. Body: `{ companyId, headOfAccount, subHeadOfAccount?, narration?, narrationItems?, deductions?, amount, paymentMode, payeeId, preparedBy, saveAsDraft?, invoiceReference?, paidFromAccount? }` | Accounts / Super Admin |
+| GET | `/api/companies/:companyId/vouchers` | List all vouchers for a company (includes `attachment_count`) | — |
+| GET | `/api/vouchers/:voucherId` | Get single voucher with full details + attachments array | — |
 | PUT | `/api/vouchers/:voucherId` | Update a draft voucher | — |
 | POST | `/api/vouchers/:voucherId/submit` | Submit draft for approval | — |
-| POST | `/api/vouchers/:voucherId/approve` | Approve voucher → sends OTP or requests document | Admin / Super Admin |
+| POST | `/api/vouchers/:voucherId/approve` | Approve voucher → sends OTP or requests document. Suspense-settlement vouchers go directly to `completed`. | Admin / Super Admin |
 | POST | `/api/vouchers/:voucherId/reject` | Reject voucher. Body: `{ rejectedBy, reason }` | Admin / Super Admin |
 | POST | `/api/vouchers/:voucherId/complete` | Complete with payee OTP. Body: `{ otp }` | — |
 | POST | `/api/vouchers/:voucherId/resend-otp` | Resend payee OTP | — |
 | DELETE | `/api/vouchers/:voucherId` | Delete voucher. Body: `{ deletedBy }` | Admin / Super Admin |
+
+### Payment Tracking
+
+| Method | Endpoint | Description | Auth |
+|--------|----------|-------------|------|
+| POST | `/api/vouchers/:voucherId/mark-awaiting-payment` | Queue completed voucher for payment (`completed → awaiting_payment`). Body: `{ markedBy }` | Accounts / Super Admin |
+| POST | `/api/vouchers/:voucherId/mark-paid` | Confirm payment (`awaiting_payment\|completed → paid`). Body: `{ paidBy, paymentReference?, paymentNotes?, receiptData?, receiptMimeType? }` — UTR ref or receipt required | Accounts / Super Admin |
+| POST | `/api/vouchers/:voucherId/dequeue-payment` | Defer payment back to completed (`awaiting_payment → completed`). Body: `{ dequeuedBy }` | Accounts / Admin / Super Admin |
 
 ### Document Verification (Ad-Hoc Payees)
 
@@ -395,6 +418,67 @@ npm start
 | DELETE | `/api/users/:userId/push-subscription` | Remove push subscription. Body: `{ endpoint }` |
 | POST | `/api/users/:userId/test-push` | Send test push notification |
 
+### Suspense Vouchers
+
+| Method | Endpoint | Description | Auth |
+|--------|----------|-------------|------|
+| POST | `/api/suspense-vouchers` | Create suspense advance voucher. Body: `{ companyId, staffPayeeId, advanceAmount, purpose, narration?, paymentMode?, createdBy }` | Accounts / Super Admin |
+| GET | `/api/companies/:companyId/suspense-vouchers` | List suspense vouchers. Query: `status?`, `staffUserId?` | — |
+| GET | `/api/suspense-vouchers/:id` | Get single suspense voucher with settlements and attachments | — |
+| POST | `/api/suspense-vouchers/:id/approve` | Approve → sends OTP to staff. Body: `{ approvedBy }` | Admin / Super Admin |
+| POST | `/api/suspense-vouchers/:id/reject` | Reject. Body: `{ rejectedBy, reason? }` | Admin / Super Admin |
+| POST | `/api/suspense-vouchers/:id/verify-advance-otp` | Verify staff advance OTP, activate SMS link. Body: `{ otp, verifiedBy }` | Accounts / Admin |
+| POST | `/api/suspense-vouchers/:id/resend-advance-otp` | Resend advance OTP. Body: `{ requestedBy }` | Accounts / Admin |
+| POST | `/api/suspense-vouchers/:id/topup` | Submit top-up for Admin approval. Body: `{ amount, description, addedBy }` | Accounts / Super Admin |
+| POST | `/api/suspense-vouchers/:id/settlements` | Add settlement entry directly. Body: `{ entryType, amount, description, headOfAccount?, referenceNumber?, submittedBy, requiresInvoice?, invoiceMissingReason? }` | Accounts |
+| GET | `/api/suspense-vouchers/:id/settlements` | List settlement entries | — |
+| POST | `/api/suspense-vouchers/:id/resend-settlement-link` | Generate new SMS link. Body: `{ requestedBy }` | Accounts / Admin |
+| POST | `/api/suspense-vouchers/:id/close` | Manually close voucher. Body: `{ closedBy }` | Accounts / Super Admin |
+| POST | `/api/suspense-vouchers/:id/recalculate-balance` | Recalculate balance from live settlement data. Body: `{ requestedBy }` | Accounts / Super Admin |
+| GET | `/api/companies/:companyId/pending-topups` | List all pending top-up approvals | Admin / Super Admin |
+
+### Settlement Sessions (Staff SMS Link)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/settlement-sessions/:token` | Validate token and return session + suspense voucher info |
+| GET | `/api/settlement-sessions/:token/entries` | List all entries submitted by this payee for the linked voucher |
+| POST | `/api/settlement-sessions/:token/settlements` | Submit expense/refund entry via SMS link (no login required) |
+
+### Suspense Settlements
+
+| Method | Endpoint | Description | Auth |
+|--------|----------|-------------|------|
+| POST | `/api/suspense-settlements/:settlementId/approve` | Approve entry, optionally create payment voucher. Body: `{ approvedBy, createVoucher?, voucherData? }` | Accounts / Super Admin |
+| POST | `/api/suspense-vouchers/:suspenseId/combine-settlements` | Combine multiple entries into one voucher. Body: `{ approvedBy, settlementIds[], voucherData }` | Accounts / Super Admin |
+| POST | `/api/suspense-settlements/:settlementId/approve-topup` | Admin approves pending top-up. Body: `{ approvedBy }` | Admin / Super Admin |
+| POST | `/api/suspense-settlements/:settlementId/reject-topup` | Admin rejects pending top-up. Body: `{ rejectedBy, reason? }` | Admin / Super Admin |
+
+### Attachments
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/attachments/upload` | Upload file (base64). Body: `{ fileData, mimeType, fileName?, voucherId?, suspenseId?, settlementId?, uploadedBy?, companyId, attachmentCategory? }` |
+| GET | `/api/attachments?voucherId=\|suspenseId=\|settlementId=` | List attachments by voucher, suspense, or settlement |
+| DELETE | `/api/attachments/:id` | Delete attachment. Body: `{ deletedBy }` — owner within 24h or Admin |
+
+### Capture Sessions (Mobile Camera QR Relay)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/capture-sessions` | Create QR capture session (15-min expiry). Body: `{ companyId, createdBy, voucherId?, suspenseId?, settlementId?, contextType?, attachmentCategory? }` |
+| GET | `/api/capture-sessions/:id` | Get session status (pending/used/expired) |
+| POST | `/api/capture-sessions/:id/upload` | Upload photo from mobile browser via scanned QR |
+
+### HOA Correction Proposals
+
+| Method | Endpoint | Description | Auth |
+|--------|----------|-------------|------|
+| POST | `/api/vouchers/:id/hoa-corrections` | Propose HOA correction. Body: `{ proposedBy, proposedHoa?, proposedSubHoa?, reason }` | Auditor |
+| GET | `/api/companies/:companyId/hoa-corrections?status=` | List proposals for a company | Admin / Super Admin |
+| POST | `/api/companies/:companyId/hoa-corrections/batch-approve` | Batch-approve proposals. Body: `{ ids[], approvedBy }` | Admin / Super Admin |
+| POST | `/api/hoa-corrections/:proposalId/reject` | Reject proposal. Body: `{ rejectedBy, rejectionReason }` | Admin / Super Admin |
+
 ### Debug Endpoints
 
 | Method | Endpoint | Description |
@@ -421,49 +505,33 @@ Run these in order after the base schema:
 | 008 | `008_add_document_verification.sql` | Ad-hoc payees, document upload + attestation flow |
 | 009 | `009_copy_hoa_and_fix_global_subheads.sql` | Data migration: copy HoA across companies |
 | 010 | `010_add_super_admin_flag.sql` | Super Admin role with elevated privileges |
+| 011 | `011_add_deductions.sql` | Deductions field on vouchers |
+| 012a | `012_add_auditor_role.sql` | Auditor role |
+| 012b | `012_suspense_bills_system.sql` | Suspense voucher system base tables (`suspense_vouchers`, `suspense_settlements`, `settlement_sessions`, `voucher_attachments`, `capture_sessions`) |
+| 013 | `013_fix_capture_sessions_attachment_fk.sql` | FK fix for capture sessions |
+| 014 | `014_add_staff_payees_and_settlement_sessions.sql` | Staff payees + settlement sessions |
+| 015 | `015_decouple_staff_payee_from_users.sql` | Decouple staff payee record from user account |
+| 016 | `016_add_staff_role.sql` | Staff role for system login |
+| 017 | `017_fix_financial_year_2026_27.sql` | Financial year 2026-27 support |
+| 018 | `018_add_pending_approval_to_settlements_status.sql` | Top-up pending approval status |
+| 019 | `019_add_voucher_link_to_settlements.sql` | Back-link: settlement entry → payment voucher |
+| 020 | `020_add_suspense_settlement_flag_to_vouchers.sql` | `is_suspense_settlement` flag on vouchers |
+| 021 | `021_suspense_advance_otp.sql` | OTP verification for advance disbursement |
+| 022 | `022_attachment_category.sql` | Transfer Receipt vs Expense Bill classification |
+| 023 | `023_add_pay_now_fields.sql` | `paid_from_account` on vouchers + `bank_name` on payees |
+| 024 | `024_company_payment_accounts.sql` | `company_payment_accounts` table |
+| 025 | `025_add_hoa_correction_proposals.sql` | `hoa_correction_proposals` table |
+| 026 | `026_add_payment_tracking.sql` | `awaiting_payment` status + `payment_reference`, `paid_by`, `paid_at`, `queued_at` fields |
+| 027 | `027_add_payment_receipt_url.sql` | `payment_receipt_url` field on vouchers |
+
+### Supabase Storage Buckets
+
+| Bucket | Purpose |
+|--------|---------|
+| `voucher-documents` | Legacy single-document upload (document verification flow for ad-hoc payees) |
+| `voucher-bills` | Primary multi-file attachment system (`voucher_attachments` table) — used for all regular vouchers, suspense vouchers, settlement entries, and QR capture sessions |
 
 ---
-
-## License
-
-Private — Relish Foods Pvt Ltd
-- `GET /api/vouchers/:voucherId` - Get voucher details
-- `POST /api/vouchers/:voucherId/approve` - Approve voucher (Admin)
-- `POST /api/vouchers/:voucherId/reject` - Reject voucher (Admin)
-- `POST /api/vouchers/:voucherId/complete` - Complete with Payee OTP
-
-### Heads of Account
-- `GET /api/heads-of-account` - List all heads of account
-- `POST /api/heads-of-account` - Create new head of account
-
-## Workflow Diagram
-
-```
-┌─────────────┐     ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-│  Accounts   │────▶│    Admin    │────▶│   Payee     │────▶│  Complete   │
-│  Creates    │     │  Approves   │     │  OTP Verify │     │  Payment    │
-│  Voucher    │     │  (Notify)   │     │  (SMS)      │     │  Ready      │
-└─────────────┘     └─────────────┘     └─────────────┘     └─────────────┘
-```
-
-## Deployment
-
-### Vercel Deployment
-
-1. Push to GitHub
-2. Connect repo to Vercel
-3. Set environment variables in Vercel dashboard
-4. Deploy!
-
-### Environment Variables (Vercel)
-```
-SUPABASE_URL
-SUPABASE_SERVICE_KEY
-TWOFACTOR_API_KEY
-TWOFACTOR_TEMPLATE_NAME
-VAPID_PUBLIC_KEY
-VAPID_PRIVATE_KEY
-```
 
 ## License
 

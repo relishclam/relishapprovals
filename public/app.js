@@ -196,6 +196,16 @@ const api = {
   getHoaCorrections: (companyId, status) => fetch(`${API_BASE}/companies/${companyId}/hoa-corrections${status ? '?status=' + status : ''}`).then(r => r.json()),
   batchApproveHoaCorrections: (companyId, ids, approvedBy) => fetch(`${API_BASE}/companies/${companyId}/hoa-corrections/batch-approve`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids, approvedBy }) }).then(r => r.json()),
   rejectHoaCorrection: (proposalId, rejectedBy, rejectionReason) => fetch(`${API_BASE}/hoa-corrections/${proposalId}/reject`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rejectedBy, rejectionReason }) }).then(r => r.json()),
+  // Password & WebAuthn
+  setPassword: (userId, newPassword, setupToken, currentPassword) => fetch(`${API_BASE}/users/${userId}/set-password`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ newPassword, setupToken, currentPassword }) }).then(r => r.json()),
+  forgotPassword: (username, otp) => fetch(`${API_BASE}/auth/forgot-password`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, otp }) }).then(r => r.json()),
+  adminResetPassword: (userId, requesterId) => fetch(`${API_BASE}/users/${userId}/password`, { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ requesterId }) }).then(r => r.json()),
+  webauthnRegisterOptions: (userId) => fetch(`${API_BASE}/auth/webauthn/register/options`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId }) }).then(r => r.json()),
+  webauthnRegisterVerify: (userId, response, deviceName) => fetch(`${API_BASE}/auth/webauthn/register/verify`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId, response, deviceName }) }).then(r => r.json()),
+  webauthnLoginOptions: (username) => fetch(`${API_BASE}/auth/webauthn/login/options`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username }) }).then(r => r.json()),
+  webauthnLoginVerify: (username, response, companyId) => fetch(`${API_BASE}/auth/webauthn/login/verify`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, response, companyId }) }).then(r => r.json()),
+  getWebAuthnCredentials: (userId) => fetch(`${API_BASE}/users/${userId}/webauthn-credentials`).then(r => r.json()),
+  deleteWebAuthnCredential: (userId, credentialId) => fetch(`${API_BASE}/users/${userId}/webauthn-credentials/${credentialId}`, { method: 'DELETE' }).then(r => r.json()),
 };
 
 // Format number in Indian style with commas (without Unicode NBSP gaps)
@@ -544,6 +554,250 @@ const registerMobileBiometric = async (userData) => {
   return false;
 };
 
+// ─── Device Lock Setup Prompt (shown after password login) ──────────────────────
+const DeviceLockPromptModal = ({ user, onDone }) => {
+  const [status, setStatus] = useState('idle'); // 'idle'|'registering'|'success'|'error'
+  const [errorMsg, setErrorMsg] = useState('');
+
+  const handleSetup = async () => {
+    setStatus('registering'); setErrorMsg('');
+    try {
+      const optResult = await api.webauthnRegisterOptions(user.id);
+      if (optResult.error) { setErrorMsg(optResult.error); setStatus('error'); return; }
+
+      let regResponse;
+      try {
+        regResponse = await window.SimpleWebAuthnBrowser.startRegistration(optResult);
+      } catch (e) { setErrorMsg(e.message || 'Cancelled'); setStatus('error'); return; }
+
+      const ua = navigator.userAgent;
+      const deviceName = ua.includes('iPhone') ? 'iPhone' : ua.includes('iPad') ? 'iPad' :
+        ua.includes('Android') ? 'Android' : ua.includes('Mac') ? 'Mac' :
+        ua.includes('Windows') ? 'Windows PC' : 'My Device';
+
+      const verResult = await api.webauthnRegisterVerify(user.id, regResponse, deviceName);
+      if (verResult.success) {
+        // Save credential ID to localStorage so MobileLockScreen also benefits
+        try { localStorage.setItem('relish_mobile_bio_id', verResult.credentialId); } catch {}
+        // Remove any previous decline flag for this user on this device
+        try { localStorage.removeItem('relish_bio_declined_' + user.id); } catch {}
+        setStatus('success');
+      } else {
+        setErrorMsg(verResult.error || 'Registration failed');
+        setStatus('error');
+      }
+    } catch { setErrorMsg('Connection error'); setStatus('error'); }
+  };
+
+  const handleDecline = () => {
+    try { localStorage.setItem('relish_bio_declined_' + user.id, 'true'); } catch {}
+    onDone();
+  };
+
+  if (status === 'success') {
+    return (
+      <div className="modal-overlay">
+        <div className="modal-content" style={{ maxWidth: '360px', textAlign: 'center', padding: '40px 28px' }}>
+          <div style={{ fontSize: '60px', marginBottom: '16px' }}>✅</div>
+          <h3 style={{ fontWeight: 700, fontSize: '20px', marginBottom: '8px' }}>Device Lock Active!</h3>
+          <p style={{ color: '#6b7280', marginBottom: '28px', lineHeight: 1.5 }}>Next time you open the app, just use your biometric or device PIN — no password needed!</p>
+          <button className="btn btn-primary" style={{ width: '100%' }} onClick={onDone}>Let's Go 🚀</button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="modal-overlay">
+      <div className="modal-content" style={{ maxWidth: '360px', textAlign: 'center', padding: '40px 28px' }}>
+        <div style={{ fontSize: '60px', marginBottom: '16px' }}>🔐</div>
+        <h3 style={{ fontWeight: 700, fontSize: '20px', marginBottom: '8px' }}>Set Up Device Lock?</h3>
+        <p style={{ color: '#374151', marginBottom: '8px', lineHeight: 1.5 }}>
+          Log in with your <strong>fingerprint, Face ID, or device PIN</strong> — no password needed next time.
+        </p>
+        <p style={{ color: '#9ca3af', fontSize: '13px', marginBottom: '24px', lineHeight: 1.5 }}>
+          Credentials are stored securely in the cloud. Works even after reinstalling the app or clearing browser data.
+        </p>
+        {status === 'error' && <div className="alert alert-error" style={{ marginBottom: '16px', textAlign: 'left' }}>{errorMsg}</div>}
+        <button
+          className="btn btn-primary"
+          style={{ width: '100%', marginBottom: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', fontSize: '16px', padding: '14px' }}
+          onClick={handleSetup}
+          disabled={status === 'registering'}
+        >
+          {status === 'registering' ? Icons.loader : '🔐'} Set Up Device Lock
+        </button>
+        <button
+          className="btn"
+          style={{ width: '100%', background: 'transparent', border: '1px solid #d1d5db', color: '#6b7280' }}
+          onClick={handleDecline}
+        >
+          Not On This Device
+        </button>
+      </div>
+    </div>
+  );
+};
+
+// ─── Security Modal (Change Password + Manage Devices) ───────────────────────
+const SecurityModal = ({ user, onClose }) => {
+  const [tab, setTab] = useState('password'); // 'password' | 'devices'
+  const [currentPw, setCurrentPw] = useState('');
+  const [newPw, setNewPw] = useState('');
+  const [confirmPw, setConfirmPw] = useState('');
+  const [showPw, setShowPw] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [msg, setMsg] = useState('');
+  const [msgType, setMsgType] = useState('success');
+  const [devices, setDevices] = useState([]);
+  const [devLoading, setDevLoading] = useState(false);
+  const [regLoading, setRegLoading] = useState(false);
+
+  const webAuthnSupported = !!window.PublicKeyCredential && typeof window.SimpleWebAuthnBrowser !== 'undefined';
+
+  useEffect(() => {
+    if (tab === 'devices') loadDevices();
+  }, [tab]);
+
+  const loadDevices = async () => {
+    setDevLoading(true);
+    try { const d = await api.getWebAuthnCredentials(user.id); setDevices(d || []); } catch {}
+    setDevLoading(false);
+  };
+
+  const handleChangePassword = async () => {
+    if (newPw.length < 6) { setMsg('Password must be at least 6 characters'); setMsgType('error'); return; }
+    if (newPw !== confirmPw) { setMsg('Passwords do not match'); setMsgType('error'); return; }
+    setLoading(true); setMsg('');
+    try {
+      const result = await api.setPassword(user.id, newPw, undefined, currentPw);
+      if (result.success) {
+        setMsg('Password updated successfully'); setMsgType('success');
+        setCurrentPw(''); setNewPw(''); setConfirmPw('');
+      } else { setMsg(result.error || 'Failed to update password'); setMsgType('error'); }
+    } catch { setMsg('Connection error'); setMsgType('error'); }
+    setLoading(false);
+  };
+
+  const handleRegisterDevice = async () => {
+    if (!webAuthnSupported) { setMsg('Device Lock not supported on this browser'); setMsgType('error'); return; }
+    setRegLoading(true); setMsg('');
+    try {
+      const optResult = await api.webauthnRegisterOptions(user.id);
+      if (optResult.error) { setMsg(optResult.error); setMsgType('error'); setRegLoading(false); return; }
+
+      let regResponse;
+      try { regResponse = await window.SimpleWebAuthnBrowser.startRegistration(optResult); }
+      catch (e) { setMsg(e.message || 'Device registration cancelled'); setMsgType('error'); setRegLoading(false); return; }
+
+      const deviceName = navigator.userAgent.includes('iPhone') ? 'iPhone' :
+        navigator.userAgent.includes('Android') ? 'Android' :
+        navigator.userAgent.includes('Mac') ? 'Mac' :
+        navigator.userAgent.includes('Windows') ? 'Windows PC' : 'My Device';
+
+      const verResult = await api.webauthnRegisterVerify(user.id, regResponse, deviceName);
+      if (verResult.success) {
+        // Save credential ID to localStorage so session lock screen can use the same biometric
+        try { localStorage.setItem('relish_mobile_bio_id', verResult.credentialId); } catch {}
+        try { localStorage.removeItem('relish_bio_declined_' + user.id); } catch {}
+        setMsg(`Device "${verResult.deviceName}" registered for Device Lock`); setMsgType('success');
+        loadDevices();
+      } else { setMsg(verResult.error || 'Device registration failed'); setMsgType('error'); }
+    } catch { setMsg('Connection error'); setMsgType('error'); }
+    setRegLoading(false);
+  };
+
+  const handleRemoveDevice = async (credentialId, deviceName) => {
+    if (!confirm(`Remove "${deviceName}" from Device Lock?`)) return;
+    try {
+      await api.deleteWebAuthnCredential(user.id, credentialId);
+      loadDevices();
+    } catch { setMsg('Failed to remove device'); setMsgType('error'); }
+  };
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: '440px' }}>
+        <div className="modal-header">
+          <h3 className="modal-title">🔒 Security Settings</h3>
+          <button className="modal-close" onClick={onClose}>✕</button>
+        </div>
+        <div style={{ display: 'flex', gap: '2px', marginBottom: '20px', background: '#f3f4f6', borderRadius: '8px', padding: '4px' }}>
+          {['password', 'devices'].map(t => (
+            <button key={t} onClick={() => setTab(t)}
+              style={{ flex: 1, padding: '8px', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 500, fontSize: '14px',
+                background: tab === t ? 'white' : 'transparent', color: tab === t ? '#1f2937' : '#6b7280',
+                boxShadow: tab === t ? '0 1px 3px rgba(0,0,0,0.1)' : 'none' }}>
+              {t === 'password' ? '🔑 Password' : '📱 Devices'}
+            </button>
+          ))}
+        </div>
+        {msg && <div className={`alert alert-${msgType === 'error' ? 'error' : 'success'}`} style={{ marginBottom: '16px' }}>{msg}</div>}
+
+        {tab === 'password' && (
+          <div>
+            <div className="form-group">
+              <label className="form-label">Current Password</label>
+              <div style={{ position: 'relative' }}>
+                <input type={showPw ? 'text' : 'password'} className="form-input" value={currentPw} onChange={e => setCurrentPw(e.target.value)} placeholder="Current password" style={{ paddingRight: '44px' }} />
+                <button type="button" onClick={() => setShowPw(p => !p)} style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px', color: '#6b7280' }}>{showPw ? '🙈' : '👁️'}</button>
+              </div>
+            </div>
+            <div className="form-group">
+              <label className="form-label">New Password</label>
+              <input type={showPw ? 'text' : 'password'} className="form-input" value={newPw} onChange={e => setNewPw(e.target.value)} placeholder="At least 6 characters" />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Confirm New Password</label>
+              <input type={showPw ? 'text' : 'password'} className="form-input" value={confirmPw} onChange={e => setConfirmPw(e.target.value)} placeholder="Re-enter new password" onKeyDown={e => e.key === 'Enter' && handleChangePassword()} />
+            </div>
+            <button className="btn btn-primary" style={{ width: '100%' }} onClick={handleChangePassword} disabled={loading || !currentPw || !newPw || !confirmPw}>
+              {loading && Icons.loader} Update Password
+            </button>
+          </div>
+        )}
+
+        {tab === 'devices' && (
+          <div>
+            <p style={{ fontSize: '14px', color: '#6b7280', marginBottom: '16px' }}>Registered devices can log in using Face ID, fingerprint, or device PIN — no password required.</p>
+            {webAuthnSupported ? (
+              <button className="btn btn-primary" style={{ width: '100%', marginBottom: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
+                onClick={handleRegisterDevice} disabled={regLoading}>
+                {regLoading ? Icons.loader : '➕'} Register This Device
+              </button>
+            ) : (
+              <div className="alert alert-error" style={{ marginBottom: '16px' }}>Device Lock requires a modern browser with biometric/passkey support.</div>
+            )}
+            {devLoading ? <div style={{ textAlign: 'center', padding: '20px', color: '#9ca3af' }}>{Icons.loader} Loading devices...</div> : (
+              devices.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '20px', color: '#9ca3af', fontSize: '14px' }}>No devices registered yet.</div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {devices.map(d => (
+                    <div key={d.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px', border: '1px solid #e5e7eb', borderRadius: '8px' }}>
+                      <div>
+                        <div style={{ fontWeight: 600, fontSize: '14px' }}>📱 {d.device_name || 'Device'}</div>
+                        <div style={{ fontSize: '12px', color: '#9ca3af' }}>
+                          Added {new Date(d.created_at).toLocaleDateString('en-IN')}
+                          {d.last_used_at && ` · Last used ${new Date(d.last_used_at).toLocaleDateString('en-IN')}`}
+                        </div>
+                      </div>
+                      <button onClick={() => handleRemoveDevice(d.credential_id, d.device_name || 'Device')}
+                        style={{ background: 'none', border: '1px solid #fca5a5', color: '#ef4444', borderRadius: '6px', padding: '4px 10px', cursor: 'pointer', fontSize: '13px' }}>
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
 // OTP Input
 const OTPInput = ({ length = 6, value = '', onChange }) => {
   const handleChange = (index, digit) => {
@@ -777,27 +1031,73 @@ const LoginPage = ({ onLogin }) => {
   const [selectedCompanyId, setSelectedCompanyId] = useState('');
   const [pendingUserId, setPendingUserId] = useState('');
   const [pendingUserName, setPendingUserName] = useState('');
+  const [companySelectToken, setCompanySelectToken] = useState('');
+  // Password auth states
+  const [requiresPassword, setRequiresPassword] = useState(false);
+  const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [hasWebAuthn, setHasWebAuthn] = useState(false);
+  const [pendingCredentialIds, setPendingCredentialIds] = useState([]);
+  // Set-password (first time / forgot) states
+  const [requiresPasswordSetup, setRequiresPasswordSetup] = useState(false);
+  const [setupToken, setSetupToken] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [settingPassword, setSettingPassword] = useState(false);
+  // Forgot-password flow states
+  const [forgotMode, setForgotMode] = useState(false);
+  const [forgotStep, setForgotStep] = useState(1); // 1=enter username, 2=enter OTP, 3=set password
+  const [forgotOtp, setForgotOtp] = useState('');
   const [reg, setReg] = useState({ companyId: '', name: '', mobile: '', aadhar: '', role: 'accounts', step: 1, userId: '', otp: '' });
 
   useEffect(() => { api.getCompanies().then(setCompanies).catch(console.error); }, []);
 
+  // Detect if WebAuthn (passkey) is supported on this browser/device
+  const webAuthnSupported = typeof window !== 'undefined' && !!window.PublicKeyCredential && typeof window.SimpleWebAuthnBrowser !== 'undefined';
+
+  const resetToLogin = () => {
+    setRequiresOtp(false); setRequiresCompanySelection(false); setRequiresPassword(false);
+    setRequiresPasswordSetup(false); setForgotMode(false); setForgotStep(1);
+    setOtp(''); setPassword(''); setNewPassword(''); setConfirmPassword(''); setSetupToken('');
+    setForgotOtp(''); setHasWebAuthn(false); setPendingCredentialIds([]);
+    setSelectedCompanyId(''); setAvailableCompanies([]); setCompanySelectToken(''); setError('');
+  };
+
   const handleLogin = async () => {
     setLoading(true); setError('');
     try {
-      const result = await api.login({ 
-        username, 
+      const result = await api.login({
+        username,
         otp: requiresOtp ? otp : undefined,
-        companyId: selectedCompanyId || undefined
+        companyId: selectedCompanyId || undefined,
+        password: requiresPassword ? password : undefined,
       });
-      
+
       if (result.requiresCompanySelection) {
-        // User has access to multiple companies - show selection
         setRequiresCompanySelection(true);
         setAvailableCompanies(result.companies);
         setPendingUserId(result.userId);
         setPendingUserName(result.userName);
+        setCompanySelectToken(result.companySelectToken || '');
       } else if (result.requiresOtp) {
         setRequiresOtp(true);
+      } else if (result.requiresPasswordSetup) {
+        setRequiresOtp(false);
+        setPendingUserId(result.userId || pendingUserId);
+        setSetupToken(result.setupToken);
+        setRequiresPasswordSetup(true);
+      } else if (result.requiresPassword) {
+        setRequiresOtp(false);
+        setPendingUserId(result.userId);
+        setPendingUserName(result.userName || '');
+        setHasWebAuthn(result.hasWebAuthn || false);
+        setPendingCredentialIds(result.credentialIds || []);
+        setRequiresPassword(true);
+        // Auto-fire biometric prompt if this device is registered — no button tap needed
+        if (result.hasWebAuthn && webAuthnSupported) {
+          setTimeout(() => triggerWebAuthnLogin(selectedCompanyId), 150);
+        }
       } else if (result.success) {
         onLogin(result.user, result.settlementToken || null);
       } else {
@@ -811,16 +1111,129 @@ const LoginPage = ({ onLogin }) => {
     setSelectedCompanyId(companyId);
     setLoading(true); setError('');
     try {
-      const result = await api.login({ username, companyId });
+      // Identity already verified — use companySelectToken, no need to re-send password
+      const result = await api.login({ companySelectToken, companyId });
       if (result.success) {
         onLogin(result.user, result.settlementToken || null);
-      } else if (result.requiresOtp) {
-        // First-time login: server already sent OTP — go back to login form with OTP input
-        setRequiresCompanySelection(false);
-        setRequiresOtp(true);
-        // selectedCompanyId is already set; next login() call will include it
       } else {
         setError(result.error || 'Login failed');
+      }
+    } catch { setError('Connection error'); }
+    setLoading(false);
+  };
+
+  // Complete password setup (first-time or forgot-password)
+  const handleSetPassword = async () => {
+    if (newPassword.length < 6) { setError('Password must be at least 6 characters'); return; }
+    if (newPassword !== confirmPassword) { setError('Passwords do not match'); return; }
+    setSettingPassword(true); setError('');
+    try {
+      const result = await api.setPassword(pendingUserId, newPassword, setupToken);
+      if (result.success) {
+        // Password set — now log in normally with the new password
+        const loginResult = await api.login({ username, password: newPassword, companyId: selectedCompanyId || undefined });
+        if (loginResult.requiresCompanySelection) {
+          // Multi-company user — identity proved, just needs to pick a company
+          setRequiresPasswordSetup(false);
+          setRequiresCompanySelection(true);
+          setAvailableCompanies(loginResult.companies);
+          setPendingUserName(loginResult.userName);
+          setCompanySelectToken(loginResult.companySelectToken || '');
+        } else if (loginResult.success) {
+          onLogin(loginResult.user, loginResult.settlementToken || null);
+        } else {
+          // Password set but auto-login failed — ask user to log in manually
+          setRequiresPasswordSetup(false);
+          setRequiresPassword(false);
+          setPassword('');
+          setNewPassword(''); setConfirmPassword('');
+          setError('Password set! Please sign in with your new password.');
+        }
+      } else {
+        setError(result.error || 'Failed to set password');
+      }
+    } catch { setError('Connection error'); }
+    setSettingPassword(false);
+  };
+
+  // Device Lock (WebAuthn) login — manual (button press)
+  const handleWebAuthnLogin = async () => {
+    if (!webAuthnSupported) { setError('Device Lock is not supported on this browser'); return; }
+    setLoading(true); setError('');
+    try {
+      const optionsResult = await api.webauthnLoginOptions(username);
+      if (optionsResult.error) { setError(optionsResult.error); setLoading(false); return; }
+
+      let assertionResponse;
+      try {
+        assertionResponse = await window.SimpleWebAuthnBrowser.startAuthentication(optionsResult);
+      } catch (e) {
+        setError(e.message || 'Biometric cancelled');
+        setLoading(false); return;
+      }
+
+      const verifyResult = await api.webauthnLoginVerify(username, assertionResponse, selectedCompanyId || undefined);
+      if (verifyResult.success) {
+        onLogin(verifyResult.user, verifyResult.settlementToken || null, true);
+      } else if (verifyResult.requiresCompanySelection) {
+        setRequiresPassword(false);
+        setRequiresCompanySelection(true);
+        setAvailableCompanies(verifyResult.companies);
+        setPendingUserId(verifyResult.userId);
+        setPendingUserName(verifyResult.userName || '');
+        setCompanySelectToken(verifyResult.companySelectToken || '');
+      } else {
+        setError(verifyResult.error || 'Device verification failed');
+      }
+    } catch { setError('Connection error'); }
+    setLoading(false);
+  };
+
+  // Auto-trigger WebAuthn silently after company selection (fails silently → password screen stays visible)
+  const triggerWebAuthnLogin = async (explicitCompanyId) => {
+    if (!webAuthnSupported) return;
+    try {
+      const optionsResult = await api.webauthnLoginOptions(username);
+      if (optionsResult.error) return; // no devices registered — skip
+      let assertionResponse;
+      try {
+        assertionResponse = await window.SimpleWebAuthnBrowser.startAuthentication(optionsResult);
+      } catch { return; } // user cancelled — password screen remains visible
+      setLoading(true);
+      const cid = explicitCompanyId || selectedCompanyId || undefined;
+      const verifyResult = await api.webauthnLoginVerify(username, assertionResponse, cid);
+      if (verifyResult.success) {
+        onLogin(verifyResult.user, verifyResult.settlementToken || null, true);
+      } else if (verifyResult.requiresCompanySelection) {
+        // Biometric succeeded — user just needs to pick a company (not a failure)
+        setRequiresPassword(false);
+        setRequiresCompanySelection(true);
+        setAvailableCompanies(verifyResult.companies);
+        setPendingUserId(verifyResult.userId);
+        setPendingUserName(verifyResult.userName || '');
+        setCompanySelectToken(verifyResult.companySelectToken || '');
+      } // any other failure is silent — password screen stays visible
+    } catch {} // silent fail — password screen already visible
+    setLoading(false);
+  };
+
+  // Forgot-password flow
+  const handleForgotPassword = async () => {
+    setLoading(true); setError('');
+    try {
+      if (forgotStep === 1) {
+        const result = await api.forgotPassword(username);
+        if (result.requiresOtp) { setForgotStep(2); }
+        else setError(result.error || 'Failed to send OTP');
+      } else if (forgotStep === 2) {
+        const result = await api.forgotPassword(username, forgotOtp);
+        if (result.requiresPasswordSetup) {
+          setPendingUserId(result.userId);
+          setSetupToken(result.setupToken);
+          setForgotStep(3);
+          setForgotMode(false);
+          setRequiresPasswordSetup(true);
+        } else setError(result.error || 'OTP verification failed');
       }
     } catch { setError('Connection error'); }
     setLoading(false);
@@ -842,7 +1255,88 @@ const LoginPage = ({ onLogin }) => {
     setLoading(false);
   };
 
-  // Company Selection Screen
+  // ── Set-password screen (first-time OR forgot-password) ───────────────────
+  if (requiresPasswordSetup) {
+    const isFirstTime = !requiresPassword; // true on first login, false on forgot
+    return (
+      <div className="login-container">
+        <div className="login-card">
+          <div className="login-logo"><img src="logo.png" alt="Relish" /></div>
+          <h1 className="login-title">{isFirstTime ? 'Set Your Password' : 'Reset Password'}</h1>
+          <p className="login-subtitle">{isFirstTime ? 'Create a password to secure your account.' : 'Enter a new password for your account.'}</p>
+          {error && <div className="alert alert-error">{error}</div>}
+          <div className="form-group">
+            <label className="form-label">New Password</label>
+            <div style={{ position: 'relative' }}>
+              <input
+                type={showNewPassword ? 'text' : 'password'}
+                className="form-input"
+                placeholder="At least 6 characters"
+                value={newPassword}
+                onChange={e => setNewPassword(e.target.value)}
+                style={{ paddingRight: '44px' }}
+              />
+              <button type="button" onClick={() => setShowNewPassword(p => !p)}
+                style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', fontSize: '18px', color: '#6b7280' }}>
+                {showNewPassword ? '🙈' : '👁️'}
+              </button>
+            </div>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Confirm Password</label>
+            <input
+              type={showNewPassword ? 'text' : 'password'}
+              className="form-input"
+              placeholder="Re-enter password"
+              value={confirmPassword}
+              onChange={e => setConfirmPassword(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleSetPassword()}
+            />
+          </div>
+          <button className="btn btn-primary" style={{ width: '100%' }} onClick={handleSetPassword}
+            disabled={settingPassword || !newPassword || !confirmPassword}>
+            {settingPassword && Icons.loader} Set Password & Sign In
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Forgot-password flow screen ───────────────────────────────────────────
+  if (forgotMode) {
+    return (
+      <div className="login-container">
+        <div className="login-card">
+          <div className="login-logo"><img src="logo.png" alt="Relish" /></div>
+          <h1 className="login-title">Forgot Password</h1>
+          <p className="login-subtitle">{forgotStep === 1 ? 'Enter your username to receive an OTP.' : 'Enter the OTP sent to your registered mobile.'}</p>
+          {error && <div className="alert alert-error">{error}</div>}
+          {forgotStep === 1 && (
+            <div className="form-group">
+              <label className="form-label">Username</label>
+              <input type="text" className="form-input" placeholder="e.g., Accounts-John" value={username} onChange={e => setUsername(e.target.value)} />
+            </div>
+          )}
+          {forgotStep === 2 && (
+            <div className="form-group">
+              <label className="form-label">Enter OTP sent to your mobile</label>
+              <OTPInput value={forgotOtp} onChange={setForgotOtp} />
+            </div>
+          )}
+          <button className="btn btn-primary" style={{ width: '100%' }} onClick={handleForgotPassword}
+            disabled={loading || (forgotStep === 1 ? !username : !forgotOtp)}>
+            {loading && Icons.loader}{forgotStep === 1 ? 'Send OTP' : 'Verify OTP'}
+          </button>
+          <button className="btn" style={{ width: '100%', marginTop: '10px', background: 'transparent', border: '1px solid #ddd' }}
+            onClick={() => { setForgotMode(false); setForgotStep(1); setForgotOtp(''); setError(''); }}>
+            ← Back to Login
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Company Selection Screen ───────────────────────────────────────────────
   if (requiresCompanySelection) {
     return (
       <div className="login-container">
@@ -853,17 +1347,10 @@ const LoginPage = ({ onLogin }) => {
           {error && <div className="alert alert-error">{error}</div>}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '20px' }}>
             {availableCompanies.map(company => (
-              <button 
+              <button
                 key={company.id}
-                className="btn btn-secondary" 
-                style={{ 
-                  width: '100%', 
-                  padding: '16px', 
-                  display: 'flex', 
-                  justifyContent: 'space-between', 
-                  alignItems: 'center',
-                  textAlign: 'left'
-                }}
+                className="btn btn-secondary"
+                style={{ width: '100%', padding: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', textAlign: 'left' }}
                 onClick={() => handleCompanySelect(company.id)}
                 disabled={loading}
               >
@@ -877,16 +1364,8 @@ const LoginPage = ({ onLogin }) => {
               </button>
             ))}
           </div>
-          <button 
-            className="btn" 
-            style={{ width: '100%', marginTop: '20px', background: 'transparent', border: '1px solid #ddd' }}
-            onClick={() => {
-              setRequiresCompanySelection(false);
-              setAvailableCompanies([]);
-              setSelectedCompanyId('');
-              setUsername('');
-            }}
-          >
+          <button className="btn" style={{ width: '100%', marginTop: '20px', background: 'transparent', border: '1px solid #ddd' }}
+            onClick={() => { setRequiresCompanySelection(false); setAvailableCompanies([]); setSelectedCompanyId(''); setCompanySelectToken(''); setUsername(''); }}>
             ← Back to Login
           </button>
         </div>
@@ -894,17 +1373,72 @@ const LoginPage = ({ onLogin }) => {
     );
   }
 
+  // ── Password input screen (returning user who has a password set) ──────────
+  if (requiresPassword) {
+    return (
+      <div className="login-container">
+        <div className="login-card">
+          <div className="login-logo"><img src="logo.png" alt="Relish" /></div>
+          <h1 className="login-title">Welcome Back</h1>
+          <p className="login-subtitle">{pendingUserName || username}</p>
+          {error && <div className="alert alert-error">{error}</div>}
+          <div className="form-group">
+            <label className="form-label">Password</label>
+            <div style={{ position: 'relative' }}>
+              <input
+                type={showPassword ? 'text' : 'password'}
+                className="form-input"
+                placeholder="Enter your password"
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && handleLogin()}
+                autoFocus
+                style={{ paddingRight: '44px' }}
+              />
+              <button type="button" onClick={() => setShowPassword(p => !p)}
+                style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', fontSize: '18px', color: '#6b7280' }}>
+                {showPassword ? '🙈' : '👁️'}
+              </button>
+            </div>
+          </div>
+          <button className="btn btn-primary" style={{ width: '100%' }} onClick={handleLogin} disabled={loading || !password}>
+            {loading && Icons.loader} Sign In
+          </button>
+          {hasWebAuthn && webAuthnSupported && (
+            <button className="btn" style={{ width: '100%', marginTop: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', background: 'linear-gradient(135deg,#1a1a2e,#16213e)', color: 'white', border: 'none' }}
+              onClick={handleWebAuthnLogin} disabled={loading}>
+              {loading ? Icons.loader : '🔐'} Use Device Lock
+            </button>
+          )}
+          <div style={{ textAlign: 'center', marginTop: '14px' }}>
+            <button type="button" style={{ background: 'none', border: 'none', color: '#f5841f', cursor: 'pointer', fontSize: '14px', textDecoration: 'underline' }}
+              onClick={() => { setRequiresPassword(false); setForgotMode(true); setForgotStep(1); setError(''); }}>
+              Forgot Password?
+            </button>
+          </div>
+          <button className="btn" style={{ width: '100%', marginTop: '10px', background: 'transparent', border: '1px solid #ddd' }}
+            onClick={resetToLogin}>
+            ← Back
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Main login screen ─────────────────────────────────────────────────────
   return (
     <div className="login-container">
       <div className="login-card">
         <div className="login-logo"><img src="logo.png" alt="Relish" /></div>
         <h1 className="login-title">Payment Approval System</h1>
-        <p className="login-subtitle">Secure voucher management with OTP verification</p>
+        <p className="login-subtitle">Secure voucher management for Relish</p>
         {error && <div className="alert alert-error">{error}</div>}
         <div>
           <div className="form-group"><label className="form-label">Username</label><input type="text" className="form-input" placeholder="e.g., Accounts-John or Approve-Jane" value={username} onChange={(e) => setUsername(e.target.value)} /></div>
           {requiresOtp && <div className="form-group"><label className="form-label">Enter OTP sent to your mobile</label><OTPInput value={otp} onChange={setOtp} /></div>}
-          <button className="btn btn-primary" style={{ width: '100%' }} onClick={handleLogin} disabled={loading || !username}>{loading && Icons.loader}{requiresOtp ? 'Verify & Sign In' : 'Sign In'}</button>
+          <button className="btn btn-primary" style={{ width: '100%' }} onClick={handleLogin} disabled={loading || !username}>
+            {loading && Icons.loader}{requiresOtp ? 'Verify OTP' : 'Continue'}
+          </button>
         </div>
       </div>
     </div>
@@ -914,13 +1448,13 @@ const LoginPage = ({ onLogin }) => {
 // Dashboard
 const Dashboard = () => {
   const { user, vouchers } = useApp();
-  const stats = { 
+  const stats = {
     draft: vouchers.filter(v => v.status === 'draft').length,
-    pending: vouchers.filter(v => v.status === 'pending').length, 
-    approved: vouchers.filter(v => ['approved', 'awaiting_payee_otp'].includes(v.status)).length, 
-    completed: vouchers.filter(v => v.status === 'completed').length, 
+    pending: vouchers.filter(v => v.status === 'pending').length,
+    approved: vouchers.filter(v => ['approved', 'awaiting_payee_otp'].includes(v.status)).length,
+    completed: vouchers.filter(v => v.status === 'completed').length,
     awaitingPayment: vouchers.filter(v => v.status === 'awaiting_payment').length,
-    total: vouchers.filter(v => v.status !== 'draft').length 
+    total: vouchers.filter(v => v.status !== 'draft').length
   };
   return (
     <div>
@@ -4472,6 +5006,19 @@ const UsersManagement = () => {
                 }}
               >
                 ✏️ Edit User
+              </button>
+              <button
+                className="btn"
+                style={{ borderColor: '#f59e0b', color: '#b45309' }}
+                title="Clear user's password — they will be prompted to set a new one on next login"
+                onClick={async () => {
+                  if (!confirm(`Reset password for ${selectedUser.name}? They will be prompted to set a new password on their next login.`)) return;
+                  const result = await api.adminResetPassword(selectedUser.id, user.id);
+                  if (result.success) { setShowDetailsModal(false); alert('Password reset. User will set a new one on next login.'); }
+                  else alert(result.error || 'Failed to reset password');
+                }}
+              >
+                🔑 Reset Password
               </button>
             </div>
           </div>
@@ -8446,6 +8993,9 @@ const App = () => {
     return null;
   });
   const [showPinSetup, setShowPinSetup] = useState(false);
+  const [showSecurityModal, setShowSecurityModal] = useState(false);
+  const [showDeviceLockSetup, setShowDeviceLockSetup] = useState(false);
+  const [deviceLockSetupUser, setDeviceLockSetupUser] = useState(null);
   const bgTimestamp = React.useRef(null);
 
   // Re-lock on return from background (mobile only, >10 s)
@@ -8722,7 +9272,7 @@ const App = () => {
 
   useEffect(() => { if (user) { refreshVouchers(); refreshNotifications(); const interval = setInterval(() => { refreshVouchers(); refreshNotifications(); }, 30000); return () => clearInterval(interval); } }, [user, refreshVouchers, refreshNotifications]);
 
-  const handleLogin = async (userData, staffSettlementToken) => {
+  const handleLogin = async (userData, staffSettlementToken, fromWebAuthn = false) => {
     // Staff users go directly to their settlement page — no app access
     if (userData.role === 'staff' && staffSettlementToken) {
       try { localStorage.setItem('relish_settlement_token', staffSettlementToken); } catch {}
@@ -8741,17 +9291,19 @@ const App = () => {
     try { localStorage.removeItem('relish_biometric_id'); } catch {}
     setUser(userData);
     setCurrentPage(defaultPage);
-    // Mobile only: offer biometric or PIN setup if not yet configured
-    if (isMobileDevice()) {
-      const alreadySetup = !!localStorage.getItem('relish_mobile_pin') || !!localStorage.getItem('relish_mobile_bio_id');
-      if (!alreadySetup) {
-        // Try to register native biometric (Face/Fingerprint) silently
-        const bioRegistered = await registerMobileBiometric(userData);
-        if (!bioRegistered) {
-          // Biometric not available — offer PIN setup
-          setShowPinSetup(true);
-        }
+    // Offer server-side Device Lock setup if WebAuthn is available on this browser
+    // and the user hasn't explicitly declined on this device.
+    // Skip if they just logged in via WebAuthn (they already have Device Lock set up).
+    if (!fromWebAuthn && window.PublicKeyCredential && typeof window.SimpleWebAuthnBrowser !== 'undefined') {
+      const declinedKey = 'relish_bio_declined_' + userData.id;
+      if (!localStorage.getItem(declinedKey)) {
+        setDeviceLockSetupUser(userData);
+        setShowDeviceLockSetup(true);
       }
+    } else if (isMobileDevice()) {
+      // Fallback for browsers without WebAuthn: offer PIN lock
+      const alreadySetup = !!localStorage.getItem('relish_mobile_pin');
+      if (!alreadySetup) setShowPinSetup(true);
     }
   };
   const handleLogout = () => {
@@ -8852,6 +9404,13 @@ const App = () => {
     <AppContext.Provider value={contextValue}>
       <PWAInstallPrompt />
       {showPinSetup && <SetPinModal onPinSet={handlePinSet} onSkip={() => setShowPinSetup(false)} />}
+      {showSecurityModal && user && <SecurityModal user={user} onClose={() => setShowSecurityModal(false)} />}
+      {showDeviceLockSetup && deviceLockSetupUser && (
+        <DeviceLockPromptModal
+          user={deviceLockSetupUser}
+          onDone={() => { setShowDeviceLockSetup(false); setDeviceLockSetupUser(null); }}
+        />
+      )}
       <div className="app-container">
         <header className="header">
           <div className="header-left">
@@ -8920,6 +9479,7 @@ const App = () => {
           <div className="header-right">
             <div className="user-badge">{user.isSuperAdmin ? '👑' : user.role === 'admin' ? Icons.shield : Icons.user} {user.username}</div>
             <button className="notification-btn" onClick={() => setShowNotifications(!showNotifications)}>{Icons.bell}{unreadCount > 0 && <span className="notification-badge">{unreadCount}</span>}</button>
+            <button className="btn" title="Security Settings" style={{ padding: '6px 10px', background: 'transparent', border: '1px solid rgba(255,255,255,0.2)', color: 'white', fontSize: '16px' }} onClick={() => setShowSecurityModal(true)}>🔒</button>
             <button className="logout-btn" onClick={handleLogout}>{Icons.logOut} Sign Out</button>
           </div>
         </header>
@@ -9023,6 +9583,9 @@ const App = () => {
                 </div>}
                 {user.isSuperAdmin && <div className="nav-section"><div className="nav-section-title">Admin Dashboard</div><div className={`nav-item ${currentPage === 'users' ? 'active' : ''}`} onClick={() => handleNavClick('users')}>{Icons.users} User Management</div></div>}
                 </>)}
+                <div className="nav-section">
+                  <div className="nav-item" onClick={() => { setShowSecurityModal(true); setShowMobileMenu(false); }}>🔒 Security Settings</div>
+                </div>
               </aside>
             </>
           )}
