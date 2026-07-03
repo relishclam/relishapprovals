@@ -26,14 +26,14 @@ const ClamFlowLoader = ({ width = 200, label = 'Loading' }) => {
     if (document.getElementById('clamflow-keyframes')) return;
     const s = document.createElement('style');
     s.id = 'clamflow-keyframes';
-    s.textContent = '@keyframes cf-form{0%{clip-path:inset(0 100% 0 0);opacity:1}52%{clip-path:inset(0 0 0 0);opacity:1}82%{clip-path:inset(0 0 0 0);opacity:1}94%{clip-path:inset(0 0 0 0);opacity:0}100%{clip-path:inset(0 100% 0 0);opacity:0}}@keyframes cf-sweep{0%{transform:translateX(-320px) skewX(-12deg)}100%{transform:translateX(1070px) skewX(-12deg)}}@media(prefers-reduced-motion:reduce){.cf-wave-svg{animation:none!important;clip-path:none!important;opacity:1!important}.cf-wave-streak{display:none!important}}';
+    s.textContent = '@keyframes cf-form{0%{clip-path:inset(0 100% 0 0);opacity:1}52%{clip-path:inset(0 0 0 0);opacity:1}82%{clip-path:inset(0 0 0 0);opacity:1}94%{clip-path:inset(0 0 0 0);opacity:0}100%{clip-path:inset(0 100% 0 0);opacity:0}}@keyframes cf-sweep{0%{transform:translateX(-320px) skewX(-12deg)}100%{transform:translateX(1070px) skewX(-12deg)}}@media(prefers-reduced-motion:reduce){.cf-wave-wrap{animation:none;clip-path:none;opacity:1}.cf-wave-streak{display:none}}';
     document.head.appendChild(s);
   }, []);
   return (
-    <span style={{display:'inline-block',width:w,height:h,lineHeight:0,verticalAlign:'middle',flexShrink:0}}>
-      <svg className="cf-wave-svg" width={w} height={h} viewBox="0 0 950 267" role="img" aria-label={label}
-        style={{display:'block',overflow:'visible',
-          animation:'cf-form 2.6s cubic-bezier(.45,.05,.35,1) infinite'}}>
+    <span className="cf-wave-wrap" style={{display:'inline-block',width:w,height:h,lineHeight:0,verticalAlign:'middle',flexShrink:0,
+      animation:'cf-form 2.6s cubic-bezier(.45,.05,.35,1) infinite'}}>
+      <svg width={w} height={h} viewBox="0 0 950 267" role="img" aria-label={label}
+        style={{display:'block',overflow:'visible'}}>
         <defs>
           <linearGradient id={uid+'-f'} x1="0" y1="0" x2="0" y2="1">
             <stop offset="0" stopColor="#58d3c1"/>
