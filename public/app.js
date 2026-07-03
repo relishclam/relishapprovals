@@ -33,7 +33,7 @@ const ClamFlowLoader = ({ width = 200, label = 'Loading' }) => {
     <span className="cf-wave-wrap" style={{display:'inline-block',width:w,height:h,lineHeight:0,verticalAlign:'middle',flexShrink:0,
       animation:'cf-form 2.6s cubic-bezier(.45,.05,.35,1) infinite'}}>
       <svg width={w} height={h} viewBox="0 0 950 267" role="img" aria-label={label}
-        style={{display:'block',overflow:'visible'}}>
+        style={{display:'block'}}>
         <defs>
           <linearGradient id={uid+'-f'} x1="0" y1="0" x2="0" y2="1">
             <stop offset="0" stopColor="#58d3c1"/>
