@@ -612,8 +612,42 @@ body {
 .empty-state { text-align: center; padding: 3rem; color: #888; }
 .empty-state svg { margin-bottom: 1rem; opacity: 0.3; }
 
-.spinner { animation: spin 1s linear infinite; }
-@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+/* ClamFlow wave loader */
+.cf-loader {
+  --cf-c1: #58d3c1;
+  --cf-c2: #16656f;
+  --cf-streak: #ffffff;
+  --cf-speed: 2.6s;
+  --cf-streak-speed: 1.7s;
+  display: inline-block;
+  aspect-ratio: 950 / 267;
+  line-height: 0;
+  vertical-align: middle;
+}
+.cf-loader__form {
+  display: block; width: 100%; height: 100%; overflow: visible;
+  animation: cf-form var(--cf-speed) cubic-bezier(.45,.05,.35,1) infinite;
+}
+.cf-loader .cf-streak {
+  mix-blend-mode: screen;
+  transform: translateX(-320px) skewX(-12deg);
+  animation: cf-sweep var(--cf-streak-speed) cubic-bezier(.5,0,.3,1) infinite;
+}
+@keyframes cf-form {
+  0%   { clip-path: inset(0 100% 0 0); opacity: 1; }
+  52%  { clip-path: inset(0 0 0 0);    opacity: 1; }
+  82%  { clip-path: inset(0 0 0 0);    opacity: 1; }
+  94%  { clip-path: inset(0 0 0 0);    opacity: 0; }
+  100% { clip-path: inset(0 100% 0 0); opacity: 0; }
+}
+@keyframes cf-sweep {
+  0%   { transform: translateX(-320px) skewX(-12deg); }
+  100% { transform: translateX(1070px) skewX(-12deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cf-loader__form { animation: none; clip-path: none; opacity: 1; }
+  .cf-loader .cf-streak { animation: none; display: none; }
+}
 
 .text-center { text-align: center; }
 .text-muted { color: #666; }

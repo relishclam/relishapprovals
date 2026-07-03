@@ -101,16 +101,41 @@
     .status-success { background: rgba(34,197,94,0.15); border: 1px solid rgba(34,197,94,0.4); color: #4ade80; }
     .status-error   { background: rgba(239,68,68,0.15);  border: 1px solid rgba(239,68,68,0.4);  color: #f87171; }
     .status-info    { background: rgba(59,130,246,0.15); border: 1px solid rgba(59,130,246,0.4); color: #93c5fd; }
-    .spinner {
-      width: 40px; height: 40px;
-      border: 3px solid rgba(255,255,255,0.15);
-      border-top-color: #f5841f;
-      border-radius: 50%;
-      animation: spin 0.8s linear infinite;
+    .cf-loader {
+      --cf-c1: #58d3c1;
+      --cf-c2: #16656f;
+      --cf-streak: #ffffff;
+      --cf-speed: 2.6s;
+      --cf-streak-speed: 1.7s;
+      display: block;
+      aspect-ratio: 950 / 267;
+      line-height: 0;
       margin: 1.5rem auto;
-      display: none;
     }
-    @keyframes spin { to { transform: rotate(360deg); } }
+    .cf-loader__form {
+      display: block; width: 100%; height: 100%; overflow: visible;
+      animation: cf-form var(--cf-speed) cubic-bezier(.45,.05,.35,1) infinite;
+    }
+    .cf-loader .cf-streak {
+      mix-blend-mode: screen;
+      transform: translateX(-320px) skewX(-12deg);
+      animation: cf-sweep var(--cf-streak-speed) cubic-bezier(.5,0,.3,1) infinite;
+    }
+    @keyframes cf-form {
+      0%   { clip-path: inset(0 100% 0 0); opacity: 1; }
+      52%  { clip-path: inset(0 0 0 0);    opacity: 1; }
+      82%  { clip-path: inset(0 0 0 0);    opacity: 1; }
+      94%  { clip-path: inset(0 0 0 0);    opacity: 0; }
+      100% { clip-path: inset(0 100% 0 0); opacity: 0; }
+    }
+    @keyframes cf-sweep {
+      0%   { transform: translateX(-320px) skewX(-12deg); }
+      100% { transform: translateX(1070px) skewX(-12deg); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .cf-loader__form { animation: none; clip-path: none; opacity: 1; }
+      .cf-loader .cf-streak { display: none; }
+    }
     #success-screen { display: none; }
     #error-screen   { display: none; }
     #main-screen    { display: block; }
@@ -127,7 +152,24 @@
 
   <!-- ── LOADING ── -->
   <div id="loading-screen">
-    <div class="spinner" id="main-spinner" style="display:block"></div>
+    <span class="cf-loader" style="width:200px" id="main-spinner">
+      <svg class="cf-loader__form" viewBox="0 0 950 267" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Loading">
+        <defs>
+          <linearGradient id="cf-fill" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" style="stop-color:var(--cf-c1)"/>
+            <stop offset="1" style="stop-color:var(--cf-c2)"/>
+          </linearGradient>
+          <linearGradient id="cf-glint" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0" style="stop-color:var(--cf-streak);stop-opacity:0"/>
+            <stop offset=".5" style="stop-color:var(--cf-streak);stop-opacity:1"/>
+            <stop offset="1" style="stop-color:var(--cf-streak);stop-opacity:0"/>
+          </linearGradient>
+          <clipPath id="cf-clip"><path d="M300.0 61.0L230.0 79.0L164.0 111.0L118.0 143.0L38.0 209.0L12.0 227.0L9.0 230.0L9.0 236.0L12.0 239.0L20.0 241.0L34.0 239.0L58.0 231.0L82.0 219.0L174.0 155.0L230.0 127.0L276.0 115.0L330.0 115.0L364.0 123.0L432.0 155.0L536.0 219.0L568.0 235.0L610.0 249.0L664.0 257.0L694.0 255.0L734.0 245.0L760.0 233.0L765.0 228.0L762.0 223.0L692.0 219.0L646.0 207.0L572.0 171.0L478.0 113.0L416.0 81.0L382.0 69.0L354.0 63.0L302.0 61.0Z"/><path d="M408.0 9.0L372.0 15.0L340.0 25.0L333.0 34.0L334.0 51.0L339.0 48.0L344.0 37.0L352.0 35.0L398.0 39.0L436.0 51.0L492.0 79.0L578.0 135.0L624.0 161.0L670.0 179.0L756.0 197.0L802.0 197.0L864.0 183.0L888.0 173.0L918.0 153.0L939.0 134.0L936.0 127.0L920.0 125.0L890.0 143.0L850.0 153.0L830.0 153.0L828.0 155.0L776.0 153.0L754.0 147.0L716.0 131.0L664.0 101.0L590.0 53.0L532.0 25.0L498.0 15.0L464.0 9.0L410.0 9.0Z"/><path d="M306.0 141.0L262.0 149.0L212.0 169.0L170.0 193.0L120.0 227.0L109.0 238.0L110.0 247.0L156.0 245.0L182.0 237.0L212.0 223.0L280.0 181.0L312.0 165.0L354.0 155.0L355.0 150.0L346.0 143.0L308.0 141.0Z"/></clipPath>
+        </defs>
+        <g><path d="M300.0 61.0L230.0 79.0L164.0 111.0L118.0 143.0L38.0 209.0L12.0 227.0L9.0 230.0L9.0 236.0L12.0 239.0L20.0 241.0L34.0 239.0L58.0 231.0L82.0 219.0L174.0 155.0L230.0 127.0L276.0 115.0L330.0 115.0L364.0 123.0L432.0 155.0L536.0 219.0L568.0 235.0L610.0 249.0L664.0 257.0L694.0 255.0L734.0 245.0L760.0 233.0L765.0 228.0L762.0 223.0L692.0 219.0L646.0 207.0L572.0 171.0L478.0 113.0L416.0 81.0L382.0 69.0L354.0 63.0L302.0 61.0Z" fill="url(#cf-fill)"/><path d="M408.0 9.0L372.0 15.0L340.0 25.0L333.0 34.0L334.0 51.0L339.0 48.0L344.0 37.0L352.0 35.0L398.0 39.0L436.0 51.0L492.0 79.0L578.0 135.0L624.0 161.0L670.0 179.0L756.0 197.0L802.0 197.0L864.0 183.0L888.0 173.0L918.0 153.0L939.0 134.0L936.0 127.0L920.0 125.0L890.0 143.0L850.0 153.0L830.0 153.0L828.0 155.0L776.0 153.0L754.0 147.0L716.0 131.0L664.0 101.0L590.0 53.0L532.0 25.0L498.0 15.0L464.0 9.0L410.0 9.0Z" fill="url(#cf-fill)"/><path d="M306.0 141.0L262.0 149.0L212.0 169.0L170.0 193.0L120.0 227.0L109.0 238.0L110.0 247.0L156.0 245.0L182.0 237.0L212.0 223.0L280.0 181.0L312.0 165.0L354.0 155.0L355.0 150.0L346.0 143.0L308.0 141.0Z" fill="url(#cf-fill)"/></g>
+        <g clip-path="url(#cf-clip)"><rect class="cf-streak" fill="url(#cf-glint)" x="0" y="-60" width="240" height="387"/></g>
+      </svg>
+    </span>
     <p>Checking session…</p>
   </div>
 
