@@ -1,10 +1,10 @@
-const CACHE_NAME = 'relish-approvals-v37';
-const DYNAMIC_CACHE = 'relish-approvals-dynamic-v13';
+const CACHE_NAME = 'relish-approvals-v38';
+const DYNAMIC_CACHE = 'relish-approvals-dynamic-v14';
 const urlsToCache = [
   '/',
   '/index.html',
   '/styles.css?v=16',
-  '/app.js?v=22',
+  '/app.js?v=23',
   '/logo.png',
   '/manifest.json',
   '/android-launchericon-192-192.png',
