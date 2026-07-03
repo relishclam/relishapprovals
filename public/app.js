@@ -20,6 +20,8 @@ const CF_PATHS = [
 ];
 const ClamFlowLoader = ({ width = 200, label = 'Loading' }) => {
   const [uid] = useState(() => `cf${++_cfCounter}`);
+  const w = typeof width === 'number' ? width : (parseInt(width) || 200);
+  const h = Math.round(w * 267 / 950);
   useEffect(() => {
     if (document.getElementById('clamflow-keyframes')) return;
     const s = document.createElement('style');
@@ -28,9 +30,9 @@ const ClamFlowLoader = ({ width = 200, label = 'Loading' }) => {
     document.head.appendChild(s);
   }, []);
   return (
-    <span style={{display:'inline-block',width,aspectRatio:'950/267',lineHeight:0,verticalAlign:'middle'}}>
-      <svg className="cf-wave-svg" viewBox="0 0 950 267" role="img" aria-label={label}
-        style={{display:'block',width:'100%',height:'100%',overflow:'visible',
+    <span style={{display:'inline-block',width:w,height:h,lineHeight:0,verticalAlign:'middle',flexShrink:0}}>
+      <svg className="cf-wave-svg" width={w} height={h} viewBox="0 0 950 267" role="img" aria-label={label}
+        style={{display:'block',overflow:'visible',
           animation:'cf-form 2.6s cubic-bezier(.45,.05,.35,1) infinite'}}>
         <defs>
           <linearGradient id={uid+'-f'} x1="0" y1="0" x2="0" y2="1">
