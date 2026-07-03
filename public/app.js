@@ -9,6 +9,54 @@ const API_BASE = '/api';
 const APP_VERSION = 'v12'; // Version marker for cache debugging
 console.log('[Relish App] Version:', APP_VERSION);
 
+// ── ClamFlow Wave Loader ─────────────────────────────────────────────────────
+// Unique IDs per instance, hardcoded teal palette, self-injecting keyframes.
+// Usage: <ClamFlowLoader width={200} label="Loading" />
+let _cfCounter = 0;
+const CF_PATHS = [
+  'M300.0 61.0L230.0 79.0L164.0 111.0L118.0 143.0L38.0 209.0L12.0 227.0L9.0 230.0L9.0 236.0L12.0 239.0L20.0 241.0L34.0 239.0L58.0 231.0L82.0 219.0L174.0 155.0L230.0 127.0L276.0 115.0L330.0 115.0L364.0 123.0L432.0 155.0L536.0 219.0L568.0 235.0L610.0 249.0L664.0 257.0L694.0 255.0L734.0 245.0L760.0 233.0L765.0 228.0L762.0 223.0L692.0 219.0L646.0 207.0L572.0 171.0L478.0 113.0L416.0 81.0L382.0 69.0L354.0 63.0L302.0 61.0Z',
+  'M408.0 9.0L372.0 15.0L340.0 25.0L333.0 34.0L334.0 51.0L339.0 48.0L344.0 37.0L352.0 35.0L398.0 39.0L436.0 51.0L492.0 79.0L578.0 135.0L624.0 161.0L670.0 179.0L756.0 197.0L802.0 197.0L864.0 183.0L888.0 173.0L918.0 153.0L939.0 134.0L936.0 127.0L920.0 125.0L890.0 143.0L850.0 153.0L830.0 153.0L828.0 155.0L776.0 153.0L754.0 147.0L716.0 131.0L664.0 101.0L590.0 53.0L532.0 25.0L498.0 15.0L464.0 9.0L410.0 9.0Z',
+  'M306.0 141.0L262.0 149.0L212.0 169.0L170.0 193.0L120.0 227.0L109.0 238.0L110.0 247.0L156.0 245.0L182.0 237.0L212.0 223.0L280.0 181.0L312.0 165.0L354.0 155.0L355.0 150.0L346.0 143.0L308.0 141.0Z'
+];
+const ClamFlowLoader = ({ width = 200, label = 'Loading' }) => {
+  const [uid] = useState(() => `cf${++_cfCounter}`);
+  useEffect(() => {
+    if (document.getElementById('clamflow-keyframes')) return;
+    const s = document.createElement('style');
+    s.id = 'clamflow-keyframes';
+    s.textContent = '@keyframes cf-form{0%{clip-path:inset(0 100% 0 0);opacity:1}52%{clip-path:inset(0 0 0 0);opacity:1}82%{clip-path:inset(0 0 0 0);opacity:1}94%{clip-path:inset(0 0 0 0);opacity:0}100%{clip-path:inset(0 100% 0 0);opacity:0}}@keyframes cf-sweep{0%{transform:translateX(-320px) skewX(-12deg)}100%{transform:translateX(1070px) skewX(-12deg)}}@media(prefers-reduced-motion:reduce){.cf-wave-svg{animation:none!important;clip-path:none!important;opacity:1!important}.cf-wave-streak{display:none!important}}';
+    document.head.appendChild(s);
+  }, []);
+  return (
+    <span style={{display:'inline-block',width,aspectRatio:'950/267',lineHeight:0,verticalAlign:'middle'}}>
+      <svg className="cf-wave-svg" viewBox="0 0 950 267" role="img" aria-label={label}
+        style={{display:'block',width:'100%',height:'100%',overflow:'visible',
+          animation:'cf-form 2.6s cubic-bezier(.45,.05,.35,1) infinite'}}>
+        <defs>
+          <linearGradient id={uid+'-f'} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stopColor="#58d3c1"/>
+            <stop offset="1" stopColor="#16656f"/>
+          </linearGradient>
+          <linearGradient id={uid+'-g'} x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0" stopColor="#fff" stopOpacity="0"/>
+            <stop offset=".5" stopColor="#fff" stopOpacity="1"/>
+            <stop offset="1" stopColor="#fff" stopOpacity="0"/>
+          </linearGradient>
+          <clipPath id={uid+'-c'}>
+            {CF_PATHS.map((d,i) => <path key={i} d={d}/>)}
+          </clipPath>
+        </defs>
+        <g>{CF_PATHS.map((d,i) => <path key={i} d={d} fill={`url(#${uid}-f)`}/>)}</g>
+        <g clipPath={`url(#${uid}-c)`}>
+          <rect className="cf-wave-streak" x="0" y="-60" width="240" height="387"
+            fill={`url(#${uid}-g)`}
+            style={{mixBlendMode:'screen',animation:'cf-sweep 1.7s cubic-bezier(.5,0,.3,1) infinite'}}/>
+        </g>
+      </svg>
+    </span>
+  );
+};
+
 // Simple SVG Icons
 const Icons = {
   building: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 22V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v18Z"/><path d="M6 12H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2"/><path d="M18 9h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2"/></svg>,
@@ -27,7 +75,7 @@ const Icons = {
   home: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>,
   user: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>,
   users: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>,
-  loader: <span className="cf-loader" style={{width:'54px'}}><svg className="cf-loader__form" viewBox="0 0 950 267" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Loading"><defs><linearGradient id="cf-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" style={{stopColor:'var(--cf-c1)'}}/><stop offset="1" style={{stopColor:'var(--cf-c2)'}}/></linearGradient><linearGradient id="cf-glint" x1="0" y1="0" x2="1" y2="0"><stop offset="0" style={{stopColor:'var(--cf-streak)',stopOpacity:0}}/><stop offset=".5" style={{stopColor:'var(--cf-streak)',stopOpacity:1}}/><stop offset="1" style={{stopColor:'var(--cf-streak)',stopOpacity:0}}/></linearGradient><clipPath id="cf-clip"><path d="M300.0 61.0L230.0 79.0L164.0 111.0L118.0 143.0L38.0 209.0L12.0 227.0L9.0 230.0L9.0 236.0L12.0 239.0L20.0 241.0L34.0 239.0L58.0 231.0L82.0 219.0L174.0 155.0L230.0 127.0L276.0 115.0L330.0 115.0L364.0 123.0L432.0 155.0L536.0 219.0L568.0 235.0L610.0 249.0L664.0 257.0L694.0 255.0L734.0 245.0L760.0 233.0L765.0 228.0L762.0 223.0L692.0 219.0L646.0 207.0L572.0 171.0L478.0 113.0L416.0 81.0L382.0 69.0L354.0 63.0L302.0 61.0Z"/><path d="M408.0 9.0L372.0 15.0L340.0 25.0L333.0 34.0L334.0 51.0L339.0 48.0L344.0 37.0L352.0 35.0L398.0 39.0L436.0 51.0L492.0 79.0L578.0 135.0L624.0 161.0L670.0 179.0L756.0 197.0L802.0 197.0L864.0 183.0L888.0 173.0L918.0 153.0L939.0 134.0L936.0 127.0L920.0 125.0L890.0 143.0L850.0 153.0L830.0 153.0L828.0 155.0L776.0 153.0L754.0 147.0L716.0 131.0L664.0 101.0L590.0 53.0L532.0 25.0L498.0 15.0L464.0 9.0L410.0 9.0Z"/><path d="M306.0 141.0L262.0 149.0L212.0 169.0L170.0 193.0L120.0 227.0L109.0 238.0L110.0 247.0L156.0 245.0L182.0 237.0L212.0 223.0L280.0 181.0L312.0 165.0L354.0 155.0L355.0 150.0L346.0 143.0L308.0 141.0Z"/></clipPath></defs><g><path d="M300.0 61.0L230.0 79.0L164.0 111.0L118.0 143.0L38.0 209.0L12.0 227.0L9.0 230.0L9.0 236.0L12.0 239.0L20.0 241.0L34.0 239.0L58.0 231.0L82.0 219.0L174.0 155.0L230.0 127.0L276.0 115.0L330.0 115.0L364.0 123.0L432.0 155.0L536.0 219.0L568.0 235.0L610.0 249.0L664.0 257.0L694.0 255.0L734.0 245.0L760.0 233.0L765.0 228.0L762.0 223.0L692.0 219.0L646.0 207.0L572.0 171.0L478.0 113.0L416.0 81.0L382.0 69.0L354.0 63.0L302.0 61.0Z" fill="url(#cf-fill)"/><path d="M408.0 9.0L372.0 15.0L340.0 25.0L333.0 34.0L334.0 51.0L339.0 48.0L344.0 37.0L352.0 35.0L398.0 39.0L436.0 51.0L492.0 79.0L578.0 135.0L624.0 161.0L670.0 179.0L756.0 197.0L802.0 197.0L864.0 183.0L888.0 173.0L918.0 153.0L939.0 134.0L936.0 127.0L920.0 125.0L890.0 143.0L850.0 153.0L830.0 153.0L828.0 155.0L776.0 153.0L754.0 147.0L716.0 131.0L664.0 101.0L590.0 53.0L532.0 25.0L498.0 15.0L464.0 9.0L410.0 9.0Z" fill="url(#cf-fill)"/><path d="M306.0 141.0L262.0 149.0L212.0 169.0L170.0 193.0L120.0 227.0L109.0 238.0L110.0 247.0L156.0 245.0L182.0 237.0L212.0 223.0L280.0 181.0L312.0 165.0L354.0 155.0L355.0 150.0L346.0 143.0L308.0 141.0Z" fill="url(#cf-fill)"/></g><g clipPath="url(#cf-clip)"><rect className="cf-streak" fill="url(#cf-glint)" x="0" y="-60" width="240" height="387"/></g></svg></span>,
+  loader: null, // overridden below by Icons.loader = <ClamFlowLoader/>; see line after Icons object
   refresh: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>,
   send: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>,
   download: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>,
@@ -46,6 +94,8 @@ const Icons = {
   receiptCheck: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 2v20l2-1 2 1 2-1 2 1 2-1 2 1 2-1 2 1V2l-2 1-2-1-2 1-2-1-2 1-2-1-2 1-2-1Z"/><path d="m9 12 2 2 4-4"/></svg>,
   qrCode: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect width="5" height="5" x="3" y="3" rx="1"/><rect width="5" height="5" x="16" y="3" rx="1"/><rect width="5" height="5" x="3" y="16" rx="1"/><path d="M21 16h-3a2 2 0 0 0-2 2v3"/><path d="M21 21v.01"/><path d="M12 7v3a2 2 0 0 1-2 2H7"/><path d="M3 12h.01"/><path d="M12 3h.01"/><path d="M12 16v.01"/><path d="M16 12h1"/><path d="M21 12v.01"/><path d="M12 21v-1"/></svg>,
 };
+// Override Icons.loader with proper ClamFlowLoader (unique IDs, hardcoded teal colours)
+Icons.loader = <ClamFlowLoader width={56}/>;
 
 // Number to Words Converter for Indian Rupees
 const numberToWordsIndian = (num) => {
@@ -5365,7 +5415,7 @@ const PayeesManagement = () => {
     }
   };
 
-  if (loading) return <div className="loading-state"><span className="cf-loader" style={{width:'96px',display:'block',margin:'0 auto 0.75rem'}}><svg className="cf-loader__form" viewBox="0 0 950 267" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Loading"><defs><linearGradient id="cf-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" style={{stopColor:'var(--cf-c1)'}}/><stop offset="1" style={{stopColor:'var(--cf-c2)'}}/></linearGradient><linearGradient id="cf-glint" x1="0" y1="0" x2="1" y2="0"><stop offset="0" style={{stopColor:'var(--cf-streak)',stopOpacity:0}}/><stop offset=".5" style={{stopColor:'var(--cf-streak)',stopOpacity:1}}/><stop offset="1" style={{stopColor:'var(--cf-streak)',stopOpacity:0}}/></linearGradient><clipPath id="cf-clip"><path d="M300.0 61.0L230.0 79.0L164.0 111.0L118.0 143.0L38.0 209.0L12.0 227.0L9.0 230.0L9.0 236.0L12.0 239.0L20.0 241.0L34.0 239.0L58.0 231.0L82.0 219.0L174.0 155.0L230.0 127.0L276.0 115.0L330.0 115.0L364.0 123.0L432.0 155.0L536.0 219.0L568.0 235.0L610.0 249.0L664.0 257.0L694.0 255.0L734.0 245.0L760.0 233.0L765.0 228.0L762.0 223.0L692.0 219.0L646.0 207.0L572.0 171.0L478.0 113.0L416.0 81.0L382.0 69.0L354.0 63.0L302.0 61.0Z"/><path d="M408.0 9.0L372.0 15.0L340.0 25.0L333.0 34.0L334.0 51.0L339.0 48.0L344.0 37.0L352.0 35.0L398.0 39.0L436.0 51.0L492.0 79.0L578.0 135.0L624.0 161.0L670.0 179.0L756.0 197.0L802.0 197.0L864.0 183.0L888.0 173.0L918.0 153.0L939.0 134.0L936.0 127.0L920.0 125.0L890.0 143.0L850.0 153.0L830.0 153.0L828.0 155.0L776.0 153.0L754.0 147.0L716.0 131.0L664.0 101.0L590.0 53.0L532.0 25.0L498.0 15.0L464.0 9.0L410.0 9.0Z"/><path d="M306.0 141.0L262.0 149.0L212.0 169.0L170.0 193.0L120.0 227.0L109.0 238.0L110.0 247.0L156.0 245.0L182.0 237.0L212.0 223.0L280.0 181.0L312.0 165.0L354.0 155.0L355.0 150.0L346.0 143.0L308.0 141.0Z"/></clipPath></defs><g><path d="M300.0 61.0L230.0 79.0L164.0 111.0L118.0 143.0L38.0 209.0L12.0 227.0L9.0 230.0L9.0 236.0L12.0 239.0L20.0 241.0L34.0 239.0L58.0 231.0L82.0 219.0L174.0 155.0L230.0 127.0L276.0 115.0L330.0 115.0L364.0 123.0L432.0 155.0L536.0 219.0L568.0 235.0L610.0 249.0L664.0 257.0L694.0 255.0L734.0 245.0L760.0 233.0L765.0 228.0L762.0 223.0L692.0 219.0L646.0 207.0L572.0 171.0L478.0 113.0L416.0 81.0L382.0 69.0L354.0 63.0L302.0 61.0Z" fill="url(#cf-fill)"/><path d="M408.0 9.0L372.0 15.0L340.0 25.0L333.0 34.0L334.0 51.0L339.0 48.0L344.0 37.0L352.0 35.0L398.0 39.0L436.0 51.0L492.0 79.0L578.0 135.0L624.0 161.0L670.0 179.0L756.0 197.0L802.0 197.0L864.0 183.0L888.0 173.0L918.0 153.0L939.0 134.0L936.0 127.0L920.0 125.0L890.0 143.0L850.0 153.0L830.0 153.0L828.0 155.0L776.0 153.0L754.0 147.0L716.0 131.0L664.0 101.0L590.0 53.0L532.0 25.0L498.0 15.0L464.0 9.0L410.0 9.0Z" fill="url(#cf-fill)"/><path d="M306.0 141.0L262.0 149.0L212.0 169.0L170.0 193.0L120.0 227.0L109.0 238.0L110.0 247.0L156.0 245.0L182.0 237.0L212.0 223.0L280.0 181.0L312.0 165.0L354.0 155.0L355.0 150.0L346.0 143.0L308.0 141.0Z" fill="url(#cf-fill)"/></g><g clipPath="url(#cf-clip)"><rect className="cf-streak" fill="url(#cf-glint)" x="0" y="-60" width="240" height="387"/></g></svg></span><p>Loading payees...</p></div>;
+  if (loading) return <div className="loading-state"><ClamFlowLoader width={200} label="Loading payees"/><span>Loading payees…</span></div>;
 
   return (
     <div className="page-container">
@@ -7454,7 +7504,7 @@ const SuspenseVoucherList = ({ onViewDetail }) => {
       )}
 
       {loading ? (
-        <div className="loading-state">{Icons.loader} Loading...</div>
+        <div className="loading-state"><ClamFlowLoader width={200} label="Loading"/><span>Loading…</span></div>
       ) : vouchers.length === 0 ? (
         <div className="empty-state">{Icons.wallet}<p>No suspense vouchers found</p></div>
       ) : (
@@ -7809,7 +7859,7 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
     return <span style={{ background: '#fef3c7', color: '#d97706', padding: '2px 8px', borderRadius: '4px', fontSize: '0.72rem', fontWeight: 600 }}>⏳ Pending Review</span>;
   };
 
-  if (loading) return <div className="loading-state">{Icons.loader} Loading...</div>;
+  if (loading) return <div className="loading-state"><ClamFlowLoader width={200} label="Loading"/><span>Loading…</span></div>;
   if (!sv) return <div className="empty-state"><p>Suspense voucher not found</p></div>;
 
   const isAdmin = user.role === 'admin' || user.isSuperAdmin;
