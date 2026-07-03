@@ -26,13 +26,13 @@ const ClamFlowLoader = ({ width = 200, label = 'Loading' }) => {
     if (document.getElementById('clamflow-keyframes')) return;
     const s = document.createElement('style');
     s.id = 'clamflow-keyframes';
-    s.textContent = '@keyframes cf-form{0%{width:0%;opacity:1}52%{width:100%;opacity:1}82%{width:100%;opacity:1}94%{width:100%;opacity:0}100%{width:0%;opacity:0}}@keyframes cf-sweep{0%{transform:translateX(-320px) skewX(-12deg)}100%{transform:translateX(1070px) skewX(-12deg)}}@media(prefers-reduced-motion:reduce){.cf-wave-wrap{animation:none;width:100%;opacity:1}.cf-wave-streak{display:none}}';
+    s.textContent = '@keyframes cf-form{0%{width:0%;opacity:1}20%{width:100%;opacity:1}80%{width:100%;opacity:1}95%{width:100%;opacity:0}100%{width:0%;opacity:0}}@keyframes cf-sweep{0%{transform:translateX(-320px) skewX(-12deg)}100%{transform:translateX(1070px) skewX(-12deg)}}@media(prefers-reduced-motion:reduce){.cf-wave-wrap{animation:none;width:100%;opacity:1}.cf-wave-streak{display:none}}';
     document.head.appendChild(s);
   }, []);
   return (
     <span style={{display:'inline-block',width:w,height:h,lineHeight:0,verticalAlign:'middle',flexShrink:0,position:'relative'}}>
       <span className="cf-wave-wrap" style={{display:'block',position:'absolute',left:0,top:0,height:h,width:0,overflow:'hidden',
-        animation:'cf-form 2.6s cubic-bezier(.45,.05,.35,1) infinite'}}>
+        animation:'cf-form 3s ease-out infinite'}}>
         <svg width={w} height={h} viewBox="0 0 950 267" role="img" aria-label={label}
           style={{display:'block'}}>
         <defs>
