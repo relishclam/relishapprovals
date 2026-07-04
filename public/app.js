@@ -235,6 +235,7 @@ const api = {
   topUpSuspenseVoucher: (suspenseId, data) => fetch(`${API_BASE}/suspense-vouchers/${suspenseId}/topup`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
   approveTopUp: (settlementId, approvedBy) => fetch(`${API_BASE}/suspense-settlements/${settlementId}/approve-topup`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ approvedBy }) }).then(r => r.json()),
   rejectTopUp: (settlementId, rejectedBy, reason) => fetch(`${API_BASE}/suspense-settlements/${settlementId}/reject-topup`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rejectedBy, reason }) }).then(r => r.json()),
+  markTopupPaid: (settlementId, paidBy, paymentReference, paymentNotes, receiptData, receiptMimeType) => fetch(`${API_BASE}/suspense-settlements/${settlementId}/mark-topup-paid`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ paidBy, paymentReference, paymentNotes, receiptData: receiptData || undefined, receiptMimeType: receiptMimeType || undefined }) }).then(r => r.json()),
   closeSuspenseVoucher: (suspenseId, closedBy) => fetch(`${API_BASE}/suspense-vouchers/${suspenseId}/close`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ closedBy }) }).then(r => r.json()),
   recalculateSuspenseBalance: (suspenseId, requestedBy) => fetch(`${API_BASE}/suspense-vouchers/${suspenseId}/recalculate-balance`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ requestedBy }) }).then(r => r.json()),
   // Attachments
@@ -7652,6 +7653,17 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
   const [advanceOtp, setAdvanceOtp] = useState('');
   const [advanceOtpLoading, setAdvanceOtpLoading] = useState(false);
 
+  // Top-up Pay Now / Mark Paid state
+  const [payNowTopup, setPayNowTopup] = useState(null);       // synthetic obj for Pay Now modal
+  const [topupPaidEntry, setTopupPaidEntry] = useState(null); // settlement entry being marked paid
+  const [showTopupPaidModal, setShowTopupPaidModal] = useState(false);
+  const [topupPaymentRef, setTopupPaymentRef] = useState('');
+  const [topupPaymentNotes, setTopupPaymentNotes] = useState('');
+  const [topupReceiptData, setTopupReceiptData] = useState('');
+  const [topupReceiptMimeType, setTopupReceiptMimeType] = useState('');
+  const [topupReceiptPreview, setTopupReceiptPreview] = useState('');
+  const [topupPaidLoading, setTopupPaidLoading] = useState(false);
+
   const load = async () => {
     setLoading(true);
     try {
@@ -7770,6 +7782,62 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
       load();
     } else addToast(result.error || 'Rejection failed', 'error');
     setActionLoading(false);
+  };
+
+  // Build a voucher-like object so the shared Pay Now modal can render top-up payment details
+  const buildTopupPayNow = (entry) => ({
+    _isTopup: true,
+    _topupId: entry.id,
+    serial_number: sv.serial_number,
+    _topupDescription: entry.description,
+    payee_name: sv.staff_payee?.name || sv.staff?.name || 'Staff',
+    amount: entry.amount,
+    payment_mode: sv.payment_mode || 'Account Transfer',
+    payee_upi_id: sv.staff_payee?.upi_id || null,
+    payee_bank_account: sv.staff_payee?.bank_account || null,
+    payee_ifsc: sv.staff_payee?.ifsc || null,
+    payee_bank_name: sv.staff_payee?.bank_name || null,
+    paid_from_account: null,
+    status: 'approved'
+  });
+
+  const handleTopupReceiptUpload = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) { addToast('Receipt must be under 5 MB', 'error'); return; }
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const base64 = ev.target.result.split(',')[1];
+      setTopupReceiptData(base64);
+      setTopupReceiptMimeType(file.type);
+      setTopupReceiptPreview(file.type.startsWith('image/') ? ev.target.result : 'pdf');
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const clearTopupPaidModal = () => {
+    setShowTopupPaidModal(false);
+    setTopupPaidEntry(null);
+    setTopupPaymentRef('');
+    setTopupPaymentNotes('');
+    setTopupReceiptData('');
+    setTopupReceiptMimeType('');
+    setTopupReceiptPreview('');
+  };
+
+  const handleTopupMarkPaid = async () => {
+    if (!topupPaymentRef.trim() && !topupReceiptData) {
+      addToast('Enter a UTR reference or upload a receipt — at least one is required', 'error');
+      return;
+    }
+    setTopupPaidLoading(true);
+    const result = await api.markTopupPaid(topupPaidEntry.id, user.id, topupPaymentRef.trim(), topupPaymentNotes.trim(), topupReceiptData, topupReceiptMimeType);
+    if (result.success) {
+      addToast('Top-up payment confirmed ✅', 'success');
+      clearTopupPaidModal();
+      load();
+    } else addToast(result.error || 'Failed to confirm payment', 'error');
+    setTopupPaidLoading(false);
   };
 
   const handleCloseVoucher = async () => {
@@ -8012,6 +8080,16 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
                           <button className="btn btn-sm btn-danger" style={{ fontSize: '0.75rem', padding: '3px 10px' }} onClick={() => handleRejectTopUp(s)} disabled={actionLoading}>✕ Reject</button>
                         </div>
                       )}
+                      {(user.role === 'admin' || user.isSuperAdmin) && s.entry_type === 'topup' && s.status === 'approved' && !s.payment_status && (
+                        <button className="btn btn-sm" style={{ background: '#16a34a', color: 'white', border: 'none', borderRadius: '6px', padding: '3px 10px', fontSize: '0.75rem', cursor: 'pointer', fontWeight: 600 }} onClick={() => setPayNowTopup(buildTopupPayNow(s))}>💳 Pay Now</button>
+                      )}
+                      {s.entry_type === 'topup' && s.payment_status === 'paid' && (
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px' }}>
+                          <span style={{ background: 'rgba(16,185,129,0.12)', color: '#065f46', fontWeight: 600, fontSize: '0.72rem', padding: '2px 8px', borderRadius: '10px', display: 'inline-flex', alignItems: 'center', gap: '3px' }}>✅ Paid</span>
+                          {s.payment_reference && <span style={{ fontSize: '0.68rem', color: '#6b7280', fontFamily: 'monospace' }}>UTR: {s.payment_reference}</span>}
+                          {s.payment_receipt_url && <a href={s.payment_receipt_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: '0.68rem', color: '#2563eb' }}>📎 Receipt</a>}
+                        </div>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -8089,6 +8167,130 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
             <div className="modal-footer">
               <button className="btn btn-secondary" onClick={() => setShowCloseModal(false)}>Cancel</button>
               <button className="btn btn-danger" onClick={handleCloseVoucher} disabled={closeLoading}>{closeLoading ? Icons.loader : '🔒'} Confirm Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Top-Up Pay Now Modal ─────────────────────────────────────────── */}
+      {payNowTopup && (() => {
+        const v = payNowTopup;
+        const isMobile = /Mobi|Android/i.test(navigator.userAgent);
+        const upiUrl = v.payment_mode === 'UPI' && v.payee_upi_id
+          ? `upi://pay?${new URLSearchParams({ pa: v.payee_upi_id, pn: v.payee_name, am: parseFloat(v.amount).toFixed(2), cu: 'INR', tn: `Top-Up ${v.serial_number}` }).toString()}`
+          : null;
+        const qrSrc = upiUrl
+          ? `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(upiUrl)}&bgcolor=ffffff&color=1a1a1a&margin=10`
+          : null;
+        const copyBankDetails = () => {
+          const text = [`Payee: ${v.payee_name}`, `Account No: ${v.payee_bank_account || '—'}`, `IFSC: ${v.payee_ifsc || '—'}`, `Bank: ${v.payee_bank_name || '—'}`, `Amount: ₹${parseFloat(v.amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, `Reference: ${v.serial_number} (Top-Up)`].join('\n');
+          navigator.clipboard.writeText(text).then(() => addToast('Bank details copied', 'success'));
+        };
+        return (
+          <div className="modal-overlay" onClick={() => setPayNowTopup(null)}>
+            <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '440px' }}>
+              <div className="modal-header" style={{ background: '#16a34a', color: 'white' }}>
+                <h3 className="modal-title" style={{ color: 'white' }}>💳 Pay Top-Up — {v.serial_number}</h3>
+                <button className="modal-close" style={{ color: 'white' }} onClick={() => setPayNowTopup(null)}>×</button>
+              </div>
+              <div className="modal-body">
+                <div style={{ marginBottom: '1rem', padding: '0.75rem', background: '#f0fdf4', borderRadius: '8px', border: '1px solid #86efac', fontSize: '0.9rem' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.3rem' }}><span style={{ color: '#166534' }}>Payee (Staff)</span><strong>{v.payee_name}</strong></div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.3rem' }}><span style={{ color: '#166534' }}>Top-Up Amount</span><strong style={{ fontFamily: 'monospace', fontSize: '1.1rem' }}>₹{parseFloat(v.amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</strong></div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.3rem' }}><span style={{ color: '#166534' }}>Mode</span><strong>{v.payment_mode}</strong></div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#166534' }}>Reason</span><span style={{ textAlign: 'right', maxWidth: '60%', color: '#374151', fontSize: '0.85rem' }}>{v._topupDescription}</span></div>
+                </div>
+
+                {v.payment_mode === 'UPI' && !v.payee_upi_id && (
+                  <div style={{ padding: '1rem', background: '#fef9c3', borderRadius: '8px', border: '1px solid #fde047', textAlign: 'center', fontSize: '0.88rem', color: '#713f12' }}>
+                    ⚠️ No UPI ID recorded for this staff payee. Edit the payee to add their UPI ID.
+                  </div>
+                )}
+                {v.payment_mode === 'UPI' && v.payee_upi_id && isMobile && (
+                  <div style={{ textAlign: 'center' }}>
+                    <p style={{ fontSize: '0.85rem', color: '#555', marginBottom: '1rem' }}>Tap below to open your UPI app with details pre-filled.</p>
+                    <a href={upiUrl} style={{ display: 'inline-block', background: '#16a34a', color: 'white', padding: '0.75rem 2rem', borderRadius: '8px', fontWeight: 700, textDecoration: 'none', fontSize: '1rem' }}>Open UPI App →</a>
+                    <p style={{ fontSize: '0.75rem', color: '#888', marginTop: '0.75rem' }}>UPI ID: <code>{v.payee_upi_id}</code></p>
+                  </div>
+                )}
+                {v.payment_mode === 'UPI' && v.payee_upi_id && !isMobile && (
+                  <div style={{ textAlign: 'center' }}>
+                    <p style={{ fontSize: '0.85rem', color: '#555', marginBottom: '0.75rem' }}>Scan this QR code with any UPI app on your phone.</p>
+                    <img src={qrSrc} alt="UPI QR Code" style={{ width: 220, height: 220, border: '1px solid #e5e7eb', borderRadius: '8px' }} />
+                    <p style={{ fontSize: '0.75rem', color: '#888', marginTop: '0.75rem' }}>UPI ID: <code>{v.payee_upi_id}</code></p>
+                  </div>
+                )}
+                {v.payment_mode === 'Account Transfer' && (
+                  <div>
+                    <p style={{ fontSize: '0.85rem', color: '#555', marginBottom: '0.75rem' }}>Use these details in your banking app (NEFT / IMPS / RTGS).</p>
+                    <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '1rem', fontSize: '0.9rem' }}>
+                      {[['Payee', v.payee_name], ['Account No', v.payee_bank_account || '—'], ['IFSC', v.payee_ifsc || '—'], ['Bank', v.payee_bank_name || '—'], ['Amount', `₹${parseFloat(v.amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`], ['Reference', `${v.serial_number} (Top-Up)`]].map(([label, val]) => (
+                        <div key={label} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.35rem 0', borderBottom: '1px solid #e2e8f0' }}>
+                          <span style={{ color: '#64748b' }}>{label}</span><strong style={{ textAlign: 'right', maxWidth: '60%', wordBreak: 'break-all' }}>{val}</strong>
+                        </div>
+                      ))}
+                    </div>
+                    <button className="btn btn-secondary" style={{ width: '100%', marginTop: '0.75rem' }} onClick={copyBankDetails}>📋 Copy All Details</button>
+                  </div>
+                )}
+                {v.payment_mode === 'Cash' && (
+                  <div style={{ padding: '1rem', background: '#f8fafc', borderRadius: '8px', border: '1px solid #e2e8f0', textAlign: 'center', fontSize: '0.88rem', color: '#374151' }}>
+                    Hand ₹{parseFloat(v.amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })} cash to <strong>{v.payee_name}</strong> and then confirm below.
+                  </div>
+                )}
+              </div>
+              <div className="modal-footer">
+                <button className="btn btn-secondary" onClick={() => setPayNowTopup(null)}>Close</button>
+                <button className="btn btn-success" onClick={() => { setPayNowTopup(null); setTopupPaidEntry(sv.settlements.find(s => s.id === v._topupId)); setShowTopupPaidModal(true); }}>✅ Confirm Payment →</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── Top-Up Mark Paid Modal ────────────────────────────────────────── */}
+      {showTopupPaidModal && topupPaidEntry && (
+        <div className="modal-overlay" onClick={clearTopupPaidModal}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '480px' }}>
+            <div className="modal-header" style={{ background: '#16a34a', color: 'white' }}>
+              <h3 className="modal-title" style={{ color: 'white' }}>✅ Confirm Top-Up Payment — {sv.serial_number}</h3>
+              <button className="modal-close" style={{ color: 'white' }} onClick={clearTopupPaidModal}>×</button>
+            </div>
+            <div className="modal-body">
+              <div style={{ background: '#f0fdf4', border: '1px solid #86efac', borderRadius: '8px', padding: '0.75rem', marginBottom: '1rem', fontSize: '0.9rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem' }}><span style={{ color: '#166534' }}>Staff Payee</span><strong>{sv.staff_payee?.name || sv.staff?.name}</strong></div>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#166534' }}>Amount</span><strong style={{ fontFamily: 'monospace' }}>₹{parseFloat(topupPaidEntry.amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</strong></div>
+              </div>
+              <div className="form-group">
+                <label className="form-label">UTR / Transaction ID <span style={{ color: '#888', fontWeight: 400 }}>(optional if receipt uploaded)</span></label>
+                <input className="form-input" type="text" placeholder="e.g. 426123456789" value={topupPaymentRef} onChange={e => setTopupPaymentRef(e.target.value)} autoFocus />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Payment Receipt / Screenshot <span style={{ color: '#888', fontWeight: 400 }}>(optional if UTR entered)</span></label>
+                {topupReceiptPreview ? (
+                  <div style={{ position: 'relative', marginBottom: '0.5rem' }}>
+                    {topupReceiptPreview === 'pdf' ? (
+                      <div style={{ background: '#f3f4f6', border: '1px solid #d1d5db', borderRadius: '8px', padding: '1rem', textAlign: 'center', fontSize: '0.9rem', color: '#374151' }}>📄 PDF receipt selected</div>
+                    ) : (
+                      <img src={topupReceiptPreview} alt="Receipt preview" style={{ width: '100%', maxHeight: '180px', objectFit: 'contain', borderRadius: '8px', border: '1px solid #d1d5db', background: '#f9fafb' }} />
+                    )}
+                    <button onClick={() => { setTopupReceiptData(''); setTopupReceiptMimeType(''); setTopupReceiptPreview(''); }} style={{ position: 'absolute', top: '6px', right: '6px', background: 'rgba(0,0,0,0.55)', color: 'white', border: 'none', borderRadius: '50%', width: '24px', height: '24px', cursor: 'pointer', fontSize: '0.85rem', lineHeight: '1' }}>×</button>
+                  </div>
+                ) : (
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.65rem 1rem', border: '2px dashed #d1d5db', borderRadius: '8px', cursor: 'pointer', color: '#6b7280', fontSize: '0.9rem' }}>
+                    📎 Click to upload receipt (image or PDF, max 5 MB)
+                    <input type="file" accept="image/*,.pdf" style={{ display: 'none' }} onChange={handleTopupReceiptUpload} />
+                  </label>
+                )}
+              </div>
+              <div className="form-group">
+                <label className="form-label">Notes <span style={{ color: '#888', fontWeight: 400 }}>(optional)</span></label>
+                <textarea className="form-input" rows={2} placeholder="e.g. Paid via HDFC Net Banking on 04-Jul-2026" value={topupPaymentNotes} onChange={e => setTopupPaymentNotes(e.target.value)} />
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={clearTopupPaidModal}>Cancel</button>
+              <button className="btn btn-success" onClick={handleTopupMarkPaid} disabled={topupPaidLoading || (!topupPaymentRef.trim() && !topupReceiptData)}>{topupPaidLoading && Icons.loader}✅ Confirm Payment</button>
             </div>
           </div>
         </div>

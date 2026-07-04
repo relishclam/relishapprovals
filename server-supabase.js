@@ -3076,13 +3076,13 @@ app.get('/api/companies/:companyId/pending-topups', async (req, res) => {
 app.get('/api/suspense-vouchers/:id', async (req, res) => {
   try {
     const { data: sv, error } = await supabase.from('suspense_vouchers')
-      .select(`*, staff:users!staff_user_id(id,name,first_name,mobile), staff_payee:payees!staff_payee_id(id,name,mobile), creator:users!created_by(id,name), approver:users!approved_by(id,name)`)
+      .select(`*, staff:users!staff_user_id(id,name,first_name,mobile), staff_payee:payees!staff_payee_id(id,name,mobile,upi_id,bank_account,ifsc,bank_name), creator:users!created_by(id,name), approver:users!approved_by(id,name)`)
       .eq('id', req.params.id)
       .single();
     if (error || !sv) return res.status(404).json({ error: 'Suspense voucher not found' });
 
     const { data: settlements } = await supabase.from('suspense_settlements')
-      .select(`*, submitter:users!submitted_by(id,name)`)
+      .select(`*, submitter:users!submitted_by(id,name), payer:users!paid_by(id,name)`)
       .eq('suspense_id', req.params.id)
       .order('created_at', { ascending: true });
 
@@ -4651,6 +4651,81 @@ app.post('/api/vouchers/:voucherId/dequeue-payment', async (req, res) => {
     res.json({ success: true, message: 'Voucher deferred — returned to OTP Verified.' });
   } catch (error) {
     console.error('dequeue-payment error:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Mark a top-up as paid: approved top-up → payment_status='paid'  (Admin / Super Admin only)
+app.post('/api/suspense-settlements/:id/mark-topup-paid', async (req, res) => {
+  const { paidBy, paymentReference, paymentNotes, receiptData, receiptMimeType } = req.body;
+  if (!paidBy) return res.status(400).json({ error: 'paidBy is required' });
+  if (!paymentReference && !receiptData)
+    return res.status(400).json({ error: 'Enter a UTR reference or upload a receipt — at least one is required' });
+
+  try {
+    const actor = await getActorRole(paidBy);
+    if (actor.role !== 'admin' && !actor.is_super_admin)
+      return res.status(403).json({ error: 'Only Admin or Super Admin can confirm top-up payments' });
+
+    const { data: settlement, error: sErr } = await supabase
+      .from('suspense_settlements')
+      .select('*, suspense:suspense_vouchers!suspense_id(id,serial_number,company_id,created_by,payment_mode)')
+      .eq('id', req.params.id)
+      .single();
+    if (sErr || !settlement) return res.status(404).json({ error: 'Settlement entry not found' });
+    if (settlement.entry_type !== 'topup')
+      return res.status(400).json({ error: 'Entry is not a top-up' });
+    if (settlement.status !== 'approved')
+      return res.status(400).json({ error: 'Top-up must be approved before marking as paid' });
+    if (settlement.payment_status === 'paid')
+      return res.status(400).json({ error: 'Top-up has already been marked as paid' });
+
+    const sv = settlement.suspense;
+
+    // Upload receipt if provided
+    let receiptUrl = null;
+    if (receiptData && receiptMimeType) {
+      const ext = receiptMimeType === 'application/pdf' ? 'pdf'
+        : receiptMimeType.startsWith('image/') ? receiptMimeType.split('/')[1]
+        : 'jpg';
+      const fileName = `${sv.company_id}/topup-receipts/${req.params.id}/receipt_${Date.now()}.${ext}`;
+      const buffer = Buffer.from(receiptData, 'base64');
+      const { error: storageErr } = await supabase.storage
+        .from('voucher-bills')
+        .upload(fileName, buffer, { contentType: receiptMimeType, upsert: true });
+      if (storageErr) {
+        console.warn('Top-up receipt upload failed (storage):', storageErr.message, '— continuing without receipt URL');
+      } else {
+        const { data: urlData } = supabase.storage.from('voucher-bills').getPublicUrl(fileName);
+        receiptUrl = urlData.publicUrl;
+      }
+    }
+
+    await supabase.from('suspense_settlements').update({
+      payment_status:      'paid',
+      payment_reference:   paymentReference || null,
+      payment_notes:       paymentNotes || null,
+      payment_receipt_url: receiptUrl,
+      paid_by:             paidBy,
+      paid_at:             new Date().toISOString()
+    }).eq('id', req.params.id);
+
+    // Notify voucher creator and the Accounts user who submitted the top-up
+    const { data: payer } = await supabase.from('users').select('name').eq('id', paidBy).single();
+    const notifyUsers = [...new Set([sv.created_by, settlement.submitted_by].filter(Boolean))];
+    for (const uid of notifyUsers) {
+      await supabase.from('notifications').insert({
+        user_id: uid,
+        title: '✅ Top-Up Payment Confirmed',
+        message: `₹${parseFloat(settlement.amount).toFixed(2)} top-up for ${sv.serial_number} paid by ${payer?.name || 'Admin'}.${paymentReference ? ` UTR: ${paymentReference}` : ''}`,
+        type: 'completed'
+      });
+    }
+
+    console.log(`   ✅ Top-up ${req.params.id} for ${sv.serial_number} marked paid by ${paidBy} — UTR: ${paymentReference || 'N/A'} | Receipt: ${receiptUrl ? 'uploaded' : 'none'}`);
+    res.json({ success: true });
+  } catch (error) {
+    console.error('mark-topup-paid error:', error.message);
     res.status(500).json({ error: error.message });
   }
 });
