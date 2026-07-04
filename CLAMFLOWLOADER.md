@@ -163,7 +163,7 @@ Injected once via `<style id="clamflow-keyframes">`. `getElementById` guard prev
 ```css
 @keyframes cf-form {
   0%   { width:0%;   opacity:1 }
-  20%  { width:100%; opacity:1 }   /* 3s ease-out → full width ~0.3 s */
+  20%  { width:100%; opacity:1 }   /* 3s ease-out → full width ~0.6 s */
   80%  { width:100%; opacity:1 }
   95%  { width:100%; opacity:0 }
   100% { width:0%;   opacity:0 }
