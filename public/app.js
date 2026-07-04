@@ -8104,6 +8104,40 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
         </div>
       </div>
 
+      {/* ── Linked Regular Vouchers summary card ───────────────────────────── */}
+      {(() => {
+        const linked = [];
+        const seen = new Set();
+        for (const s of (sv.settlements || [])) {
+          if (s.entry_type === 'expense' && s.voucher_id && !seen.has(s.voucher_id)) {
+            seen.add(s.voucher_id);
+            linked.push(s.linked_voucher || { id: s.voucher_id, serial_number: '—', status: '—', amount: null });
+          }
+        }
+        if (!linked.length) return null;
+        return (
+          <div className="card" style={{ marginBottom: '1rem', border: '1.5px solid #f5841f' }}>
+            <div style={{ padding: '0.75rem 1rem', borderBottom: '1px solid #fde8d0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <span style={{ fontWeight: 600, fontSize: '0.95rem', color: '#92400e', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>🧾 Linked Regular Vouchers <span style={{ background: '#f5841f', color: 'white', fontSize: '0.72rem', borderRadius: '10px', padding: '1px 8px', fontWeight: 700 }}>{linked.length}</span></span>
+              <span style={{ fontSize: '0.78rem', color: '#9a3412' }}>Created from expense settlements in this suspense account</span>
+            </div>
+            <div style={{ padding: '0.5rem 1rem' }}>
+              {linked.map(v => (
+                <div key={v.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.5rem 0', borderBottom: '1px solid #fef3e2', flexWrap: 'wrap', gap: '0.5rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+                    <span style={{ fontFamily: 'monospace', fontWeight: 700, color: '#92400e', fontSize: '0.9rem' }}>{v.serial_number}</span>
+                    {v.amount != null && <span style={{ fontWeight: 600, color: '#374151' }}>{formatRupees(v.amount)}</span>}
+                    {v.status && <span className={`status-badge status-${v.status}`} style={{ fontSize: '0.72rem' }}>{v.status.replace(/_/g, ' ')}</span>}
+                    {v.payment_mode && <span style={{ fontSize: '0.75rem', color: '#6b7280' }}>{v.payment_mode}</span>}
+                  </div>
+                  <button className="btn btn-sm btn-secondary" style={{ fontSize: '0.78rem', padding: '3px 12px', fontWeight: 600 }} onClick={() => openLinkedVoucher(v.id)} disabled={linkedVoucherLoading}>🧾 View →</button>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
+
       {sv.settlements && sv.settlements.length > 0 && (
         <div className="card" style={{ marginBottom: '1rem' }}>
           <h3 style={{ fontWeight: 600, fontSize: '0.95rem', marginBottom: '0.75rem' }}>Settlement Entries</h3>

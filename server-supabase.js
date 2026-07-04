@@ -3097,7 +3097,7 @@ app.get('/api/suspense-vouchers/:id', async (req, res) => {
     if (error || !sv) return res.status(404).json({ error: 'Suspense voucher not found' });
 
     const { data: settlements } = await supabase.from('suspense_settlements')
-      .select(`*, submitter:users!submitted_by(id,name), payer:users!paid_by(id,name)`)
+      .select(`*, submitter:users!submitted_by(id,name), payer:users!paid_by(id,name), linked_voucher:vouchers!voucher_id(id,serial_number,status,amount,payment_mode)`)
       .eq('suspense_id', req.params.id)
       .order('created_at', { ascending: true });
 
