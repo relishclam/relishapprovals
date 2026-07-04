@@ -237,7 +237,10 @@ const api = {
   rejectTopUp: (settlementId, rejectedBy, reason) => fetch(`${API_BASE}/suspense-settlements/${settlementId}/reject-topup`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rejectedBy, reason }) }).then(r => r.json()),
   markTopupPaid: (settlementId, paidBy, paymentReference, paymentNotes, receiptData, receiptMimeType) => fetch(`${API_BASE}/suspense-settlements/${settlementId}/mark-topup-paid`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ paidBy, paymentReference, paymentNotes, receiptData: receiptData || undefined, receiptMimeType: receiptMimeType || undefined }) }).then(r => r.json()),
   markAdvancePaid: (suspenseId, paidBy, paymentReference, paymentNotes, receiptData, receiptMimeType) => fetch(`${API_BASE}/suspense-vouchers/${suspenseId}/mark-advance-paid`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ paidBy, paymentReference, paymentNotes, receiptData: receiptData || undefined, receiptMimeType: receiptMimeType || undefined }) }).then(r => r.json()),
-  closeSuspenseVoucher: (suspenseId, closedBy) => fetch(`${API_BASE}/suspense-vouchers/${suspenseId}/close`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ closedBy }) }).then(r => r.json()),
+  closeSuspenseVoucher: (suspenseId, closedBy, closeHoa, closeSubHoa, closeNotes) => fetch(`${API_BASE}/suspense-vouchers/${suspenseId}/close`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ closedBy, closeHoa, closeSubHoa, closeNotes }) }).then(r => r.json()),
+  approveSuspenseClose: (suspenseId, approvedBy) => fetch(`${API_BASE}/suspense-vouchers/${suspenseId}/approve-close`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ approvedBy }) }).then(r => r.json()),
+  rejectSuspenseClose: (suspenseId, rejectedBy, reason) => fetch(`${API_BASE}/suspense-vouchers/${suspenseId}/reject-close`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rejectedBy, reason }) }).then(r => r.json()),
+  getPendingCloseRequests: (companyId) => fetch(`${API_BASE}/companies/${companyId}/pending-close-requests`).then(r => r.json()),
   recalculateSuspenseBalance: (suspenseId, requestedBy) => fetch(`${API_BASE}/suspense-vouchers/${suspenseId}/recalculate-balance`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ requestedBy }) }).then(r => r.json()),
   // Attachments
   uploadAttachment: (data) => fetch(`${API_BASE}/attachments/upload`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
@@ -7342,9 +7345,106 @@ const ProposeHoaCorrectionSection = ({ voucher, onProposed }) => {
   );
 };
 
-const PendingTopUpsPanel = ({ onViewVoucher }) => {
+const PendingCloseRequestsPanel = ({ onViewVoucher }) => {
   const { user, addToast } = useApp();
   const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [actionId, setActionId] = useState(null);
+  const [showRejectModal, setShowRejectModal] = useState(false);
+  const [rejectingItem, setRejectingItem] = useState(null);
+  const [rejectReason, setRejectReason] = useState('');
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const data = await api.getPendingCloseRequests(user.company.id);
+      setItems(data.pendingCloseRequests || []);
+    } catch { /* silently skip */ }
+    setLoading(false);
+  };
+
+  useEffect(() => { load(); }, [user.company.id]);
+
+  const handleApprove = async (sv) => {
+    setActionId(sv.id);
+    const result = await api.approveSuspenseClose(sv.id, user.id);
+    if (result.success) {
+      addToast(`Closure approved${result.recoveryVoucher ? ` · Recovery voucher ${result.recoveryVoucher.serial_number} created` : ''}`, 'success');
+      load();
+    } else addToast(result.error || 'Approval failed', 'error');
+    setActionId(null);
+  };
+
+  const openReject = (sv) => { setRejectingItem(sv); setRejectReason(''); setShowRejectModal(true); };
+  const confirmReject = async () => {
+    setActionId(rejectingItem.id);
+    const result = await api.rejectSuspenseClose(rejectingItem.id, user.id, rejectReason);
+    if (result.success) { addToast('Close request rejected', 'info'); setShowRejectModal(false); load(); }
+    else addToast(result.error || 'Rejection failed', 'error');
+    setActionId(null);
+  };
+
+  if (!loading && items.length === 0) return null;
+
+  return (
+    <div className="card" style={{ marginBottom: '1.25rem', border: '2px solid #ea580c', borderRadius: '10px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '0.85rem' }}>
+        <span style={{ fontSize: '1.25rem' }}>🔒</span>
+        <h3 style={{ fontWeight: 700, fontSize: '0.95rem', color: '#ea580c', margin: 0 }}>Pending Suspense Closure Approvals</h3>
+        {items.length > 0 && <span style={{ background: '#ea580c', color: 'white', borderRadius: '12px', padding: '1px 8px', fontSize: '0.75rem', fontWeight: 700 }}>{items.length}</span>}
+      </div>
+      {loading ? <div style={{ color: '#9ca3af', fontSize: '0.85rem' }}>{Icons.loader} Loading...</div> : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+          {items.map(sv => (
+            <div key={sv.id} style={{ background: '#fff7ed', border: '1px solid #fdba74', borderRadius: '8px', padding: '0.75rem 1rem', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem' }}>
+              <div style={{ flex: 1, minWidth: '180px' }}>
+                <div style={{ fontWeight: 700, fontSize: '0.95rem', color: '#1f2937' }}>
+                  {sv.serial_number}
+                  <span style={{ fontWeight: 400, color: '#6b7280', fontSize: '0.8rem', marginLeft: '0.5rem' }}>close request</span>
+                </div>
+                <div style={{ fontSize: '0.8rem', color: '#6b7280', marginTop: '2px' }}>
+                  Staff: {sv.staff_payee?.name || '—'} · Unspent: <strong style={{ color: '#9a3412' }}>{formatRupees(parseFloat(sv.balance_amount ?? 0))}</strong>
+                </div>
+                <div style={{ fontSize: '0.78rem', color: '#9a3412', marginTop: '2px' }}>
+                  Recovery HoA: <strong>{sv.close_hoa}</strong>{sv.close_sub_hoa ? ` → ${sv.close_sub_hoa}` : ''}
+                </div>
+                {sv.close_notes && <div style={{ fontSize: '0.78rem', color: '#6b7280', marginTop: '2px', fontStyle: 'italic' }}>{sv.close_notes}</div>}
+                <div style={{ fontSize: '0.75rem', color: '#9ca3af', marginTop: '2px' }}>Requested by {sv.requester?.name || '—'} · {sv.close_requested_at ? new Date(sv.close_requested_at).toLocaleDateString('en-IN') : ''}</div>
+              </div>
+              <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
+                {onViewVoucher && <button className="btn btn-sm btn-secondary" style={{ fontSize: '0.75rem' }} onClick={() => onViewVoucher(sv.id)}>View →</button>}
+                <button className="btn btn-sm btn-success" style={{ fontSize: '0.75rem' }} onClick={() => handleApprove(sv)} disabled={actionId === sv.id}>✅ Approve</button>
+                <button className="btn btn-sm btn-danger" style={{ fontSize: '0.75rem' }} onClick={() => openReject(sv)} disabled={actionId === sv.id}>✕ Reject</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      {showRejectModal && rejectingItem && (
+        <div className="modal-overlay" onClick={() => setShowRejectModal(false)}>
+          <div className="modal" style={{ maxWidth: '440px' }} onClick={e => e.stopPropagation()}>
+            <div className="modal-header" style={{ background: '#ef4444', color: 'white' }}>
+              <h3 className="modal-title" style={{ color: 'white' }}>✕ Reject Close Request — {rejectingItem.serial_number}</h3>
+              <button className="modal-close" style={{ color: 'white' }} onClick={() => setShowRejectModal(false)}>×</button>
+            </div>
+            <div className="modal-body">
+              <div className="form-group">
+                <label className="form-label">Reason <span style={{ color: '#888', fontWeight: 400 }}>(optional)</span></label>
+                <textarea className="form-input" rows={3} placeholder="Tell Accounts why the close request was rejected..." value={rejectReason} onChange={e => setRejectReason(e.target.value)} />
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setShowRejectModal(false)}>Cancel</button>
+              <button className="btn btn-danger" onClick={confirmReject} disabled={!!actionId}>{actionId ? Icons.loader : '✕'} Confirm Rejection</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const PendingTopUpsPanel = ({ onViewVoucher }) => {
   const [loading, setLoading] = useState(true);
   const [actionId, setActionId] = useState(null);
   const [showRejectModal, setShowRejectModal] = useState(false);
@@ -7482,7 +7582,7 @@ const SuspenseVoucherList = ({ onViewDetail }) => {
   useEffect(() => { load(); }, [user.company.id, statusFilter]);
 
   const statusBadge = (status) => {
-    const map = { pending_approval: ['Pending Approval', '#f59e0b', '#fffbeb'], open: ['Open', '#10b981', '#ecfdf5'], partial: ['Partial', '#3b82f6', '#eff6ff'], closed: ['Closed', '#6b7280', '#f3f4f6'], rejected: ['Rejected', '#ef4444', '#fef2f2'] };
+    const map = { pending_approval: ['Pending Approval', '#f59e0b', '#fffbeb'], open: ['Open', '#10b981', '#ecfdf5'], partial: ['Partial', '#3b82f6', '#eff6ff'], pending_close_approval: ['Close Pending', '#ea580c', '#fff7ed'], closed: ['Closed', '#6b7280', '#f3f4f6'], rejected: ['Rejected', '#ef4444', '#fef2f2'] };
     const [label, color, bg] = map[status] || [status, '#666', '#eee'];
     return <span style={{ background: bg, color, padding: '2px 8px', borderRadius: '4px', fontSize: '0.75rem', fontWeight: 600 }}>{label}</span>;
   };
@@ -7510,6 +7610,7 @@ const SuspenseVoucherList = ({ onViewDetail }) => {
       {(user.role === 'admin' || user.isSuperAdmin) && (
         <>
           <PendingNewVouchersPanel onViewVoucher={(id) => onViewDetail && onViewDetail(id)} />
+          <PendingCloseRequestsPanel onViewVoucher={(id) => onViewDetail && onViewDetail(id)} />
           <PendingTopUpsPanel onViewVoucher={(id) => onViewDetail && onViewDetail(id)} />
         </>
       )}
@@ -7648,6 +7749,11 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
   const [topUpLoading, setTopUpLoading] = useState(false);
   const [closeLoading, setCloseLoading] = useState(false);
   const [showCloseModal, setShowCloseModal] = useState(false);
+  const [closeHoa, setCloseHoa] = useState('');
+  const [closeSubHoa, setCloseSubHoa] = useState('');
+  const [closeNotes, setCloseNotes] = useState('');
+  const [showRejectCloseModal, setShowRejectCloseModal] = useState(false);
+  const [rejectCloseReason, setRejectCloseReason] = useState('');
   const [showRejectTopUpModal, setShowRejectTopUpModal] = useState(false);
   const [rejectingTopUpEntry, setRejectingTopUpEntry] = useState(null);
   const [rejectTopUpReason, setRejectTopUpReason] = useState('');
@@ -7908,14 +8014,46 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
   };
 
   const handleCloseVoucher = async () => {
+    const balance = parseFloat(sv.balance_amount ?? 0);
+    if (balance > 0 && !closeHoa.trim()) {
+      addToast('Select a Head of Account for the recovery voucher', 'error');
+      return;
+    }
     setCloseLoading(true);
-    const result = await api.closeSuspenseVoucher(suspenseId, user.id);
+    const result = await api.closeSuspenseVoucher(suspenseId, user.id, closeHoa.trim() || undefined, closeSubHoa.trim() || undefined, closeNotes.trim() || undefined);
     if (result.success) {
-      addToast('Suspense voucher closed by Accounts', 'success');
+      if (result.pendingApproval) {
+        addToast(`Close request submitted — Admin approval required. Recovery voucher will be created for ${formatRupees(balance)}.`, 'success');
+      } else {
+        addToast('Suspense voucher closed', 'success');
+      }
       setShowCloseModal(false);
+      setCloseHoa(''); setCloseSubHoa(''); setCloseNotes('');
       load();
     } else addToast(result.error || 'Failed to close voucher', 'error');
     setCloseLoading(false);
+  };
+
+  const handleApproveClose = async () => {
+    setActionLoading(true);
+    const result = await api.approveSuspenseClose(suspenseId, user.id);
+    if (result.success) {
+      addToast(`Closure approved${result.recoveryVoucher ? ` · Recovery voucher ${result.recoveryVoucher.serial_number} created` : ''}`, 'success');
+      load();
+    } else addToast(result.error || 'Approval failed', 'error');
+    setActionLoading(false);
+  };
+
+  const handleRejectClose = async () => {
+    setActionLoading(true);
+    const result = await api.rejectSuspenseClose(suspenseId, user.id, rejectCloseReason);
+    if (result.success) {
+      addToast('Close request rejected — voucher returned to active state', 'info');
+      setShowRejectCloseModal(false);
+      setRejectCloseReason('');
+      load();
+    } else addToast(result.error || 'Rejection failed', 'error');
+    setActionLoading(false);
   };
 
   const handleRecalculateBalance = async () => {
@@ -7984,7 +8122,7 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
   };
 
   const statusBadge = (status) => {
-    const map = { pending_approval: ['Pending Approval', '#f59e0b', '#fffbeb'], awaiting_payee_otp: ['Awaiting Advance OTP', '#ea580c', '#fff7ed'], open: ['Open', '#10b981', '#ecfdf5'], partial: ['Partial', '#3b82f6', '#eff6ff'], closed: ['Closed', '#6b7280', '#f3f4f6'], rejected: ['Rejected', '#ef4444', '#fef2f2'] };
+    const map = { pending_approval: ['Pending Approval', '#f59e0b', '#fffbeb'], awaiting_payee_otp: ['Awaiting Advance OTP', '#ea580c', '#fff7ed'], open: ['Open', '#10b981', '#ecfdf5'], partial: ['Partial', '#3b82f6', '#eff6ff'], pending_close_approval: ['Close Pending Admin', '#ea580c', '#fff7ed'], closed: ['Closed', '#6b7280', '#f3f4f6'], rejected: ['Rejected', '#ef4444', '#fef2f2'] };
     const [label, color, bg] = map[status] || [status, '#666', '#eee'];
     return <span style={{ background: bg, color, padding: '3px 10px', borderRadius: '4px', fontSize: '0.8rem', fontWeight: 600 }}>{label}</span>;
   };
@@ -8035,6 +8173,12 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
           )}
           {(user.role === 'accounts' || user.isSuperAdmin) && (sv.status === 'open' || sv.status === 'partial') && (
             <button className="btn btn-sm btn-danger" onClick={() => setShowCloseModal(true)}>🔒 Close Voucher</button>
+          )}
+          {(user.role === 'admin' || user.isSuperAdmin) && sv.status === 'pending_close_approval' && (
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <button className="btn btn-sm btn-success" onClick={handleApproveClose} disabled={actionLoading}>✅ Approve Closure</button>
+              <button className="btn btn-sm btn-danger" onClick={() => { setRejectCloseReason(''); setShowRejectCloseModal(true); }} disabled={actionLoading}>✕ Reject</button>
+            </div>
           )}
           {(user.role === 'accounts' || user.isSuperAdmin) && sv.status !== 'pending_approval' && sv.status !== 'rejected' && sv.status !== 'awaiting_payee_otp' && (
             <button className="btn btn-sm btn-secondary" onClick={handleRecalculateBalance} disabled={actionLoading} title="Recompute balance from approved settlement entries">🔄 Fix Balance</button>
@@ -8269,29 +8413,109 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
 
       {showCloseModal && (
         <div className="modal-overlay" onClick={() => setShowCloseModal(false)}>
+          <div className="modal" style={{ maxWidth: '480px' }} onClick={e => e.stopPropagation()}>
+            {(() => {
+              const balance = parseFloat(sv.balance_amount ?? 0);
+              const isOverspend = balance < 0;
+              const hasUnspent = balance > 0;
+              return (<>
+                <div className="modal-header" style={{ background: hasUnspent ? '#ea580c' : '#ef4444', color: 'white' }}>
+                  <h3 className="modal-title" style={{ color: 'white' }}>🔒 Close Suspense Voucher</h3>
+                  <button className="modal-close" style={{ color: 'white' }} onClick={() => setShowCloseModal(false)}>×</button>
+                </div>
+                <div className="modal-body">
+                  <div style={{ background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: '8px', padding: '0.85rem', marginBottom: '1rem', fontSize: '0.9rem', color: '#7f1d1d' }}>
+                    This will close <strong>{sv.serial_number}</strong>. The staff member's settlement link will stop working.
+                  </div>
+
+                  {/* ── Balance = 0 ── */}
+                  {balance === 0 && (
+                    <div style={{ background: '#f0fdf4', border: '1px solid #86efac', borderRadius: '8px', padding: '0.75rem', marginBottom: '1rem', fontSize: '0.9rem', color: '#166534' }}>
+                      ✅ Balance is <strong>₹0.00</strong> — advance fully accounted for. Safe to close.
+                    </div>
+                  )}
+
+                  {/* ── Balance < 0 (overspend) ── */}
+                  {isOverspend && (
+                    <div style={{ background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: '8px', padding: '0.85rem', marginBottom: '1rem', fontSize: '0.9rem', color: '#92400e' }}>
+                      ⚠️ Staff is owed <strong>{formatRupees(Math.abs(balance))}</strong> out-of-pocket.<br />
+                      <span style={{ fontSize: '0.82rem' }}>Ensure this reimbursement has been paid (or will be paid) before closing.</span>
+                      {!sv.advance_payment_status && (
+                        <div style={{ marginTop: '0.5rem' }}>
+                          <button className="btn btn-sm" style={{ background: '#16a34a', color: 'white', border: 'none', fontSize: '0.8rem' }} onClick={() => { setShowCloseModal(false); setPayNowAdvance(true); }}>
+                            💳 Pay Reimbursement First →
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* ── Balance > 0 (unspent) ── */}
+                  {hasUnspent && (
+                    <div style={{ background: '#fff7ed', border: '1px solid #fdba74', borderRadius: '8px', padding: '0.85rem', marginBottom: '1rem', fontSize: '0.9rem', color: '#9a3412' }}>
+                      <strong>Unspent advance: {formatRupees(balance)}</strong><br />
+                      <span style={{ fontSize: '0.82rem' }}>Admin approval is required. A <em>Staff Advance Recovery</em> voucher will be auto-created for this amount.</span>
+                    </div>
+                  )}
+
+                  {/* ── HoA required only for balance > 0 ── */}
+                  {hasUnspent && (
+                    <>
+                      <div className="form-group">
+                        <label className="form-label">Head of Account for Recovery Voucher <span style={{ color: '#ef4444' }}>*</span></label>
+                        <input className="form-input" type="text" placeholder="e.g. Staff Advances Recovered" value={closeHoa} onChange={e => setCloseHoa(e.target.value)} autoFocus />
+                      </div>
+                      <div className="form-group">
+                        <label className="form-label">Sub-Head <span style={{ color: '#888', fontWeight: 400 }}>(optional)</span></label>
+                        <input className="form-input" type="text" placeholder="e.g. Advances Receivable" value={closeSubHoa} onChange={e => setCloseSubHoa(e.target.value)} />
+                      </div>
+                      <div className="form-group">
+                        <label className="form-label">Notes <span style={{ color: '#888', fontWeight: 400 }}>(optional)</span></label>
+                        <textarea className="form-input" rows={2} placeholder="Any remarks for Admin..." value={closeNotes} onChange={e => setCloseNotes(e.target.value)} />
+                      </div>
+                    </>
+                  )}
+
+                  {sv.settlements?.some(s => s.status === 'pending_review') && (
+                    <div style={{ background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: '8px', padding: '0.75rem', fontSize: '0.85rem', color: '#92400e' }}>
+                      ⚠️ <strong>{sv.settlements.filter(s => s.status === 'pending_review').length}</strong> entries still pending review. Approve or reject them before closing.
+                    </div>
+                  )}
+                </div>
+                <div className="modal-footer">
+                  <button className="btn btn-secondary" onClick={() => setShowCloseModal(false)}>Cancel</button>
+                  <button className="btn btn-danger" onClick={handleCloseVoucher} disabled={closeLoading || (hasUnspent && !closeHoa.trim())}>
+                    {closeLoading ? Icons.loader : (hasUnspent ? '📤 Submit for Approval' : '🔒 Confirm Close')}
+                  </button>
+                </div>
+              </>);
+            })()}
+          </div>
+        </div>
+      )}
+
+      {showRejectCloseModal && (
+        <div className="modal-overlay" onClick={() => setShowRejectCloseModal(false)}>
           <div className="modal" style={{ maxWidth: '440px' }} onClick={e => e.stopPropagation()}>
             <div className="modal-header" style={{ background: '#ef4444', color: 'white' }}>
-              <h3 className="modal-title" style={{ color: 'white' }}>🔒 Close Suspense Voucher</h3>
-              <button className="modal-close" style={{ color: 'white' }} onClick={() => setShowCloseModal(false)}>×</button>
+              <h3 className="modal-title" style={{ color: 'white' }}>✕ Reject Close Request</h3>
+              <button className="modal-close" style={{ color: 'white' }} onClick={() => setShowRejectCloseModal(false)}>×</button>
             </div>
             <div className="modal-body">
-              <div style={{ background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: '8px', padding: '0.85rem', marginBottom: '1rem', fontSize: '0.9rem', color: '#7f1d1d' }}>
-                This will permanently close <strong>{sv.serial_number}</strong>. The staff member's settlement link will stop working. This action is intended only for use by Accounts once all entries are verified.
+              <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '0.85rem', marginBottom: '1rem', fontSize: '0.875rem' }}>
+                <div style={{ color: '#64748b', fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.3rem' }}>Voucher</div>
+                <div style={{ fontWeight: 700 }}>{sv.serial_number}</div>
+                <div style={{ color: '#64748b', fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.05em', marginTop: '0.5rem', marginBottom: '0.3rem' }}>Unspent Balance</div>
+                <div style={{ fontWeight: 700 }}>{formatRupees(parseFloat(sv.balance_amount ?? 0))}</div>
               </div>
-              {parseFloat(sv.balance_amount ?? 0) < 0 && (
-                <div style={{ background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: '8px', padding: '0.75rem', marginBottom: '0.75rem', fontSize: '0.85rem', color: '#92400e' }}>
-                  ⚠️ There is an over-spend of <strong>{formatRupees(Math.abs(parseFloat(sv.balance_amount ?? 0)))}</strong>. Ensure this has been accounted for before closing.
-                </div>
-              )}
-              {sv.settlements?.some(s => s.status === 'pending_review') && (
-                <div style={{ background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: '8px', padding: '0.75rem', marginBottom: '0.75rem', fontSize: '0.85rem', color: '#92400e' }}>
-                  ⚠️ There are still <strong>{sv.settlements.filter(s => s.status === 'pending_review').length}</strong> pending entries awaiting review. Approve or reject them before closing.
-                </div>
-              )}
+              <div className="form-group">
+                <label className="form-label">Reason for Rejection <span style={{ color: '#888', fontWeight: 400 }}>(optional)</span></label>
+                <textarea className="form-input" rows={3} placeholder="Tell Accounts why the close request was rejected..." value={rejectCloseReason} onChange={e => setRejectCloseReason(e.target.value)} />
+              </div>
             </div>
             <div className="modal-footer">
-              <button className="btn btn-secondary" onClick={() => setShowCloseModal(false)}>Cancel</button>
-              <button className="btn btn-danger" onClick={handleCloseVoucher} disabled={closeLoading}>{closeLoading ? Icons.loader : '🔒'} Confirm Close</button>
+              <button className="btn btn-secondary" onClick={() => setShowRejectCloseModal(false)}>Cancel</button>
+              <button className="btn btn-danger" onClick={handleRejectClose} disabled={actionLoading}>{actionLoading ? Icons.loader : '✕'} Confirm Rejection</button>
             </div>
           </div>
         </div>

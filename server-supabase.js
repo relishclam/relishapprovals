@@ -4012,9 +4012,12 @@ app.post('/api/suspense-vouchers/:id/recalculate-balance', async (req, res) => {
   }
 });
 
-// Manually close a suspense voucher (Accounts only)
+// Close a suspense voucher — three paths depending on the remaining balance:
+//   balance = 0 : close directly.
+//   balance < 0 : close directly (Accounts acknowledges out-of-pocket overspend).
+//   balance > 0 : submit for Admin approval; a recovery voucher is created on approval.
 app.post('/api/suspense-vouchers/:id/close', async (req, res) => {
-  const { closedBy } = req.body;
+  const { closedBy, closeHoa, closeSubHoa, closeNotes } = req.body;
   if (!closedBy) return res.status(400).json({ error: 'closedBy is required' });
   try {
     const actor = await getActorRole(closedBy);
@@ -4022,22 +4025,180 @@ app.post('/api/suspense-vouchers/:id/close', async (req, res) => {
       return res.status(403).json({ error: 'Unauthorized: Only Accounts users can close a suspense voucher' });
     }
     const { data: sv, error } = await supabase.from('suspense_vouchers')
-      .select('id, status, serial_number')
-      .eq('id', req.params.id)
-      .single();
+      .select('id, status, serial_number, balance_amount, company_id, created_by, staff_payee_id, purpose')
+      .eq('id', req.params.id).single();
     if (error || !sv) return res.status(404).json({ error: 'Suspense voucher not found' });
     if (sv.status === 'closed') return res.status(400).json({ error: 'Voucher is already closed' });
-    if (sv.status === 'pending_approval' || sv.status === 'rejected') {
+    if (['pending_approval', 'rejected', 'awaiting_payee_otp', 'pending_close_approval'].includes(sv.status)) {
       return res.status(400).json({ error: `Cannot close a voucher in "${sv.status}" state` });
     }
+
+    const balance = parseFloat(sv.balance_amount ?? 0);
+
+    // ── Balance > 0: requires Admin approval ─────────────────────────────────
+    if (balance > 0) {
+      if (!closeHoa) return res.status(400).json({ error: 'Head of Account is required for closing with an unspent balance' });
+      await supabase.from('suspense_vouchers').update({
+        status: 'pending_close_approval',
+        pre_close_status: sv.status,
+        close_requested_by: closedBy,
+        close_requested_at: new Date().toISOString(),
+        close_hoa: closeHoa,
+        close_sub_hoa: closeSubHoa || null,
+        close_notes: closeNotes || null
+      }).eq('id', sv.id);
+
+      // Notify all Admins
+      const { data: requester } = await supabase.from('users').select('name').eq('id', closedBy).single();
+      const { data: adminEntries } = await supabase.from('user_companies')
+        .select('user_id').eq('company_id', sv.company_id).eq('role', 'admin');
+      for (const a of (adminEntries || [])) {
+        await supabase.from('notifications').insert({
+          user_id: a.user_id,
+          title: '🔒 Suspense Close Approval Required',
+          message: `${sv.serial_number} has an unspent balance of ₹${balance.toFixed(2)}. ${requester?.name || 'Accounts'} is requesting closure. A recovery voucher (${closeHoa}) will be created on approval.`,
+          type: 'approval_required'
+        });
+        sendPushNotification(a.user_id, '🔒 Suspense Close Pending', `${sv.serial_number} — unspent ₹${balance.toFixed(2)} needs your approval.`, '/');
+      }
+      return res.json({ success: true, pendingApproval: true });
+    }
+
+    // ── Balance ≤ 0: close directly ──────────────────────────────────────────
     await supabase.from('suspense_vouchers')
       .update({ status: 'closed', closed_at: new Date().toISOString() })
       .eq('id', sv.id);
-    // Invalidate all active settlement sessions so SMS links stop working
     await supabase.from('settlement_sessions')
       .update({ expires_at: new Date().toISOString() })
       .eq('suspense_id', sv.id);
+    res.json({ success: true, pendingApproval: false });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Admin approves a pending-close-approval voucher:
+//   1. Creates a "Staff Advance Recovery" regular voucher (completed immediately).
+//   2. Closes the suspense voucher.
+app.post('/api/suspense-vouchers/:id/approve-close', async (req, res) => {
+  const { approvedBy } = req.body;
+  if (!approvedBy) return res.status(400).json({ error: 'approvedBy is required' });
+  try {
+    const actor = await getActorRole(approvedBy);
+    if (actor.role !== 'admin' && !actor.is_super_admin) {
+      return res.status(403).json({ error: 'Only Admin or Super Admin can approve a close request' });
+    }
+    const { data: sv, error } = await supabase.from('suspense_vouchers')
+      .select('*, staff_payee:payees!staff_payee_id(id,name)')
+      .eq('id', req.params.id).single();
+    if (error || !sv) return res.status(404).json({ error: 'Suspense voucher not found' });
+    if (sv.status !== 'pending_close_approval') {
+      return res.status(400).json({ error: 'Voucher is not pending close approval' });
+    }
+
+    const balance = parseFloat(sv.balance_amount ?? 0);
+    const payee = sv.staff_payee;
+
+    // Create the recovery voucher
+    let recoveryVoucher = null;
+    if (balance > 0 && sv.close_hoa && payee?.id) {
+      const serialNumber = await getNextVoucherNumber(sv.company_id);
+      const now = new Date().toISOString();
+      const narration = `[Advance Recovery — ${sv.serial_number}] ${sv.purpose || 'Suspense advance'}`;
+      const { data: rv } = await supabase.from('vouchers').insert({
+        company_id: sv.company_id,
+        serial_number: serialNumber,
+        head_of_account: sv.close_hoa,
+        sub_head_of_account: sv.close_sub_hoa || null,
+        narration,
+        amount: balance,
+        payment_mode: 'Cash',
+        payee_id: payee.id,
+        prepared_by: sv.close_requested_by,
+        status: 'completed',
+        submitted_at: now,
+        is_suspense_settlement: true,
+        settlement_id: null
+      }).select().single();
+      recoveryVoucher = rv;
+    }
+
+    // Close the suspense voucher
+    const now = new Date().toISOString();
+    await supabase.from('suspense_vouchers').update({
+      status: 'closed',
+      closed_at: now,
+      close_approved_by: approvedBy,
+      close_approved_at: now
+    }).eq('id', sv.id);
+    await supabase.from('settlement_sessions')
+      .update({ expires_at: now })
+      .eq('suspense_id', sv.id);
+
+    // Notify requester
+    const { data: approver } = await supabase.from('users').select('name').eq('id', approvedBy).single();
+    await supabase.from('notifications').insert({
+      user_id: sv.close_requested_by,
+      title: '✅ Suspense Closure Approved',
+      message: `${sv.serial_number} has been closed by ${approver?.name || 'Admin'}. ${recoveryVoucher ? `Recovery voucher ${recoveryVoucher.serial_number} created for ₹${balance.toFixed(2)}.` : ''}`,
+      type: 'completed'
+    });
+
+    res.json({ success: true, recoveryVoucher: recoveryVoucher ? { id: recoveryVoucher.id, serial_number: recoveryVoucher.serial_number } : null });
+  } catch (error) {
+    console.error('approve-close error:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Admin rejects a pending-close-approval — reverts suspense back to open/partial
+app.post('/api/suspense-vouchers/:id/reject-close', async (req, res) => {
+  const { rejectedBy, reason } = req.body;
+  if (!rejectedBy) return res.status(400).json({ error: 'rejectedBy is required' });
+  try {
+    const actor = await getActorRole(rejectedBy);
+    if (actor.role !== 'admin' && !actor.is_super_admin) {
+      return res.status(403).json({ error: 'Only Admin or Super Admin can reject a close request' });
+    }
+    const { data: sv, error } = await supabase.from('suspense_vouchers')
+      .select('id, serial_number, pre_close_status, close_requested_by, company_id')
+      .eq('id', req.params.id).single();
+    if (error || !sv) return res.status(404).json({ error: 'Suspense voucher not found' });
+    if (sv.status !== 'pending_close_approval') {
+      return res.status(400).json({ error: 'Voucher is not pending close approval' });
+    }
+    const revertTo = sv.pre_close_status || 'partial';
+    await supabase.from('suspense_vouchers').update({
+      status: revertTo,
+      close_rejected_by: rejectedBy,
+      close_rejected_at: new Date().toISOString(),
+      close_rejection_reason: reason || null
+    }).eq('id', sv.id);
+
+    const { data: rejector } = await supabase.from('users').select('name').eq('id', rejectedBy).single();
+    await supabase.from('notifications').insert({
+      user_id: sv.close_requested_by,
+      title: '❌ Suspense Close Request Rejected',
+      message: `Close request for ${sv.serial_number} was rejected by ${rejector?.name || 'Admin'}.${reason ? ` Reason: ${reason}` : ''}`,
+      type: 'warning'
+    });
+
     res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Pending close-approval requests for this company — Admin inbox
+app.get('/api/companies/:companyId/pending-close-requests', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('suspense_vouchers')
+      .select(`*, staff_payee:payees!staff_payee_id(id,name,mobile), requester:users!close_requested_by(id,name)`)
+      .eq('company_id', req.params.companyId)
+      .eq('status', 'pending_close_approval')
+      .order('close_requested_at', { ascending: true });
+    if (error) throw error;
+    res.json({ pendingCloseRequests: data || [] });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
