@@ -1776,12 +1776,25 @@ app.get('/api/vouchers/:voucherId', async (req, res) => {
     let suspenseSerial = null;
     let suspenseVoucherId = null;
     if (voucher.is_suspense_settlement) {
+      // Primary: look up via suspense_settlements.voucher_id (set for new records)
       const { data: linkedSettlements } = await supabase
         .from('suspense_settlements')
         .select('suspense_id')
         .eq('voucher_id', req.params.voucherId)
         .limit(1);
       suspenseVoucherId = linkedSettlements?.[0]?.suspense_id || null;
+
+      // Fallback: for single-entry vouchers created before voucher_id was written back,
+      // use the voucher's own settlement_id FK to walk up to the suspense voucher.
+      if (!suspenseVoucherId && voucher.settlement_id) {
+        const { data: bySettlementId } = await supabase
+          .from('suspense_settlements')
+          .select('suspense_id')
+          .eq('id', voucher.settlement_id)
+          .limit(1);
+        suspenseVoucherId = bySettlementId?.[0]?.suspense_id || null;
+      }
+
       if (suspenseVoucherId) {
         const { data: sv } = await supabase.from('suspense_vouchers')
           .select('serial_number').eq('id', suspenseVoucherId).single();
@@ -3091,6 +3104,26 @@ app.get('/api/suspense-vouchers/:id', async (req, res) => {
     const { data: attachments } = await supabase.from('voucher_attachments')
       .select('*').eq('suspense_id', req.params.id).order('uploaded_at', { ascending: false });
 
+    // For old settlement entries where voucher_id was never written back,
+    // patch it in now using the reverse FK (vouchers.settlement_id → settlements.id).
+    const unmapped = (settlements || []).filter(s => s.entry_type === 'expense' && s.status === 'approved' && !s.voucher_id);
+    if (unmapped.length > 0) {
+      const { data: linkedVouchers } = await supabase.from('vouchers')
+        .select('id, serial_number, settlement_id')
+        .in('settlement_id', unmapped.map(s => s.id))
+        .eq('is_suspense_settlement', true);
+      if (linkedVouchers?.length) {
+        const bySettlementId = Object.fromEntries(linkedVouchers.map(v => [v.settlement_id, v.id]));
+        for (const s of (settlements || [])) {
+          if (!s.voucher_id && bySettlementId[s.id]) s.voucher_id = bySettlementId[s.id];
+        }
+        // Opportunistically persist the back-link so future requests don't need this fallback
+        for (const v of linkedVouchers) {
+          supabase.from('suspense_settlements').update({ voucher_id: v.id }).eq('id', v.settlement_id).then(() => {});
+        }
+      }
+    }
+
     // Compute total suspense sent (initial advance + all approved top-ups)
     const approvedTopups = (settlements || []).filter(s => s.entry_type === 'topup' && s.status === 'approved');
     const totalSuspenseSent = parseFloat(sv.advance_amount) + approvedTopups.reduce((sum, s) => sum + parseFloat(s.amount), 0);
@@ -3768,6 +3801,11 @@ app.post('/api/suspense-settlements/:settlementId/approve', async (req, res) => 
       // These are inserted as fresh records so the voucher carries an independent audit trail
       // showing BOTH what was spent (entry bill above) AND how funds reached the staff member.
       await copyTransferReceiptsToVoucher(sv.id, voucher.id);
+
+      // Write back-link so the suspense detail view can show a '🧾 View Voucher' button
+      await supabase.from('suspense_settlements')
+        .update({ voucher_id: voucher.id })
+        .eq('id', settlement.id);
     }
 
     const { data: approvedSettlements } = await supabase.from('suspense_settlements')
