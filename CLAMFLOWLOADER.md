@@ -88,7 +88,17 @@ animation: cfs-sweep 1.7s cubic-bezier(.5,0,.3,1) infinite;
 
 ---
 
-## 2. React Component — `public/app.js`
+## 2. Bill Capture page — `public/capture.html`
+
+Same `width + overflow:hidden` mechanism. Sized at 200 px wide (56 px tall). IDs prefixed `cfc-` to avoid collisions with the splash screen's `cfs-` IDs.
+
+Keyframes (`cfc-form`): identical timing to the splash screen — 5 % draw-in (0.125 s), 77 % hold, 14 % fade/reset.
+
+The `loading-screen` div is hidden/shown via a `hide()`/`show()` JavaScript helper; no code touches `.cf-loader` class names (which no longer exist).
+
+---
+
+## 3. React Component — `public/app.js`
 
 ### Signature
 
@@ -161,7 +171,7 @@ A module-level counter (`_cfCounter`) is incremented inside `useState` lazy init
 
 ---
 
-## 3. Full-page loading state pattern
+## 4. Full-page loading state pattern
 
 ```jsx
 if (loading) return (
@@ -176,7 +186,7 @@ if (loading) return (
 
 ---
 
-## 4. Porting to other Relish apps
+## 5. Porting to other Relish apps
 
 Copy the splash screen block from `public/index.html` — the `<style>`, outer `<div>`, `#cfs-wrap` div, and `<svg>` — into the target page. No external stylesheet needed.
 
@@ -193,7 +203,7 @@ Copy the splash screen block from `public/index.html` — the `<style>`, outer `
 
 ---
 
-## 5. Known gotchas
+## 6. Known gotchas
 
 | Gotcha | Cause | Fix |
 |---|---|---|
@@ -213,7 +223,15 @@ Copy the splash screen block from `public/index.html` — the `<style>`, outer `
 
 ---
 
-## Quick Reference
+## Quick Reference — Three live implementations
+
+| File | Variant | IDs | Mechanism |
+|---|---|---|---|
+| `public/index.html` | Splash screen | `cfs-*` | `width` anim + `overflow:hidden` on `#cfs-wrap` div |
+| `public/capture.html` | Bill Capture loading | `cfc-*` | Same — `width` anim + `overflow:hidden` on `#cfc-wrap` div |
+| `public/app.js` | React component | `cf{N}-f/g/c` (counter) | Same — `width %` anim on `.cf-wave-wrap` span |
+
+All three use identical mechanics. IDs are namespaced per-file to avoid collisions (`cfs-`, `cfc-`, `cf{counter}-`). The old `clip-path: inset()` approach has been fully removed from all three files.
 
 | File | What lives there |
 |---|---|
