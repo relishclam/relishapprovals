@@ -2584,7 +2584,7 @@ const PreviewVoucher = ({ formData, payees, user }) => {
 
 // Voucher List
 const VoucherList = ({ filter }) => {
-  const { user, vouchers, addToast, refreshVouchers } = useApp();
+  const { user, vouchers, addToast, refreshVouchers, navigateToSuspense } = useApp();
   const [selectedVoucher, setSelectedVoucher] = useState(null);
   const [showModal, setShowModal] = useState(false);
   const [payeeOtp, setPayeeOtp] = useState('');
@@ -3586,6 +3586,11 @@ const VoucherList = ({ filter }) => {
           <div className="modal-header" style={{background: '#f5841f', color: 'white'}}>
             <h3 className="modal-title" style={{color: 'white'}}>Voucher Details</h3>
             <div style={{display: 'flex', gap: '0.5rem', alignItems: 'center'}}>
+              {selectedVoucher.is_suspense_settlement && selectedVoucher.suspense_voucher_id && (
+                <button className="btn btn-sm" style={{background:'#92400e',color:'white',border:'none',borderRadius:'6px',fontSize:'0.8rem',fontWeight:600}} onClick={(e) => { e.stopPropagation(); setShowModal(false); navigateToSuspense(selectedVoucher.suspense_voucher_id); }} title={`View source suspense voucher ${selectedVoucher.suspense_serial}`}>
+                  📋 {selectedVoucher.suspense_serial || 'View Suspense'}
+                </button>
+              )}
               {(user.role === 'admin' || user.isSuperAdmin) && (
                 <button className="btn btn-sm btn-danger" onClick={(e) => { e.stopPropagation(); setShowDeleteModal(true); }}>
                   🗑️ <span className="btn-text">Delete</span>
@@ -7675,6 +7680,19 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
   const [advancePaidReceiptPreview, setAdvancePaidReceiptPreview] = useState('');
   const [advancePaidLoading, setAdvancePaidLoading] = useState(false);
 
+  // Linked voucher viewer (drill-through from settlement entry → voucher detail)
+  const [linkedVoucher, setLinkedVoucher] = useState(null);
+  const [linkedVoucherLoading, setLinkedVoucherLoading] = useState(false);
+
+  const openLinkedVoucher = async (voucherId) => {
+    setLinkedVoucherLoading(true);
+    try {
+      const data = await api.getVoucher(voucherId);
+      setLinkedVoucher(data);
+    } catch { addToast('Failed to load voucher', 'error'); }
+    setLinkedVoucherLoading(false);
+  };
+
   const load = async () => {
     setLoading(true);
     try {
@@ -8144,6 +8162,9 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
                       {(user.role === 'accounts' || user.isSuperAdmin) && s.status === 'pending_review' && s.entry_type !== 'topup' && (
                         <button className="btn btn-sm btn-success" style={{ fontSize: '0.75rem', padding: '3px 10px' }} onClick={() => openApproveModal(s)}>✅ Review</button>
                       )}
+                      {s.entry_type !== 'topup' && s.status === 'approved' && s.voucher_id && (
+                        <button className="btn btn-sm btn-secondary" style={{ fontSize: '0.75rem', padding: '3px 10px' }} onClick={() => openLinkedVoucher(s.voucher_id)} disabled={linkedVoucherLoading}>🧾 View Voucher</button>
+                      )}
                       {(user.role === 'admin' || user.isSuperAdmin) && s.entry_type === 'topup' && s.status === 'pending_approval' && (
                         <div style={{ display: 'flex', gap: '0.35rem', justifyContent: 'center' }}>
                           <button className="btn btn-sm btn-success" style={{ fontSize: '0.75rem', padding: '3px 10px' }} onClick={() => handleApproveTopUp(s)} disabled={actionLoading}>✅ Approve</button>
@@ -8237,6 +8258,45 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
             <div className="modal-footer">
               <button className="btn btn-secondary" onClick={() => setShowCloseModal(false)}>Cancel</button>
               <button className="btn btn-danger" onClick={handleCloseVoucher} disabled={closeLoading}>{closeLoading ? Icons.loader : '🔒'} Confirm Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Linked Voucher Viewer (settlement entry drill-through) ────────── */}
+      {linkedVoucher && (
+        <div className="modal-overlay" onClick={() => setLinkedVoucher(null)}>
+          <div className="modal modal-lg" onClick={e => e.stopPropagation()}>
+            <div className="modal-header" style={{ background: '#f5841f', color: 'white' }}>
+              <h3 className="modal-title" style={{ color: 'white' }}>🧾 Voucher Details — {linkedVoucher.serial_number}</h3>
+              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                <span style={{ background: 'rgba(255,255,255,0.15)', borderRadius: '6px', padding: '2px 8px', fontSize: '0.78rem', fontWeight: 600 }}>Source: {sv.serial_number}</span>
+                <button className="modal-close" style={{ color: 'white' }} onClick={() => setLinkedVoucher(null)}>×</button>
+              </div>
+            </div>
+            <div className="modal-body">
+              <VoucherPreview voucher={linkedVoucher} />
+              <BillAttachmentPanel voucherId={linkedVoucher.id} voucherType="regular" companyId={user.company.id} />
+              {linkedVoucher.status === 'paid' && (linkedVoucher.payment_reference || linkedVoucher.payment_receipt_url) && (
+                <div style={{ background: '#f0fdf4', border: '1px solid #86efac', borderRadius: '8px', padding: '1rem', marginTop: '1rem' }}>
+                  <p style={{ fontWeight: 600, color: '#166534', marginBottom: '0.6rem' }}>✅ Payment Record</p>
+                  {linkedVoucher.payment_reference && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.9rem', marginBottom: '0.3rem' }}>
+                      <span style={{ color: '#166534' }}>UTR / Ref</span>
+                      <strong style={{ fontFamily: 'monospace' }}>{linkedVoucher.payment_reference}</strong>
+                    </div>
+                  )}
+                  {linkedVoucher.payment_notes && <div style={{ fontSize: '0.85rem', color: '#166534', marginBottom: '0.5rem' }}>{linkedVoucher.payment_notes}</div>}
+                  {linkedVoucher.payment_receipt_url && (
+                    <a href={linkedVoucher.payment_receipt_url} target="_blank" rel="noopener noreferrer" className="btn btn-secondary" style={{ width: '100%', justifyContent: 'center', fontSize: '0.85rem', marginTop: '0.5rem' }}>
+                      📄 View Payment Receipt
+                    </a>
+                  )}
+                </div>
+              )}
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setLinkedVoucher(null)}>Close</button>
             </div>
           </div>
         </div>
@@ -9838,7 +9898,7 @@ const App = () => {
     );
   }
 
-  const contextValue = { user, vouchers, notifications, addToast, refreshVouchers, refreshNotifications };
+  const contextValue = { user, vouchers, notifications, addToast, refreshVouchers, refreshNotifications, navigateToSuspense: (id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); try { localStorage.setItem('relish_page', 'suspense-detail'); } catch {} } };
   const renderPage = () => {
     if (user.role === 'auditor') return <VoucherList filter="completed" />;
     switch(currentPage) { case 'dashboard': return <Dashboard />; case 'create': return (user.role === 'accounts' || user.isSuperAdmin) ? <CreateVoucher /> : <Dashboard />; case 'drafts': return (user.role === 'accounts' || user.isSuperAdmin) ? <VoucherList filter="draft" /> : <Dashboard />; case 'pending': return <VoucherList filter="pending" />; case 'approved': return <VoucherList filter="approved" />; case 'completed': return <VoucherList filter="completed" />; case 'awaiting_payment': return <VoucherList filter="awaiting_payment" />; case 'paid': return <VoucherList filter="paid" />; case 'all': return <VoucherList filter="all" />; case 'users': return user.isSuperAdmin ? <UsersManagement /> : <Dashboard />; case 'payees': return (user.role === 'accounts' || user.isSuperAdmin) ? <PayeesManagement /> : <Dashboard />; case 'accounts': return (user.role === 'accounts' || user.isSuperAdmin) ? <AccountsManagement /> : <Dashboard />; case 'pay-from-accounts': return (user.role === 'accounts' || user.isSuperAdmin) ? <PaymentAccountsManagement /> : <Dashboard />; case 'suspense': return <SuspenseVoucherList onViewDetail={(id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); }} />; case 'create-suspense': return (user.role === 'accounts' || user.isSuperAdmin) ? <SuspenseVoucherForm onCreated={() => { setCurrentPage('suspense'); }} onViewDetail={(id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); }} /> : <Dashboard />; case 'suspense-detail': return suspenseDetailId ? <SuspenseVoucherDetail suspenseId={suspenseDetailId} onBack={() => setCurrentPage('suspense')} /> : <SuspenseVoucherList onViewDetail={(id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); }} />; default: return <Dashboard />; } };

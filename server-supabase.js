@@ -1774,16 +1774,17 @@ app.get('/api/vouchers/:voucherId', async (req, res) => {
     //   vouchers.settlement_id  (migration 014)  ->  suspense_settlements.id
     //   suspense_settlements.voucher_id  (migration 019)  ->  vouchers.id
     let suspenseSerial = null;
+    let suspenseVoucherId = null;
     if (voucher.is_suspense_settlement) {
       const { data: linkedSettlements } = await supabase
         .from('suspense_settlements')
         .select('suspense_id')
         .eq('voucher_id', req.params.voucherId)
         .limit(1);
-      const suspenseId = linkedSettlements?.[0]?.suspense_id;
-      if (suspenseId) {
+      suspenseVoucherId = linkedSettlements?.[0]?.suspense_id || null;
+      if (suspenseVoucherId) {
         const { data: sv } = await supabase.from('suspense_vouchers')
-          .select('serial_number').eq('id', suspenseId).single();
+          .select('serial_number').eq('id', suspenseVoucherId).single();
         suspenseSerial = sv?.serial_number || null;
       }
     }
@@ -1811,6 +1812,7 @@ app.get('/api/vouchers/:voucherId', async (req, res) => {
       company_address: voucher.company?.address,
       company_gst: voucher.company?.gst,
       suspense_serial: suspenseSerial,
+      suspense_voucher_id: suspenseVoucherId,
       attachments: attachments || []
     });
   } catch (error) {
