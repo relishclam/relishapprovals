@@ -1,6 +1,213 @@
 # ClamFlowLoader — Implementation Guide
 
 > SVG wave loader derived from the ClamFlow mark.  
+> Wave draws left → right in ~0.125 s, holds fully visible for ~2 s, then fades.  
+> Teal palette (`#58d3c1 → #16656f`), transparent background, no images, no external deps.
+
+---
+
+## Why `width + overflow:hidden` — not `clip-path`
+
+Every approach that applied `clip-path: inset()` directly to an `<svg>` element failed in Chrome. Root cause: Chrome evaluates `clip-path` on SVG elements in **SVG user-unit space** (the viewBox), not CSS pixel space. `inset(0 100% 0 0)` on a 950-unit-wide viewBox clips only a fraction of a pixel, leaving a permanent sliver visible.
+
+The reliable fix: animate `width` on a plain HTML wrapper div/span with `overflow:hidden`. CSS layout properties operate in CSS pixels unconditionally, across all elements and browsers.
+
+Additionally, the SVG must **not** have `overflow:visible` — that causes Chrome to composite the SVG's overflow into a separate layer that bypasses the wrapper's `overflow:hidden` box, re-introducing the sliver.
+
+---
+
+## 1. Splash Screen — `public/index.html`
+
+Fully self-contained: own `<style>` block, hardcoded colours, unique IDs (`cfs-*`), no dependency on `styles.css` loading first.
+
+### DOM Structure
+
+```
+<div style="width:320px;height:90px;position:relative;">          ← fixed-size flex placeholder
+  <div id="cfs-wrap" style="position:absolute;left:0;top:0;      ← animated reveal wrapper
+       height:90px; width:0; overflow:hidden;
+       mask-image: linear-gradient(to right, black 75%, transparent 100%);
+       animation: cfs-form 2.5s linear infinite">
+    <svg width="320" height="90" viewBox="0 0 950 267">           ← static, no animation
+      ...paths + glint...
+    </svg>
+  </div>
+</div>
+```
+
+### Keyframes
+
+```css
+@keyframes cfs-form {
+  0%  { width:0;     opacity:1; animation-timing-function:ease-out }  /* draw starts */
+  5%  { width:320px; opacity:1; animation-timing-function:linear  }  /* draw complete — 0.125 s */
+  82% { width:320px; opacity:1; animation-timing-function:ease    }  /* hold — 1.925 s */
+  96% { width:320px; opacity:0; animation-timing-function:linear  }  /* fade out — 0.35 s */
+ 100% { width:0;     opacity:0 }                                      /* invisible reset */
+}
+
+@keyframes cfs-sweep {
+  0%   { transform: translateX(-320px) skewX(-12deg) }
+  100% { transform: translateX(1070px) skewX(-12deg) }
+}
+```
+
+### Timing breakdown (2.5 s cycle)
+
+| Phase | Keyframe range | Duration | Easing |
+|---|---|---|---|
+| Draw 0 → 320 px | 0 % → 5 % | **0.125 s** | `ease-out` — fast start, decelerates |
+| Hold full width | 5 % → 82 % | **1.925 s** | `linear` (no motion) |
+| Fade out | 82 % → 96 % | 0.35 s | `ease` |
+| Invisible reset | 96 % → 100 % | 0.1 s | `linear` |
+
+The partial-draw window is ~50 ms — shorter than a human blink. The complete mark is visible for nearly 2 seconds per cycle.
+
+### Soft trailing edge
+
+`mask-image: linear-gradient(to right, black 75%, transparent 100%)` on `#cfs-wrap` softens the right clip edge as the wave draws in, so the reveal looks organic rather than hard-cut.
+
+### Glint sweep
+
+Applied to the `<rect id="cfs-streak">` **inside** the SVG, clipped by the wave's own `<clipPath id="cfs-clip">`. Runs on its own independent 1.7 s loop.
+
+```css
+/* On the rect element, inline style: */
+mix-blend-mode: screen;
+animation: cfs-sweep 1.7s cubic-bezier(.5,0,.3,1) infinite;
+```
+
+### `prefers-reduced-motion`
+
+```css
+@media(prefers-reduced-motion:reduce){
+  #cfs-wrap { animation:none; width:320px; opacity:1 }
+  #cfs-streak { display:none }
+}
+```
+
+---
+
+## 2. React Component — `public/app.js`
+
+### Signature
+
+```jsx
+<ClamFlowLoader width={200} label="Loading" />
+```
+
+| Prop | Type | Default | Notes |
+|---|---|---|---|
+| `width` | `number \| string` | `200` | CSS px width — height auto-computed |
+| `label` | `string` | `'Loading'` | `aria-label` on the SVG |
+
+### Component structure
+
+```jsx
+<span style={{ display:'inline-block', width:w, height:h,
+               lineHeight:0, verticalAlign:'middle',
+               flexShrink:0, position:'relative' }}>
+
+  <span className="cf-wave-wrap"
+        style={{ display:'block', position:'absolute',
+                 left:0, top:0, height:h,
+                 width:0,             /* ← animated from 0 → 100% */
+                 overflow:'hidden',   /* ← clips SVG to current width */
+                 animation:'cf-form 3s ease-out infinite' }}>
+
+    <svg width={w} height={h} viewBox="0 0 950 267"
+         style={{ display:'block' }}>   /* NO overflow:visible */
+      ...defs + paths...
+    </svg>
+
+  </span>
+</span>
+```
+
+### Injected keyframes (self-injected once via `<style id="clamflow-keyframes">`)
+
+```css
+@keyframes cf-form {
+  0%   { width:0%;   opacity:1 }
+  20%  { width:100%; opacity:1 }   /* 3s × ease-out → full width by ~0.3 s */
+  80%  { width:100%; opacity:1 }
+  95%  { width:100%; opacity:0 }
+  100% { width:0%;   opacity:0 }
+}
+@keyframes cf-sweep {
+  0%   { transform: translateX(-320px) skewX(-12deg) }
+  100% { transform: translateX(1070px) skewX(-12deg) }
+}
+@media(prefers-reduced-motion:reduce){
+  .cf-wave-wrap  { animation:none; width:100%; opacity:1 }
+  .cf-wave-streak{ display:none }
+}
+```
+
+> **Note:** The React component's `cf-form` keyframe still uses `20%` for the draw phase (vs `5%` in the splash screen). The splash screen is optimised for maximum first-impression visibility; the React component runs inside the authenticated app where full-page loading states are less prominent.
+
+### Unique IDs
+
+A module-level counter (`_cfCounter`) is incremented inside `useState` lazy initialiser so every mounted instance gets its own gradient/clipPath IDs (`cf1-f`, `cf2-f`, …). No ID collisions even with dozens of simultaneous spinners.
+
+### Sizes used in Relish Approvals
+
+| Context | `width` | Approx height |
+|---|---|---|
+| Splash screen (`index.html`) | 320 px (HTML, not component) | 90 px |
+| Button / inline (`Icons.loader`) | 56 px | 16 px |
+| Full-page loading state | 200 px | 56 px |
+| Capture page (`capture.html`) | 200 px | 56 px |
+
+---
+
+## 3. Full-page loading state pattern
+
+```jsx
+if (loading) return (
+  <div className="loading-state">
+    <ClamFlowLoader width={200} label="Loading"/>
+    <span>Loading…</span>
+  </div>
+);
+```
+
+`.loading-state` CSS (in `styles.css`) — flex column, centred, `min-height:180px`.
+
+---
+
+## 4. Porting to other Relish apps
+
+Copy the splash screen block from `public/index.html` — the `<style>`, outer `<div>`, `#cfs-wrap` div, and `<svg>` — into the target page. No external stylesheet needed.
+
+**To recolour**, change the `stop-color` values on the two `<linearGradient id="cfs-fill">` stops:
+
+```html
+<stop offset="0" stop-color="#7fe6d5"/>   <!-- lighter teal top -->
+<stop offset="1" stop-color="#1c6f78"/>   <!-- deeper teal bottom -->
+```
+
+**To resize**, change `width="320" height="90"` on the `<svg>` and `width:320px;height:90px` on the outer div. Keep aspect ratio 950:267 (≈ 3.56:1).
+
+**Multiple colours on one page**: give the three IDs a unique suffix — `cfs-fill2`, `cfs-glint2`, `cfs-clip2` — so gradient definitions don't collide.
+
+---
+
+## 5. Known gotchas
+
+| Gotcha | Cause | Fix |
+|---|---|---|
+| Permanent left-edge sliver | `clip-path:inset()` on `<svg>` uses SVG user-unit coords, not CSS px | Use `width` animation + `overflow:hidden` on wrapper (current approach) |
+| SVG overflow bypasses wrapper | `overflow:visible` on `<svg>` composites content outside wrapper's layout box | Remove `overflow:visible` from the SVG element |
+| Stale splash from service worker | Old SW pre-cached `index.html` | SW v39+ no longer pre-caches HTML; always fetched network-first |
+| Partial draw visible too long | Draw phase too long; `ease` starts slow | Draw phase = 5 % of cycle (0.125 s); `ease-out` on draw keyframe |
+
+---
+
+*Private — FoodStream Ltd. Hong Kong*
+
+
+> SVG wave loader derived from the ClamFlow mark.  
 > Wave draws left → right; a white glint sweeps through.  
 > Teal palette (`#58d3c1 → #16656f`), transparent background, no images.
 
