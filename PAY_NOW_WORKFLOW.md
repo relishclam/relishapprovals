@@ -270,3 +270,179 @@ When `receiptData` is provided (base64-encoded image or PDF), the receipt is:
 | Queue for payment (`awaiting_payment`) | ✅ | — | ✅ |
 | Confirm payment (`paid`) | ✅ | — | ✅ |
 | Dequeue (defer back to `completed`) | ✅ | ✅ | ✅ |
+
+---
+
+## Pay Now for Suspense Voucher Top-Ups
+
+> Added by `migrations/029_add_topup_payment_tracking.sql`.
+
+Every **approved top-up** on a suspense voucher is an outward payment to the staff payee and must be reconciled in full — the same way a regular voucher payment is.
+
+### Why This Matters
+
+A suspense top-up is money leaving the company's account and going to the staff member. Without payment tracking it was invisible: the balance increased but there was no proof that the funds were actually transferred. This feature closes that gap.
+
+This also covers the **negative-balance (out-of-pocket) scenario**: when a staff member's approved expenses exceed the advance, the balance goes negative. A top-up to cover the deficit is a reimbursement of out-of-pocket spending. The Pay Now flow ensures that reimbursement is executed and documented.
+
+---
+
+### Status Lifecycle for Top-Ups
+
+Top-ups are stored as rows in `suspense_settlements` with `entry_type = 'topup'`.
+
+```
+pending_approval  ──── Admin Rejects ──→  rejected
+      ↓
+   approved  (balance credited, SMS sent to staff)
+      ↓
+  💳 Pay Now button visible to Admin / Super Admin
+      ↓
+     paid  (payment_status = 'paid', UTR and/or receipt stored)
+```
+
+> There is no separate `awaiting_payment` step for top-ups. Because Admin already approved the top-up, they are automatically in the loop and can proceed directly to Pay Now → Confirm Payment.
+
+---
+
+### Pay Now Button — Visibility Rules (Top-Ups)
+
+The **💳 Pay Now** button appears on a top-up row in the Settlement Entries table when **all** of the following are true:
+
+1. `s.entry_type === 'topup'`
+2. `s.status === 'approved'`
+3. `s.payment_status` is `null` (not yet paid)
+4. `user.role === 'admin'` or `user.isSuperAdmin === true`
+
+---
+
+### Pay Now Modal (Top-Up)
+
+Triggered by `setPayNowTopup(buildTopupPayNow(s))`. Modal title: **💳 Pay Top-Up — {serial_number}**.
+
+The modal is self-contained inside `SuspenseVoucherDetail`. It uses the staff payee's bank / UPI details from the parent suspense voucher.
+
+#### Summary Card
+
+| Field | Source |
+|---|---|
+| Payee (Staff) | `sv.staff_payee.name` |
+| Top-Up Amount | `s.amount` |
+| Mode | `sv.payment_mode` |
+| Reason | `s.description` (the reason Accounts gave when requesting the top-up) |
+
+#### Mode-Specific Content
+
+Identical to regular Pay Now:
+
+| Mode | Content |
+|---|---|
+| UPI + mobile | `upi://pay?` deep-link → **Open UPI App →** |
+| UPI + desktop | QR code via `api.qrserver.com` (220×220 px) |
+| Account Transfer | Bank details card + **📋 Copy All Details** button. Reference shown as `{serial_number} (Top-Up)` |
+| Cash | Plain instruction to hand cash to the staff member |
+
+#### Payee Fields (from `payees` via `suspense_vouchers.staff_payee_id`)
+
+| Payment Mode | Required Fields |
+|---|---|
+| UPI | `payees.upi_id` |
+| Account Transfer | `payees.bank_account`, `payees.ifsc`, `payees.bank_name` |
+
+> The GET `/api/suspense-vouchers/:id` query was extended to fetch `upi_id, bank_account, ifsc, bank_name` from the `payees` join.
+
+#### Footer
+
+**✅ Confirm Payment →** — always visible for Admin / Super Admin regardless of payment mode. Closes the Pay Now modal and opens the Mark Paid modal.
+
+---
+
+### Mark Paid Modal (Top-Up)
+
+Triggered after clicking **✅ Confirm Payment →** in the Pay Now modal.
+
+- **UTR / Transaction ID** — free-text input (optional if receipt is uploaded)
+- **Payment Receipt** — image or PDF upload, max 5 MB (optional if UTR is entered)
+- **Notes** — optional free-text
+- **Validation**: at least one of UTR or receipt is required — returns an error toast otherwise
+- On confirm: calls `api.markTopupPaid(...)` → `POST /api/suspense-settlements/:id/mark-topup-paid`
+
+After success: the settlement row immediately shows a **✅ Paid** badge with the UTR (if set) and a **📎 Receipt** link (if uploaded).
+
+---
+
+### API Endpoint
+
+| Method | Route | Description | Auth |
+|---|---|---|---|
+| `POST` | `/api/suspense-settlements/:id/mark-topup-paid` | Confirm top-up payment. Body: `{ paidBy, paymentReference?, paymentNotes?, receiptData?, receiptMimeType? }` | Admin / Super Admin only |
+
+**Validation:** entry must be `entry_type = 'topup'`, `status = 'approved'`, and `payment_status` must be `null`. Returns `400` otherwise.
+
+---
+
+### New Database Fields (on `suspense_settlements` table)
+
+| Column | Type | Notes |
+|---|---|---|
+| `payment_status` | `TEXT` | `NULL` = not yet paid; `'paid'` = confirmed |
+| `payment_reference` | `TEXT` | UTR number / transaction reference |
+| `payment_receipt_url` | `TEXT` | Public URL of the uploaded receipt (stored in `voucher-bills` bucket under `{companyId}/topup-receipts/{settlementId}/`) |
+| `payment_notes` | `TEXT` | Optional free-text notes |
+| `paid_by` | `UUID` | FK → `users(id)` — Admin who confirmed payment |
+| `paid_at` | `TIMESTAMPTZ` | When payment was confirmed |
+
+---
+
+### Receipt Storage Path
+
+```
+voucher-bills/{companyId}/topup-receipts/{settlementId}/receipt_{timestamp}.{ext}
+```
+
+Same bucket (`voucher-bills`) as regular voucher receipts, different path prefix.
+
+---
+
+### Notifications
+
+| Event | Who is Notified |
+|---|---|
+| Top-up payment confirmed | Suspense voucher creator (in-app) |
+| Top-up payment confirmed | Accounts user who submitted the top-up request (in-app) |
+
+---
+
+### Roles
+
+| Action | Accounts | Admin | Super Admin |
+|---|:---:|:---:|:---:|
+| Submit top-up request | ✅ | — | ✅ |
+| Approve / Reject top-up | — | ✅ | ✅ |
+| Pay Now (execute payment) | — | ✅ | ✅ |
+| Confirm payment (`paid`) | — | ✅ | ✅ |
+
+---
+
+### Data Flow Summary
+
+```
+Accounts submits top-up → pending_approval
+       ↓
+Admin approves → approved (balance increases, SMS to staff)
+       ↓
+💳 Pay Now button appears on top-up row (Admin / Super Admin)
+       ↓
+Pay Now Modal
+    ├── UPI + mobile  → upi:// deep link
+    ├── UPI + desktop → QR code
+    ├── Account Transfer → bank details card + clipboard copy
+    └── Cash → plain instruction
+       ↓
+✅ Confirm Payment → Mark Paid Modal
+    ├── UTR reference (text)
+    └── Receipt upload (image / PDF → Supabase Storage)
+       ↓
+payment_status = 'paid'
+Settlement row shows: ✅ Paid · UTR: xxx · 📎 Receipt
+```
