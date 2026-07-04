@@ -77,6 +77,7 @@ self.addEventListener('fetch', (event) => {
 
   // App code files & navigation: Network-first strategy (always serve latest code)
   const url = new URL(event.request.url);
+  const isAppCode = url.pathname === '/app.js' || url.pathname === '/styles.css' || url.pathname === '/service-worker.js';
   const isNavigation = event.request.mode === 'navigate';
   if (isAppCode || isNavigation) {
     event.respondWith(
@@ -171,7 +172,7 @@ self.addEventListener('push', (event) => {
     // Sound is handled by the system based on notification settings
     sound: '/notification.mp3', // Optional: custom sound file
     data: {
-      url: data.url ||
+      url: data.url || '/',
       timestamp: data.timestamp || Date.now()
     },
     actions: [
