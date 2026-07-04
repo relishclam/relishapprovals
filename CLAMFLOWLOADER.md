@@ -216,7 +216,7 @@ For TypeScript/React projects (Next.js, Vite): use `ClamFlowLoader.tsx` at `C:\\
 | Permanent left-edge sliver on SVG | `clip-path:inset()` on `<svg>` uses SVG user-unit coords, not CSS px | `width` animation + `overflow:hidden` on HTML wrapper |
 | SVG overflow bypasses wrapper clipping | `overflow:visible` on SVG composites content outside wrapper box | Removed `overflow:visible` from all three SVG elements |
 | Intermittent React sliver *(fixed)* | `@keyframes cf-form` in `styles.css` (clip-path) shadowed app.js injected `cf-form` (width) depending on parse order | Deleted `styles.css` definition; single source of truth in app.js |
-| Orphaned SVG tail in HTML | `replace_string_in_file` matched only part of a block, leaving closing tags | Rewrite entire body section via Node.js; never partial-match across SVG boundaries |
+| Two loaders active simultaneously | `replace_string_in_file` matched only the **opening** tag of the old `<span class="cf-loader">` in `capture.html`; the replacement inserted the new `cfc-*` block but left the entire old `<svg class="cf-loader__form">` body dangling after it — both loaders were in the DOM at once. Commit `8be5d62` shipped this broken state; `5018847` (manual edit) removed the orphan. | Always rewrite the entire loading block via Node.js `fs.writeFileSync` when replacing multi-line SVG structures; never use partial-match text replacement across SVG tag boundaries |
 | Stale HTML from service worker | `index.html` was in SW pre-cache; new HTML never reached browser | SW v39+: HTML removed from `urlsToCache`; navigations always network-first |
 
 ---
