@@ -236,6 +236,7 @@ const api = {
   approveTopUp: (settlementId, approvedBy) => fetch(`${API_BASE}/suspense-settlements/${settlementId}/approve-topup`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ approvedBy }) }).then(r => r.json()),
   rejectTopUp: (settlementId, rejectedBy, reason) => fetch(`${API_BASE}/suspense-settlements/${settlementId}/reject-topup`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rejectedBy, reason }) }).then(r => r.json()),
   markTopupPaid: (settlementId, paidBy, paymentReference, paymentNotes, receiptData, receiptMimeType) => fetch(`${API_BASE}/suspense-settlements/${settlementId}/mark-topup-paid`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ paidBy, paymentReference, paymentNotes, receiptData: receiptData || undefined, receiptMimeType: receiptMimeType || undefined }) }).then(r => r.json()),
+  markAdvancePaid: (suspenseId, paidBy, paymentReference, paymentNotes, receiptData, receiptMimeType) => fetch(`${API_BASE}/suspense-vouchers/${suspenseId}/mark-advance-paid`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ paidBy, paymentReference, paymentNotes, receiptData: receiptData || undefined, receiptMimeType: receiptMimeType || undefined }) }).then(r => r.json()),
   closeSuspenseVoucher: (suspenseId, closedBy) => fetch(`${API_BASE}/suspense-vouchers/${suspenseId}/close`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ closedBy }) }).then(r => r.json()),
   recalculateSuspenseBalance: (suspenseId, requestedBy) => fetch(`${API_BASE}/suspense-vouchers/${suspenseId}/recalculate-balance`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ requestedBy }) }).then(r => r.json()),
   // Attachments
@@ -7664,6 +7665,16 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
   const [topupReceiptPreview, setTopupReceiptPreview] = useState('');
   const [topupPaidLoading, setTopupPaidLoading] = useState(false);
 
+  // Initial advance Pay Now / Mark Paid state
+  const [payNowAdvance, setPayNowAdvance] = useState(false);
+  const [showAdvancePaidModal, setShowAdvancePaidModal] = useState(false);
+  const [advancePaidRef, setAdvancePaidRef] = useState('');
+  const [advancePaidNotes, setAdvancePaidNotes] = useState('');
+  const [advancePaidReceiptData, setAdvancePaidReceiptData] = useState('');
+  const [advancePaidReceiptMimeType, setAdvancePaidReceiptMimeType] = useState('');
+  const [advancePaidReceiptPreview, setAdvancePaidReceiptPreview] = useState('');
+  const [advancePaidLoading, setAdvancePaidLoading] = useState(false);
+
   const load = async () => {
     setLoading(true);
     try {
@@ -7840,6 +7851,44 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
     setTopupPaidLoading(false);
   };
 
+  const handleAdvanceReceiptUpload = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) { addToast('Receipt must be under 5 MB', 'error'); return; }
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const base64 = ev.target.result.split(',')[1];
+      setAdvancePaidReceiptData(base64);
+      setAdvancePaidReceiptMimeType(file.type);
+      setAdvancePaidReceiptPreview(file.type.startsWith('image/') ? ev.target.result : 'pdf');
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const clearAdvancePaidModal = () => {
+    setShowAdvancePaidModal(false);
+    setAdvancePaidRef('');
+    setAdvancePaidNotes('');
+    setAdvancePaidReceiptData('');
+    setAdvancePaidReceiptMimeType('');
+    setAdvancePaidReceiptPreview('');
+  };
+
+  const handleMarkAdvancePaid = async () => {
+    if (!advancePaidRef.trim() && !advancePaidReceiptData) {
+      addToast('Enter a UTR reference or upload a receipt — at least one is required', 'error');
+      return;
+    }
+    setAdvancePaidLoading(true);
+    const result = await api.markAdvancePaid(suspenseId, user.id, advancePaidRef.trim(), advancePaidNotes.trim(), advancePaidReceiptData, advancePaidReceiptMimeType);
+    if (result.success) {
+      addToast('Advance payment confirmed ✅', 'success');
+      clearAdvancePaidModal();
+      load();
+    } else addToast(result.error || 'Failed to confirm advance payment', 'error');
+    setAdvancePaidLoading(false);
+  };
+
   const handleCloseVoucher = async () => {
     setCloseLoading(true);
     const result = await api.closeSuspenseVoucher(suspenseId, user.id);
@@ -7960,7 +8009,10 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
           {(user.role === 'accounts' || user.isSuperAdmin || isAdmin) && (sv.status === 'open' || sv.status === 'partial') && (
             <button className="btn btn-sm btn-secondary" onClick={handleResendLink} disabled={resendLoading}>{resendLoading ? Icons.loader : '📲'} Resend Link</button>
           )}
-          {(user.role === 'accounts' || user.isSuperAdmin) && (sv.status === 'open' || sv.status === 'partial' || sv.status === 'closed') && sv.status !== 'pending_approval' && sv.status !== 'rejected' && sv.status !== 'awaiting_payee_otp' && (
+          {(user.role === 'admin' || user.isSuperAdmin) && ['awaiting_payee_otp', 'open', 'partial'].includes(sv.status) && !sv.advance_payment_status && (
+            <button className="btn btn-sm" style={{ background: '#16a34a', color: 'white', border: 'none', borderRadius: '8px', fontWeight: 600 }} onClick={() => setPayNowAdvance(true)}>💳 Pay Advance</button>
+          )}
+          {(user.role === 'accounts' || user.isSuperAdmin) && (sv.status === 'open' || sv.status === 'partial') && (
             <button className="btn btn-sm btn-success" onClick={() => { setTopUpForm({ amount: '', description: `Additional advance for ${sv.purpose}` }); setShowTopUp(true); }}>💰 Top Up</button>
           )}
           {(user.role === 'accounts' || user.isSuperAdmin) && (sv.status === 'open' || sv.status === 'partial') && (
@@ -8010,6 +8062,24 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
             </div>
           )}
           {sv.payment_mode && <div><div style={{ fontSize: '0.75rem', color: '#999', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Payment Mode</div><div style={{ marginTop: '2px' }}>{sv.payment_mode}</div></div>}
+          <div>
+            <div style={{ fontSize: '0.75rem', color: '#999', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Advance Payment</div>
+            {sv.advance_payment_status === 'paid' ? (
+              <div style={{ marginTop: '2px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                <span style={{ background: 'rgba(16,185,129,0.12)', color: '#065f46', fontWeight: 600, fontSize: '0.8rem', padding: '2px 8px', borderRadius: '10px', display: 'inline-flex', alignItems: 'center', gap: '4px', width: 'fit-content' }}>✅ Paid</span>
+                {sv.advance_payment_reference && <span style={{ fontSize: '0.75rem', color: '#6b7280', fontFamily: 'monospace' }}>UTR: {sv.advance_payment_reference}</span>}
+                {sv.advance_payer && <span style={{ fontSize: '0.75rem', color: '#6b7280' }}>by {sv.advance_payer.name} · {sv.advance_paid_at ? new Date(sv.advance_paid_at).toLocaleDateString('en-IN') : ''}</span>}
+                {sv.advance_payment_receipt_url && <a href={sv.advance_payment_receipt_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: '0.75rem', color: '#2563eb' }}>📎 Receipt</a>}
+              </div>
+            ) : (
+              <div style={{ marginTop: '2px', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <span style={{ background: 'rgba(245,158,11,0.12)', color: '#b45309', fontWeight: 600, fontSize: '0.8rem', padding: '2px 8px', borderRadius: '10px' }}>⏳ Pending</span>
+                {(user.role === 'admin' || user.isSuperAdmin) && ['awaiting_payee_otp', 'open', 'partial'].includes(sv.status) && (
+                  <button style={{ background: 'none', border: 'none', color: '#16a34a', fontSize: '0.8rem', cursor: 'pointer', fontWeight: 600, padding: 0 }} onClick={() => setPayNowAdvance(true)}>💳 Pay Now</button>
+                )}
+              </div>
+            )}
+          </div>
           <div><div style={{ fontSize: '0.75rem', color: '#999', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Created By</div><div style={{ marginTop: '2px' }}>{sv.creator?.name || 'Unknown'} · {new Date(sv.created_at).toLocaleDateString('en-IN')}</div></div>
           {sv.approver && <div><div style={{ fontSize: '0.75rem', color: '#999', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Approved By</div><div style={{ marginTop: '2px' }}>{sv.approver.name} · {new Date(sv.approved_at).toLocaleDateString('en-IN')}</div></div>}
           {sv.narration && <div style={{ gridColumn: '1 / -1' }}><div style={{ fontSize: '0.75rem', color: '#999', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Narration</div><div style={{ marginTop: '2px' }}>{sv.narration}</div></div>}
@@ -8167,6 +8237,129 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
             <div className="modal-footer">
               <button className="btn btn-secondary" onClick={() => setShowCloseModal(false)}>Cancel</button>
               <button className="btn btn-danger" onClick={handleCloseVoucher} disabled={closeLoading}>{closeLoading ? Icons.loader : '🔒'} Confirm Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Initial Advance Pay Now Modal ───────────────────────────────────── */}
+      {payNowAdvance && sv && (() => {
+        const isMobile = /Mobi|Android/i.test(navigator.userAgent);
+        const payee = sv.staff_payee;
+        const upiUrl = sv.payment_mode === 'UPI' && payee?.upi_id
+          ? `upi://pay?${new URLSearchParams({ pa: payee.upi_id, pn: payee.name, am: parseFloat(sv.advance_amount).toFixed(2), cu: 'INR', tn: `Advance ${sv.serial_number}` }).toString()}`
+          : null;
+        const qrSrc = upiUrl
+          ? `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(upiUrl)}&bgcolor=ffffff&color=1a1a1a&margin=10`
+          : null;
+        const copyBankDetails = () => {
+          const text = [`Payee: ${payee?.name}`, `Account No: ${payee?.bank_account || '—'}`, `IFSC: ${payee?.ifsc || '—'}`, `Bank: ${payee?.bank_name || '—'}`, `Amount: ₹${parseFloat(sv.advance_amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, `Reference: ${sv.serial_number} (Advance)`].join('\n');
+          navigator.clipboard.writeText(text).then(() => addToast('Bank details copied', 'success'));
+        };
+        return (
+          <div className="modal-overlay" onClick={() => setPayNowAdvance(false)}>
+            <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '440px' }}>
+              <div className="modal-header" style={{ background: '#16a34a', color: 'white' }}>
+                <h3 className="modal-title" style={{ color: 'white' }}>💳 Pay Advance — {sv.serial_number}</h3>
+                <button className="modal-close" style={{ color: 'white' }} onClick={() => setPayNowAdvance(false)}>×</button>
+              </div>
+              <div className="modal-body">
+                <div style={{ marginBottom: '1rem', padding: '0.75rem', background: '#f0fdf4', borderRadius: '8px', border: '1px solid #86efac', fontSize: '0.9rem' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.3rem' }}><span style={{ color: '#166534' }}>Payee (Staff)</span><strong>{payee?.name || sv.staff?.name || 'Unknown'}</strong></div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.3rem' }}><span style={{ color: '#166534' }}>Advance Amount</span><strong style={{ fontFamily: 'monospace', fontSize: '1.1rem' }}>₹{parseFloat(sv.advance_amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</strong></div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#166534' }}>Mode</span><strong>{sv.payment_mode}</strong></div>
+                </div>
+
+                {sv.payment_mode === 'UPI' && !payee?.upi_id && (
+                  <div style={{ padding: '1rem', background: '#fef9c3', borderRadius: '8px', border: '1px solid #fde047', textAlign: 'center', fontSize: '0.88rem', color: '#713f12' }}>
+                    ⚠️ No UPI ID recorded for this staff payee. Edit the payee to add their UPI ID.
+                  </div>
+                )}
+                {sv.payment_mode === 'UPI' && payee?.upi_id && isMobile && (
+                  <div style={{ textAlign: 'center' }}>
+                    <p style={{ fontSize: '0.85rem', color: '#555', marginBottom: '1rem' }}>Tap below to open your UPI app with details pre-filled.</p>
+                    <a href={upiUrl} style={{ display: 'inline-block', background: '#16a34a', color: 'white', padding: '0.75rem 2rem', borderRadius: '8px', fontWeight: 700, textDecoration: 'none', fontSize: '1rem' }}>Open UPI App →</a>
+                    <p style={{ fontSize: '0.75rem', color: '#888', marginTop: '0.75rem' }}>UPI ID: <code>{payee.upi_id}</code></p>
+                  </div>
+                )}
+                {sv.payment_mode === 'UPI' && payee?.upi_id && !isMobile && (
+                  <div style={{ textAlign: 'center' }}>
+                    <p style={{ fontSize: '0.85rem', color: '#555', marginBottom: '0.75rem' }}>Scan this QR code with any UPI app on your phone.</p>
+                    <img src={qrSrc} alt="UPI QR Code" style={{ width: 220, height: 220, border: '1px solid #e5e7eb', borderRadius: '8px' }} />
+                    <p style={{ fontSize: '0.75rem', color: '#888', marginTop: '0.75rem' }}>UPI ID: <code>{payee.upi_id}</code></p>
+                  </div>
+                )}
+                {sv.payment_mode === 'Account Transfer' && (
+                  <div>
+                    <p style={{ fontSize: '0.85rem', color: '#555', marginBottom: '0.75rem' }}>Use these details in your banking app (NEFT / IMPS / RTGS).</p>
+                    <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '1rem', fontSize: '0.9rem' }}>
+                      {[['Payee', payee?.name || '—'], ['Account No', payee?.bank_account || '—'], ['IFSC', payee?.ifsc || '—'], ['Bank', payee?.bank_name || '—'], ['Amount', `₹${parseFloat(sv.advance_amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`], ['Reference', `${sv.serial_number} (Advance)`]].map(([label, val]) => (
+                        <div key={label} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.35rem 0', borderBottom: '1px solid #e2e8f0' }}>
+                          <span style={{ color: '#64748b' }}>{label}</span><strong style={{ textAlign: 'right', maxWidth: '60%', wordBreak: 'break-all' }}>{val}</strong>
+                        </div>
+                      ))}
+                    </div>
+                    <button className="btn btn-secondary" style={{ width: '100%', marginTop: '0.75rem' }} onClick={copyBankDetails}>📋 Copy All Details</button>
+                  </div>
+                )}
+                {sv.payment_mode === 'Cash' && (
+                  <div style={{ padding: '1rem', background: '#f8fafc', borderRadius: '8px', border: '1px solid #e2e8f0', textAlign: 'center', fontSize: '0.88rem', color: '#374151' }}>
+                    Hand ₹{parseFloat(sv.advance_amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })} cash to <strong>{payee?.name || sv.staff?.name}</strong> and confirm below.
+                  </div>
+                )}
+              </div>
+              <div className="modal-footer">
+                <button className="btn btn-secondary" onClick={() => setPayNowAdvance(false)}>Close</button>
+                <button className="btn btn-success" onClick={() => { setPayNowAdvance(false); setShowAdvancePaidModal(true); }}>✅ Confirm Payment →</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── Initial Advance Mark Paid Modal ──────────────────────────────────── */}
+      {showAdvancePaidModal && sv && (
+        <div className="modal-overlay" onClick={clearAdvancePaidModal}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '480px' }}>
+            <div className="modal-header" style={{ background: '#16a34a', color: 'white' }}>
+              <h3 className="modal-title" style={{ color: 'white' }}>✅ Confirm Advance Payment — {sv.serial_number}</h3>
+              <button className="modal-close" style={{ color: 'white' }} onClick={clearAdvancePaidModal}>×</button>
+            </div>
+            <div className="modal-body">
+              <div style={{ background: '#f0fdf4', border: '1px solid #86efac', borderRadius: '8px', padding: '0.75rem', marginBottom: '1rem', fontSize: '0.9rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem' }}><span style={{ color: '#166534' }}>Staff Payee</span><strong>{sv.staff_payee?.name || sv.staff?.name}</strong></div>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#166534' }}>Advance Amount</span><strong style={{ fontFamily: 'monospace' }}>₹{parseFloat(sv.advance_amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</strong></div>
+              </div>
+              <div className="form-group">
+                <label className="form-label">UTR / Transaction ID <span style={{ color: '#888', fontWeight: 400 }}>(optional if receipt uploaded)</span></label>
+                <input className="form-input" type="text" placeholder="e.g. 426123456789" value={advancePaidRef} onChange={e => setAdvancePaidRef(e.target.value)} autoFocus />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Payment Receipt / Screenshot <span style={{ color: '#888', fontWeight: 400 }}>(optional if UTR entered)</span></label>
+                {advancePaidReceiptPreview ? (
+                  <div style={{ position: 'relative', marginBottom: '0.5rem' }}>
+                    {advancePaidReceiptPreview === 'pdf' ? (
+                      <div style={{ background: '#f3f4f6', border: '1px solid #d1d5db', borderRadius: '8px', padding: '1rem', textAlign: 'center', fontSize: '0.9rem', color: '#374151' }}>📄 PDF receipt selected</div>
+                    ) : (
+                      <img src={advancePaidReceiptPreview} alt="Receipt preview" style={{ width: '100%', maxHeight: '180px', objectFit: 'contain', borderRadius: '8px', border: '1px solid #d1d5db', background: '#f9fafb' }} />
+                    )}
+                    <button onClick={() => { setAdvancePaidReceiptData(''); setAdvancePaidReceiptMimeType(''); setAdvancePaidReceiptPreview(''); }} style={{ position: 'absolute', top: '6px', right: '6px', background: 'rgba(0,0,0,0.55)', color: 'white', border: 'none', borderRadius: '50%', width: '24px', height: '24px', cursor: 'pointer', fontSize: '0.85rem', lineHeight: '1' }}>×</button>
+                  </div>
+                ) : (
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.65rem 1rem', border: '2px dashed #d1d5db', borderRadius: '8px', cursor: 'pointer', color: '#6b7280', fontSize: '0.9rem' }}>
+                    📎 Click to upload receipt (image or PDF, max 5 MB)
+                    <input type="file" accept="image/*,.pdf" style={{ display: 'none' }} onChange={handleAdvanceReceiptUpload} />
+                  </label>
+                )}
+              </div>
+              <div className="form-group">
+                <label className="form-label">Notes <span style={{ color: '#888', fontWeight: 400 }}>(optional)</span></label>
+                <textarea className="form-input" rows={2} placeholder="e.g. Paid via HDFC Net Banking on 05-Jul-2026" value={advancePaidNotes} onChange={e => setAdvancePaidNotes(e.target.value)} />
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={clearAdvancePaidModal}>Cancel</button>
+              <button className="btn btn-success" onClick={handleMarkAdvancePaid} disabled={advancePaidLoading || (!advancePaidRef.trim() && !advancePaidReceiptData)}>{advancePaidLoading && Icons.loader}✅ Confirm Payment</button>
             </div>
           </div>
         </div>

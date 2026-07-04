@@ -3076,7 +3076,7 @@ app.get('/api/companies/:companyId/pending-topups', async (req, res) => {
 app.get('/api/suspense-vouchers/:id', async (req, res) => {
   try {
     const { data: sv, error } = await supabase.from('suspense_vouchers')
-      .select(`*, staff:users!staff_user_id(id,name,first_name,mobile), staff_payee:payees!staff_payee_id(id,name,mobile,upi_id,bank_account,ifsc,bank_name), creator:users!created_by(id,name), approver:users!approved_by(id,name)`)
+      .select(`*, staff:users!staff_user_id(id,name,first_name,mobile), staff_payee:payees!staff_payee_id(id,name,mobile,upi_id,bank_account,ifsc,bank_name), creator:users!created_by(id,name), approver:users!approved_by(id,name), advance_payer:users!advance_paid_by(id,name)`)
       .eq('id', req.params.id)
       .single();
     if (error || !sv) return res.status(404).json({ error: 'Suspense voucher not found' });
@@ -4651,6 +4651,70 @@ app.post('/api/vouchers/:voucherId/dequeue-payment', async (req, res) => {
     res.json({ success: true, message: 'Voucher deferred — returned to OTP Verified.' });
   } catch (error) {
     console.error('dequeue-payment error:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Mark the initial suspense advance as paid (Admin / Super Admin only)
+app.post('/api/suspense-vouchers/:id/mark-advance-paid', async (req, res) => {
+  const { paidBy, paymentReference, paymentNotes, receiptData, receiptMimeType } = req.body;
+  if (!paidBy) return res.status(400).json({ error: 'paidBy is required' });
+  if (!paymentReference && !receiptData)
+    return res.status(400).json({ error: 'Enter a UTR reference or upload a receipt — at least one is required' });
+
+  try {
+    const actor = await getActorRole(paidBy);
+    if (actor.role !== 'admin' && !actor.is_super_admin)
+      return res.status(403).json({ error: 'Only Admin or Super Admin can confirm advance payments' });
+
+    const { data: sv, error: svErr } = await supabase.from('suspense_vouchers')
+      .select('id, serial_number, company_id, advance_amount, payment_mode, advance_payment_status, created_by, staff_payee_id')
+      .eq('id', req.params.id).single();
+    if (svErr || !sv) return res.status(404).json({ error: 'Suspense voucher not found' });
+    if (sv.advance_payment_status === 'paid')
+      return res.status(400).json({ error: 'Advance has already been marked as paid' });
+
+    // Upload receipt if provided
+    let receiptUrl = null;
+    if (receiptData && receiptMimeType) {
+      const ext = receiptMimeType === 'application/pdf' ? 'pdf'
+        : receiptMimeType.startsWith('image/') ? receiptMimeType.split('/')[1]
+        : 'jpg';
+      const fileName = `${sv.company_id}/advance-receipts/${req.params.id}/receipt_${Date.now()}.${ext}`;
+      const buffer = Buffer.from(receiptData, 'base64');
+      const { error: storageErr } = await supabase.storage
+        .from('voucher-bills')
+        .upload(fileName, buffer, { contentType: receiptMimeType, upsert: true });
+      if (storageErr) {
+        console.warn('Advance receipt upload failed (storage):', storageErr.message, '— continuing without receipt URL');
+      } else {
+        const { data: urlData } = supabase.storage.from('voucher-bills').getPublicUrl(fileName);
+        receiptUrl = urlData.publicUrl;
+      }
+    }
+
+    await supabase.from('suspense_vouchers').update({
+      advance_payment_status:    'paid',
+      advance_payment_reference: paymentReference || null,
+      advance_payment_notes:     paymentNotes || null,
+      advance_payment_receipt_url: receiptUrl,
+      advance_paid_by:           paidBy,
+      advance_paid_at:           new Date().toISOString()
+    }).eq('id', req.params.id);
+
+    // Notify voucher creator
+    const { data: payer } = await supabase.from('users').select('name').eq('id', paidBy).single();
+    await supabase.from('notifications').insert({
+      user_id: sv.created_by,
+      title: '✅ Advance Payment Confirmed',
+      message: `₹${parseFloat(sv.advance_amount).toFixed(2)} advance for ${sv.serial_number} confirmed paid by ${payer?.name || 'Admin'}.${paymentReference ? ` UTR: ${paymentReference}` : ''}`,
+      type: 'completed'
+    });
+
+    console.log(`   ✅ Advance for ${sv.serial_number} marked paid by ${paidBy} — UTR: ${paymentReference || 'N/A'} | Receipt: ${receiptUrl ? 'uploaded' : 'none'}`);
+    res.json({ success: true });
+  } catch (error) {
+    console.error('mark-advance-paid error:', error.message);
     res.status(500).json({ error: error.message });
   }
 });
