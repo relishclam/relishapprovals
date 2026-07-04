@@ -13,11 +13,14 @@
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
+html { overflow-x: hidden; }
+
 body {
   font-family: 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
   background: var(--relish-light);
   color: var(--relish-dark);
   line-height: 1.6;
+  overflow-x: hidden;
 }
 
 .app-container { min-height: 100vh; display: flex; flex-direction: column; }
@@ -950,8 +953,15 @@ body {
   }
   
   .table-container {
-    margin: 0 -1rem;
-    width: calc(100% + 2rem);
+    width: 100%;
+    max-width: 100%;
+  }
+
+  /* Ensure any bare table wrapper also scrolls horizontally instead of overflowing */
+  .voucher-narration-table,
+  .card-body > div {
+    max-width: 100%;
+    overflow-x: auto;
   }
 }
 
