@@ -8242,8 +8242,11 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
                 {sv.advance_payment_receipt_url && <a href={sv.advance_payment_receipt_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: '0.75rem', color: '#2563eb' }}>📎 Receipt</a>}
               </div>
             ) : sv.status === 'closed' ? (
-              <div style={{ marginTop: '2px' }}>
+              <div style={{ marginTop: '2px', display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
                 <span style={{ background: '#f3f4f6', color: '#9ca3af', fontWeight: 500, fontSize: '0.8rem', padding: '2px 8px', borderRadius: '10px' }}>— Not recorded</span>
+                {(user.role === 'admin' || user.isSuperAdmin) && (
+                  <button style={{ background: 'none', border: '1px solid #d1d5db', color: '#374151', fontSize: '0.75rem', cursor: 'pointer', fontWeight: 600, padding: '2px 8px', borderRadius: '6px' }} onClick={() => setShowAdvancePaidModal(true)}>📝 Record UTR / Receipt</button>
+                )}
               </div>
             ) : (
               <div style={{ marginTop: '2px', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
