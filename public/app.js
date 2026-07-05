@@ -8173,7 +8173,7 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
           {(user.role === 'accounts' || user.isSuperAdmin || isAdmin) && (sv.status === 'open' || sv.status === 'partial') && (
             <button className="btn btn-sm btn-secondary" onClick={handleResendLink} disabled={resendLoading}>{resendLoading ? Icons.loader : '📲'} Resend Link</button>
           )}
-          {(user.role === 'admin' || user.isSuperAdmin) && ['awaiting_payee_otp', 'open', 'partial'].includes(sv.status) && !sv.advance_payment_status && (
+          {(user.role === 'admin' || user.isSuperAdmin) && !sv.advance_payment_status && sv.status !== 'pending_approval' && sv.status !== 'rejected' && (
             <button className="btn btn-sm" style={{ background: '#16a34a', color: 'white', border: 'none', borderRadius: '8px', fontWeight: 600 }} onClick={() => setPayNowAdvance(true)}>💳 Pay Advance</button>
           )}
           {(user.role === 'accounts' || user.isSuperAdmin) && (sv.status === 'open' || sv.status === 'partial') && (
@@ -8240,6 +8240,10 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
                 {sv.advance_payment_reference && <span style={{ fontSize: '0.75rem', color: '#6b7280', fontFamily: 'monospace' }}>UTR: {sv.advance_payment_reference}</span>}
                 {sv.advance_payer && <span style={{ fontSize: '0.75rem', color: '#6b7280' }}>by {sv.advance_payer.name} · {sv.advance_paid_at ? new Date(sv.advance_paid_at).toLocaleDateString('en-IN') : ''}</span>}
                 {sv.advance_payment_receipt_url && <a href={sv.advance_payment_receipt_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: '0.75rem', color: '#2563eb' }}>📎 Receipt</a>}
+              </div>
+            ) : sv.status === 'closed' ? (
+              <div style={{ marginTop: '2px' }}>
+                <span style={{ background: '#f3f4f6', color: '#9ca3af', fontWeight: 500, fontSize: '0.8rem', padding: '2px 8px', borderRadius: '10px' }}>— Not recorded</span>
               </div>
             ) : (
               <div style={{ marginTop: '2px', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
