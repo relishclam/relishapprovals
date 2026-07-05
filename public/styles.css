@@ -1335,3 +1335,105 @@ body {
 @media (max-width: 400px) {
   .lock-screen-card { padding: 2rem 1.25rem 1.75rem; border-radius: 22px; }
 }
+
+/* ===== Suspense Voucher Mobile Fixes ===== */
+
+/* Page action-bar: wrap cleanly and don't overflow on small phones */
+.suspense-action-bar {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+@media (max-width: 480px) {
+  .suspense-action-bar {
+    width: 100%;
+  }
+
+  .suspense-action-bar .btn {
+    flex: 1 1 auto;
+    min-width: 0;
+    justify-content: center;
+    font-size: 0.78rem;
+    padding: 0.5rem 0.6rem;
+  }
+}
+
+/* Settlement entries table — always scrollable, never forces horizontal overflow */
+.settlements-table-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  margin: 0 -1px; /* bleed to card edge */
+}
+
+/* Suspense info grid — single column on small phones */
+@media (max-width: 480px) {
+  .suspense-info-grid {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+/* Admin panel cards — ensure the heading row wraps on small screens */
+@media (max-width: 480px) {
+  .suspense-panel-header {
+    flex-wrap: wrap;
+    row-gap: 0.5rem;
+  }
+
+  .suspense-panel-header .btn {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+/* HOA corrections table header — hide less important columns on phones */
+@media (max-width: 600px) {
+  .hoa-table-col-sub,
+  .hoa-table-col-reason {
+    display: none;
+  }
+}
+
+/* Page header back-button + title row on mobile */
+@media (max-width: 600px) {
+  .suspense-detail-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.75rem;
+  }
+
+  .suspense-detail-header > div:first-child {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.4rem;
+  }
+
+  .page-title {
+    font-size: 1.1rem;
+    word-break: break-word;
+  }
+}
+
+/* Stat cards — 2 per row on very small screens */
+@media (max-width: 360px) {
+  .stats-grid {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+}
+
+/* Voucher list table — hide lower-priority columns on phones */
+@media (max-width: 600px) {
+  .table th:nth-child(5),
+  .table td:nth-child(5) {
+    display: none;
+  }
+}
+
+/* Make main-content take full height properly on iOS Safari */
+@supports (-webkit-touch-callout: none) {
+  .main-content {
+    max-height: calc(100vh - 72px);
+    -webkit-overflow-scrolling: touch;
+  }
+}

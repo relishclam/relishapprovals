@@ -7041,6 +7041,7 @@ const PendingNewVouchersPanel = ({ onViewVoucher }) => {
 
   return (
     <div className="card" style={{ marginBottom: '1rem', border: '2px solid #f59e0b', borderRadius: '10px' }}>
+      <div style={{ padding: '1rem' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '0.85rem' }}>
         <span style={{ fontSize: '1.25rem' }}>💼</span>
         <h3 style={{ fontWeight: 700, fontSize: '0.95rem', color: '#b45309', margin: 0 }}>
@@ -7085,6 +7086,7 @@ const PendingNewVouchersPanel = ({ onViewVoucher }) => {
           ))}
         </div>
       )}
+      </div>
       {showRejectModal && rejectingVoucher && (
         <div className="modal-overlay" onClick={() => setShowRejectModal(false)}>
           <div className="modal" style={{ maxWidth: '420px' }} onClick={e => e.stopPropagation()}>
@@ -7181,7 +7183,7 @@ const HoaCorrectionPanel = () => {
         <div style={{ color: '#9ca3af', fontSize: '0.85rem' }}>{Icons.loader} Loading...</div>
       ) : (
         <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem', minWidth: '720px' }}>
             <thead>
               <tr style={{ background: '#ecfeff', borderBottom: '2px solid #a5f3fc' }}>
                 <th style={{ padding: '8px 10px', textAlign: 'center', width: 36 }}>
@@ -7388,6 +7390,7 @@ const PendingCloseRequestsPanel = ({ onViewVoucher }) => {
 
   return (
     <div className="card" style={{ marginBottom: '1.25rem', border: '2px solid #ea580c', borderRadius: '10px' }}>
+      <div style={{ padding: '1rem' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '0.85rem' }}>
         <span style={{ fontSize: '1.25rem' }}>🔒</span>
         <h3 style={{ fontWeight: 700, fontSize: '0.95rem', color: '#ea580c', margin: 0 }}>Pending Suspense Closure Approvals</h3>
@@ -7420,6 +7423,7 @@ const PendingCloseRequestsPanel = ({ onViewVoucher }) => {
           ))}
         </div>
       )}
+      </div>
       {showRejectModal && rejectingItem && (
         <div className="modal-overlay" onClick={() => setShowRejectModal(false)}>
           <div className="modal" style={{ maxWidth: '440px' }} onClick={e => e.stopPropagation()}>
@@ -7445,6 +7449,8 @@ const PendingCloseRequestsPanel = ({ onViewVoucher }) => {
 };
 
 const PendingTopUpsPanel = ({ onViewVoucher }) => {
+  const { user, addToast } = useApp();
+  const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [actionId, setActionId] = useState(null);
   const [showRejectModal, setShowRejectModal] = useState(false);
@@ -7489,6 +7495,7 @@ const PendingTopUpsPanel = ({ onViewVoucher }) => {
 
   return (
     <div className="card" style={{ marginBottom: '1.25rem', border: '2px solid #7c3aed', borderRadius: '10px' }}>
+      <div style={{ padding: '1rem' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '0.85rem' }}>
         <span style={{ fontSize: '1.25rem' }}>🔐</span>
         <h3 style={{ fontWeight: 700, fontSize: '0.95rem', color: '#7c3aed', margin: 0 }}>
@@ -7534,6 +7541,7 @@ const PendingTopUpsPanel = ({ onViewVoucher }) => {
           ))}
         </div>
       )}
+      </div>
       {showRejectModal && rejectingEntry && (
         <div className="modal-overlay" onClick={() => setShowRejectModal(false)}>
           <div className="modal" style={{ maxWidth: '420px' }} onClick={e => e.stopPropagation()}>
@@ -7623,7 +7631,7 @@ const SuspenseVoucherList = ({ onViewDetail }) => {
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
           {vouchers.map(sv => (
             <div key={sv.id} className="card" style={{ cursor: 'pointer', transition: 'box-shadow 0.15s' }} onClick={() => onViewDetail && onViewDetail(sv.id)}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '0.5rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '0.5rem', padding: '1rem' }}>
                 <div>
                   <div style={{ fontWeight: 700, fontSize: '1rem', color: '#f5841f' }}>{sv.serial_number}</div>
                   <div style={{ fontSize: '0.9rem', fontWeight: 500, marginTop: '2px' }}>{sv.purpose}</div>
@@ -8144,7 +8152,7 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
 
   return (
     <div>
-      <div className="page-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.75rem' }}>
+      <div className="page-header suspense-detail-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.75rem' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
           <button className="btn btn-sm btn-secondary" onClick={onBack}>← Back</button>
           <div>
@@ -8152,7 +8160,7 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
             <p className="page-subtitle">{sv.purpose}</p>
           </div>
         </div>
-        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+        <div className="suspense-action-bar" style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
           {isAdmin && sv.status === 'pending_approval' && (
             <>
               <button className="btn btn-sm btn-danger" onClick={() => setShowRejectModal(true)} disabled={actionLoading}>{Icons.x} Reject</button>
@@ -8188,7 +8196,7 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
       </div>
 
       <div className="card" style={{ marginBottom: '1rem' }}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem', padding: '1rem' }}>
           <div><div style={{ fontSize: '0.75rem', color: '#999', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Staff Member</div><div style={{ fontWeight: 600, marginTop: '2px', display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}><span style={{ background: '#10b981', color: 'white', fontSize: '0.68rem', padding: '2px 7px', borderRadius: '4px', fontWeight: 600 }}>👤 Staff</span>{sv.staff_payee?.name || sv.staff?.name || 'Unknown'}{sv.staff_payee?.mobile && <span style={{ fontWeight: 400, color: '#6b7280', fontSize: '0.85rem' }}>· {sv.staff_payee.mobile}</span>}</div></div>
           <div><div style={{ fontSize: '0.75rem', color: '#999', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Purpose</div><div style={{ fontWeight: 600, marginTop: '2px' }}>{sv.purpose}</div></div>
           <div>
@@ -8284,9 +8292,9 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
 
       {sv.settlements && sv.settlements.length > 0 && (
         <div className="card" style={{ marginBottom: '1rem' }}>
-          <h3 style={{ fontWeight: 600, fontSize: '0.95rem', marginBottom: '0.75rem' }}>Settlement Entries</h3>
+          <h3 style={{ fontWeight: 600, fontSize: '0.95rem', marginBottom: '0.75rem', padding: '0.75rem 1rem 0' }}>Settlement Entries</h3>
           {(user.role === 'accounts' || user.isSuperAdmin) && selectedSettlements.size >= 2 && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '8px', padding: '0.6rem 1rem', marginBottom: '0.75rem', flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '8px', padding: '0.6rem 1rem', margin: '0 1rem 0.75rem', flexWrap: 'wrap' }}>
               <span style={{ fontSize: '0.85rem', color: '#1d4ed8', fontWeight: 600 }}>
                 🔗 {selectedSettlements.size} entries selected · Total: {formatRupees((sv.settlements || []).filter(s => selectedSettlements.has(s.id)).reduce((sum, s) => sum + parseFloat(s.amount), 0))}
               </span>
@@ -8295,12 +8303,12 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
             </div>
           )}
           {sv.total_expenses_approved != null && sv.total_suspense_sent != null && sv.total_expenses_approved > sv.total_suspense_sent && (
-            <div style={{ background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: '8px', padding: '0.75rem 1rem', marginBottom: '0.75rem', fontSize: '0.85rem', color: '#991b1b' }}>
+            <div style={{ background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: '8px', padding: '0.75rem 1rem', margin: '0 1rem 0.75rem', fontSize: '0.85rem', color: '#991b1b' }}>
               ⚠️ <strong>Over-spending detected.</strong> Total approved expenses ({formatRupees(sv.total_expenses_approved)}) exceed total suspense sent ({formatRupees(sv.total_suspense_sent)}) by <strong>{formatRupees(sv.total_expenses_approved - sv.total_suspense_sent)}</strong>. Staff may have spent from their own funds. Please review and close the voucher when settled.
             </div>
           )}
           <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem', minWidth: '600px' }}>
               <thead>
                 <tr style={{ background: '#f8f9fa' }}>
                   {(user.role === 'accounts' || user.isSuperAdmin) && <th style={{ padding: '8px 8px', textAlign: 'center', borderBottom: '1px solid #e2e8f0', width: '36px' }}></th>}
