@@ -10179,11 +10179,21 @@ const App = () => {
     if (user.role === 'auditor') return <VoucherList filter="completed" />;
     switch(currentPage) { case 'dashboard': return <Dashboard />; case 'create': return (user.role === 'accounts' || user.isSuperAdmin) ? <CreateVoucher /> : <Dashboard />; case 'drafts': return (user.role === 'accounts' || user.isSuperAdmin) ? <VoucherList filter="draft" /> : <Dashboard />; case 'pending': return <VoucherList filter="pending" />; case 'approved': return <VoucherList filter="approved" />; case 'completed': return <VoucherList filter="completed" />; case 'awaiting_payment': return <VoucherList filter="awaiting_payment" />; case 'paid': return <VoucherList filter="paid" />; case 'all': return <VoucherList filter="all" />; case 'users': return user.isSuperAdmin ? <UsersManagement /> : <Dashboard />; case 'payees': return (user.role === 'accounts' || user.isSuperAdmin) ? <PayeesManagement /> : <Dashboard />; case 'accounts': return (user.role === 'accounts' || user.isSuperAdmin) ? <AccountsManagement /> : <Dashboard />; case 'pay-from-accounts': return (user.role === 'accounts' || user.isSuperAdmin) ? <PaymentAccountsManagement /> : <Dashboard />; case 'suspense': return <SuspenseVoucherList onViewDetail={(id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); }} />; case 'create-suspense': return (user.role === 'accounts' || user.isSuperAdmin) ? <SuspenseVoucherForm onCreated={() => { setCurrentPage('suspense'); }} onViewDetail={(id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); }} /> : <Dashboard />; case 'suspense-detail': return suspenseDetailId ? <SuspenseVoucherDetail suspenseId={suspenseDetailId} onBack={() => setCurrentPage('suspense')} /> : <SuspenseVoucherList onViewDetail={(id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); }} />; default: return <Dashboard />; } };
 
+  React.useEffect(() => {
+    // After React renders the new page, scroll main-content to top.
+    // Two rAF frames ensure child mount effects (e.g. autoFocus) have already fired.
+    const id = requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        document.querySelector('.main-content')?.scrollTo({ top: 0, behavior: 'instant' });
+      });
+    });
+    return () => cancelAnimationFrame(id);
+  }, [currentPage]);
+
   const handleNavClick = (page) => {
     try { localStorage.setItem('relish_page', page); } catch {}
     setCurrentPage(page);
     setShowMobileMenu(false);
-    document.querySelector('.main-content')?.scrollTo({ top: 0, behavior: 'instant' });
   };
 
   return (
