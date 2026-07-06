@@ -3113,9 +3113,12 @@ app.get('/api/suspense-vouchers/:id', async (req, res) => {
         .in('settlement_id', unmapped.map(s => s.id))
         .eq('is_suspense_settlement', true);
       if (linkedVouchers?.length) {
-        const bySettlementId = Object.fromEntries(linkedVouchers.map(v => [v.settlement_id, v.id]));
+        const bySettlementId = Object.fromEntries(linkedVouchers.map(v => [v.settlement_id, v]));
         for (const s of (settlements || [])) {
-          if (!s.voucher_id && bySettlementId[s.id]) s.voucher_id = bySettlementId[s.id];
+          if (!s.voucher_id && bySettlementId[s.id]) {
+            s.voucher_id = bySettlementId[s.id].id;
+            s.linked_voucher = bySettlementId[s.id]; // populate serial_number etc. for the UI
+          }
         }
         // Opportunistically persist the back-link so future requests don't need this fallback
         for (const v of linkedVouchers) {

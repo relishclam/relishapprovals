@@ -8356,7 +8356,10 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
                         <button className="btn btn-sm btn-success" style={{ fontSize: '0.75rem', padding: '3px 10px' }} onClick={() => openApproveModal(s)}>✅ Review</button>
                       )}
                       {s.entry_type !== 'topup' && s.status === 'approved' && s.voucher_id && (
-                        <button className="btn btn-sm btn-secondary" style={{ fontSize: '0.75rem', padding: '3px 10px' }} onClick={() => openLinkedVoucher(s.voucher_id)} disabled={linkedVoucherLoading}>🧾 View Voucher</button>
+                        <button className="btn btn-sm btn-secondary" style={{ fontSize: '0.75rem', padding: '3px 10px', display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: '1px', lineHeight: 1.2 }} onClick={() => openLinkedVoucher(s.voucher_id)} disabled={linkedVoucherLoading}>
+                          <span>🧾 {s.linked_voucher?.serial_number || 'View Voucher'}</span>
+                          {s.linked_voucher?.status && <span style={{ fontSize: '0.65rem', opacity: 0.8, textTransform: 'capitalize' }}>{s.linked_voucher.status}</span>}
+                        </button>
                       )}
                       {(user.role === 'admin' || user.isSuperAdmin) && s.entry_type === 'topup' && s.status === 'pending_approval' && (
                         <div style={{ display: 'flex', gap: '0.35rem', justifyContent: 'center' }}>
