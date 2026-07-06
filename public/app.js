@@ -4079,7 +4079,7 @@ const VoucherList = ({ filter }) => {
       {/* Pay Now Modal */}
       {payNowVoucher && (() => {
         const v = payNowVoucher;
-        const isMobile = /Mobi|Android/i.test(navigator.userAgent);
+        const isMobile = /Mobi/i.test(navigator.userAgent);
         const upiUrl = v.payment_mode === 'UPI' && v.payee_upi_id
           ? `upi://pay?${new URLSearchParams({ pa: v.payee_upi_id, pn: v.payee_name, am: parseFloat(v.amount).toFixed(2), cu: 'INR', tn: `Voucher ${v.serial_number}` }).toString()}`
           : null;
@@ -8580,7 +8580,7 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
 
       {/* ── Initial Advance Pay Now Modal ───────────────────────────────────── */}
       {payNowAdvance && sv && (() => {
-        const isMobile = /Mobi|Android/i.test(navigator.userAgent);
+        const isMobile = /Mobi/i.test(navigator.userAgent);
         const payee = sv.staff_payee;
         const upiUrl = sv.payment_mode === 'UPI' && payee?.upi_id
           ? `upi://pay?${new URLSearchParams({ pa: payee.upi_id, pn: payee.name, am: parseFloat(sv.advance_amount).toFixed(2), cu: 'INR', tn: `Advance ${sv.serial_number}` }).toString()}`
@@ -8704,7 +8704,7 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
       {/* ── Top-Up Pay Now Modal ─────────────────────────────────────────── */}
       {payNowTopup && (() => {
         const v = payNowTopup;
-        const isMobile = /Mobi|Android/i.test(navigator.userAgent);
+        const isMobile = /Mobi/i.test(navigator.userAgent);
         const upiUrl = v.payment_mode === 'UPI' && v.payee_upi_id
           ? `upi://pay?${new URLSearchParams({ pa: v.payee_upi_id, pn: v.payee_name, am: parseFloat(v.amount).toFixed(2), cu: 'INR', tn: `Top-Up ${v.serial_number}` }).toString()}`
           : null;
