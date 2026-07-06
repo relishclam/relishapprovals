@@ -9807,11 +9807,27 @@ const App = () => {
   const [vouchers, setVouchers] = useState([]);
   const [notifications, setNotifications] = useState([]);
   const [currentPage, setCurrentPage] = useState(() => {
+    try {
+      const navType = performance.getEntriesByType('navigation')[0]?.type;
+      const isReload = navType === 'reload' || performance.navigation?.type === 1;
+      if (isReload) { localStorage.removeItem('relish_page'); return 'dashboard'; }
+    } catch {}
     try { return localStorage.getItem('relish_page') || 'dashboard'; } catch { return 'dashboard'; }
   });
   const [showNotifications, setShowNotifications] = useState(false);
   const [showMobileMenu, setShowMobileMenu] = useState(false);
-  const [showCompanySwitcher, setShowCompanySwitcher] = useState(false);
+  const [showCompanySwitcher, setShowCompanySwitcher] = useState(() => {
+    try {
+      const isReload = performance.getEntriesByType('navigation')[0]?.type === 'reload'
+                    || performance.navigation?.type === 1;
+      if (!isReload) return false;
+      const stored = localStorage.getItem('relish_session');
+      if (!stored) return false;
+      const storedUser = JSON.parse(stored);
+      // Show switcher if user is super admin OR has multiple companies in stored session
+      return !!(storedUser?.isSuperAdmin || (storedUser?.companies?.length > 1));
+    } catch { return false; }
+  });
   const [switchingCompany, setSwitchingCompany] = useState(false);
   const [toasts, setToasts] = useState([]);
   const [pushEnabled, setPushEnabled] = useState(false);
