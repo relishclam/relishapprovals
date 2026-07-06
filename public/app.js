@@ -10183,6 +10183,7 @@ const App = () => {
     try { localStorage.setItem('relish_page', page); } catch {}
     setCurrentPage(page);
     setShowMobileMenu(false);
+    document.querySelector('.main-content')?.scrollTo({ top: 0, behavior: 'instant' });
   };
 
   return (
