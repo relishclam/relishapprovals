@@ -592,24 +592,43 @@ app.delete('/api/users/:userId', async (req, res) => {
     if (!actor.is_super_admin) {
       return res.status(403).json({ error: 'Unauthorized: Super Admin access required' });
     }
-    
-    // Check if user has any vouchers
+
+    const uid = req.params.userId;
+
+    // Block deletion if user has created or approved any vouchers (preserve audit trail)
     const { data: vouchers } = await supabase.from('vouchers')
       .select('id')
-      .or(`created_by.eq.${req.params.userId},approved_by.eq.${req.params.userId}`)
+      .or(`created_by.eq.${uid},approved_by.eq.${uid}`)
       .limit(1);
-    
     if (vouchers && vouchers.length > 0) {
-      return res.status(400).json({ 
-        error: 'Cannot delete user with existing vouchers. Archive user instead.' 
+      return res.status(400).json({
+        error: 'Cannot delete user with existing vouchers. Archive user instead.'
       });
     }
-    
-    const { error } = await supabase.from('users')
-      .delete()
-      .eq('id', req.params.userId);
-    
+
+    // Block deletion if user is linked to any suspense voucher as staff or creator
+    const { data: svouchers } = await supabase.from('suspense_vouchers')
+      .select('id')
+      .or(`staff_user_id.eq.${uid},created_by.eq.${uid},approved_by.eq.${uid}`)
+      .limit(1);
+    if (svouchers && svouchers.length > 0) {
+      return res.status(400).json({
+        error: 'Cannot delete user linked to suspense vouchers. Archive user instead.'
+      });
+    }
+
+    // Remove all FK-dependent rows that can be safely deleted
+    await supabase.from('push_subscriptions').delete().eq('user_id', uid);
+    await supabase.from('webauthn_credentials').delete().eq('user_id', uid);
+    await supabase.from('webauthn_challenges').delete().eq('user_id', uid);
+    await supabase.from('user_companies').delete().eq('user_id', uid);
+
+    // Nullify submitted_by on any suspense settlement entries (staff expense submissions)
+    await supabase.from('suspense_settlements').update({ submitted_by: null }).eq('submitted_by', uid);
+
+    const { error } = await supabase.from('users').delete().eq('id', uid);
     if (error) throw error;
+
     res.json({ success: true, message: 'User deleted successfully' });
   } catch (error) {
     res.status(500).json({ error: 'Failed to delete user', details: error.message });
