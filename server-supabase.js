@@ -595,36 +595,50 @@ app.delete('/api/users/:userId', async (req, res) => {
 
     const uid = req.params.userId;
 
-    // Block deletion if user has created or approved any vouchers (preserve audit trail)
+    // Block if user has created or approved any regular vouchers (preserve audit trail)
     const { data: vouchers } = await supabase.from('vouchers')
-      .select('id')
-      .or(`created_by.eq.${uid},approved_by.eq.${uid}`)
-      .limit(1);
+      .select('id').or(`created_by.eq.${uid},approved_by.eq.${uid}`).limit(1);
     if (vouchers && vouchers.length > 0) {
-      return res.status(400).json({
-        error: 'Cannot delete user with existing vouchers. Archive user instead.'
-      });
+      return res.status(400).json({ error: 'Cannot delete user with existing vouchers. Archive user instead.' });
     }
 
-    // Block deletion if user is linked to any suspense voucher as staff or creator
-    const { data: svouchers } = await supabase.from('suspense_vouchers')
-      .select('id')
-      .or(`staff_user_id.eq.${uid},created_by.eq.${uid},approved_by.eq.${uid}`)
+    // Block if user is staff on any ACTIVE (not closed/rejected) suspense voucher
+    const activeStatuses = ['pending_approval', 'awaiting_payee_otp', 'open', 'partial', 'pending_close_approval'];
+    const { data: activeSV } = await supabase.from('suspense_vouchers')
+      .select('id, serial_number, status')
+      .eq('staff_user_id', uid)
+      .in('status', activeStatuses)
       .limit(1);
-    if (svouchers && svouchers.length > 0) {
+    if (activeSV && activeSV.length > 0) {
       return res.status(400).json({
-        error: 'Cannot delete user linked to suspense vouchers. Archive user instead.'
+        error: `Cannot delete user — they have an active suspense voucher (${activeSV[0].serial_number}). Close it first.`
       });
     }
 
-    // Remove all FK-dependent rows that can be safely deleted
+    // Nullify staff_user_id on closed/rejected suspense vouchers
+    await supabase.from('suspense_vouchers').update({ staff_user_id: null }).eq('staff_user_id', uid);
+
+    // Nullify other user FK references on suspense_vouchers (audit columns — keep the record, lose the link)
+    await supabase.from('suspense_vouchers').update({ created_by: null }).eq('created_by', uid);
+    await supabase.from('suspense_vouchers').update({ approved_by: null }).eq('approved_by', uid);
+    await supabase.from('suspense_vouchers').update({ advance_paid_by: null }).eq('advance_paid_by', uid);
+    await supabase.from('suspense_vouchers').update({ close_requested_by: null }).eq('close_requested_by', uid);
+    await supabase.from('suspense_vouchers').update({ close_approved_by: null }).eq('close_approved_by', uid);
+    await supabase.from('suspense_vouchers').update({ close_rejected_by: null }).eq('close_rejected_by', uid);
+
+    // Nullify user FK references on settlement entries
+    await supabase.from('suspense_settlements').update({ submitted_by: null }).eq('submitted_by', uid);
+    await supabase.from('suspense_settlements').update({ paid_by: null }).eq('paid_by', uid);
+
+    // Nullify user FK references on hoa_correction_proposals
+    await supabase.from('hoa_correction_proposals').update({ proposed_by: null }).eq('proposed_by', uid);
+    await supabase.from('hoa_correction_proposals').update({ reviewed_by: null }).eq('reviewed_by', uid);
+
+    // Delete rows in tables where user_id is the PK-FK (safe to delete entirely)
     await supabase.from('push_subscriptions').delete().eq('user_id', uid);
     await supabase.from('webauthn_credentials').delete().eq('user_id', uid);
     await supabase.from('webauthn_challenges').delete().eq('user_id', uid);
     await supabase.from('user_companies').delete().eq('user_id', uid);
-
-    // Nullify submitted_by on any suspense settlement entries (staff expense submissions)
-    await supabase.from('suspense_settlements').update({ submitted_by: null }).eq('submitted_by', uid);
 
     const { error } = await supabase.from('users').delete().eq('id', uid);
     if (error) throw error;
