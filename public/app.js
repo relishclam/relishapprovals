@@ -8173,7 +8173,7 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
           {(user.role === 'accounts' || user.isSuperAdmin || isAdmin) && (sv.status === 'open' || sv.status === 'partial') && (
             <button className="btn btn-sm btn-secondary" onClick={handleResendLink} disabled={resendLoading}>{resendLoading ? Icons.loader : '📲'} Resend Link</button>
           )}
-          {(user.role === 'admin' || user.isSuperAdmin) && !sv.advance_payment_status && sv.status !== 'pending_approval' && sv.status !== 'rejected' && (
+          {(user.role === 'admin' || user.isSuperAdmin) && !sv.advance_payment_status && sv.status !== 'pending_approval' && sv.status !== 'rejected' && sv.status !== 'closed' && sv.status !== 'pending_close_approval' && (
             <button className="btn btn-sm" style={{ background: '#16a34a', color: 'white', border: 'none', borderRadius: '8px', fontWeight: 600 }} onClick={() => setPayNowAdvance(true)}>💳 Pay Advance</button>
           )}
           {(user.role === 'accounts' || user.isSuperAdmin) && (sv.status === 'open' || sv.status === 'partial') && (
