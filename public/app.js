@@ -2667,6 +2667,13 @@ const VoucherList = ({ filter }) => {
   const [batchConstraint, setBatchConstraint] = useState(null); // null | { payeeId, paymentMode }
   // Holds batch object after createBatch succeeds, driving the Pay Now (batch) modal.
   const [payNowBatch, setPayNowBatch] = useState(null);
+  // Batch Pay Now modal form state (hoisted here — hooks cannot live inside an IIFE)
+  const [batchPaidRef, setBatchPaidRef] = useState('');
+  const [batchPaidNotes, setBatchPaidNotes] = useState('');
+  const [batchReceiptData, setBatchReceiptData] = useState('');
+  const [batchReceiptMime, setBatchReceiptMime] = useState('');
+  const [batchReceiptPreview, setBatchReceiptPreview] = useState('');
+  const [batchPaying, setBatchPaying] = useState(false);
   const [showMarkPaidModal, setShowMarkPaidModal] = useState(false);
   const [markPaidVoucher, setMarkPaidVoucher] = useState(null);
   const [paymentReference, setPaymentReference] = useState('');
@@ -2799,6 +2806,15 @@ const VoucherList = ({ filter }) => {
 
   // Clear bulk selection when tab changes
   useEffect(() => { setSelectedRows(new Set()); setBatchConstraint(null); }, [filter]);
+
+  // Reset batch Pay Now form fields when the modal is closed
+  useEffect(() => {
+    if (!payNowBatch) {
+      setBatchPaidRef(''); setBatchPaidNotes('');
+      setBatchReceiptData(''); setBatchReceiptMime(''); setBatchReceiptPreview('');
+      setBatchPaying(false);
+    }
+  }, [payNowBatch]);
 
   const baseFiltered = vouchers.filter(v => { 
     if (filter === 'draft') return v.status === 'draft';
@@ -3283,7 +3299,12 @@ const VoucherList = ({ filter }) => {
     try { 
       const result = await api.approveVoucher(selectedVoucher.id, user.id); 
       if (result.success) { 
-        if (result.requiresDocument) {
+        if (result.suspenseSettlement) {
+          // Suspense-linked voucher — already paid, completed immediately, no OTP
+          addToast('Voucher approved and completed.', 'success');
+          refreshVouchers();
+          setShowModal(false);
+        } else if (result.requiresDocument) {
           // Ad-hoc payee - needs document upload
           addToast('Voucher pre-approved. Document upload required.', 'info');
           refreshVouchers();
@@ -3797,7 +3818,7 @@ const VoucherList = ({ filter }) => {
             </div>
           )}
           {(user.role === 'admin' || user.isSuperAdmin) && selectedVoucher.status === 'pending' && (
-            <div className="modal-footer"><button className="btn btn-danger" onClick={() => setShowRejectModal(true)}>{Icons.x} Reject</button><button className="btn btn-success" onClick={handleApprove} disabled={loading}>{loading && Icons.loader}{Icons.check} Approve & Send Payee OTP</button></div>
+            <div className="modal-footer"><button className="btn btn-danger" onClick={() => setShowRejectModal(true)}>{Icons.x} Reject</button><button className="btn btn-success" onClick={handleApprove} disabled={loading}>{loading && Icons.loader}{Icons.check} {selectedVoucher.is_suspense_settlement ? 'Approve' : 'Approve & Send Payee OTP'}</button></div>
           )}
           {selectedVoucher.status === 'draft' && selectedVoucher.prepared_by === user.id && (
             <div className="modal-footer" style={{background: '#fef3c7'}}>
@@ -4294,12 +4315,6 @@ const VoucherList = ({ filter }) => {
       {payNowBatch && (() => {
         const b = payNowBatch;
         const cpayKey = computeCpayKey(b.batchReference);
-        const [batchPaidRef, setBatchPaidRef] = React.useState('');
-        const [batchPaidNotes, setBatchPaidNotes] = React.useState('');
-        const [batchReceiptData, setBatchReceiptData] = React.useState('');
-        const [batchReceiptMime, setBatchReceiptMime] = React.useState('');
-        const [batchReceiptPreview, setBatchReceiptPreview] = React.useState('');
-        const [batchPaying, setBatchPaying] = React.useState(false);
 
         const handleBatchReceiptUpload = (e) => {
           const file = e.target.files[0];
