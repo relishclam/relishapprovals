@@ -5227,6 +5227,33 @@ app.post('/api/batches', async (req, res) => {
 
     const totalAmount = vouchers.reduce((sum, v) => sum + parseFloat(v.amount), 0);
 
+    // Auto-cancel any pending batches that already contain these vouchers.
+    // This handles the case where a previous batch was created in the DB but the UI
+    // crashed before the user could confirm payment (leaving an orphaned pending batch
+    // that holds the UNIQUE(voucher_id) constraint on payment_batch_vouchers).
+    const { data: conflictRows } = await supabase
+      .from('payment_batch_vouchers')
+      .select('batch_id')
+      .in('voucher_id', voucherIds);
+    if (conflictRows && conflictRows.length > 0) {
+      const conflictBatchIds = [...new Set(conflictRows.map(r => r.batch_id))];
+      for (const conflictBatchId of conflictBatchIds) {
+        const { data: conflictBatch } = await supabase
+          .from('payment_batches')
+          .select('status, batch_reference')
+          .eq('id', conflictBatchId)
+          .single();
+        if (conflictBatch && conflictBatch.status === 'pending') {
+          console.log(`   🔄 Auto-cancelling orphaned pending batch ${conflictBatch.batch_reference} to free locked vouchers`);
+          await supabase.rpc('cancel_payment_batch', {
+            p_batch_id: conflictBatchId,
+            p_cancelled_by: createdBy,
+            p_reason: 'Auto-cancelled: new combined payment requested for same vouchers'
+          });
+        }
+      }
+    }
+
     const { data: batchRef, error: rpcErr } = await supabase.rpc('get_next_batch_reference', { p_company_id: companyId });
     if (rpcErr) throw rpcErr;
 
