@@ -3,6 +3,7 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const fetch = require('node-fetch');
+const { PDFParse } = require('pdf-parse');
 const webpush = require('web-push');
 const crypto = require('crypto');
 const { createClient } = require('@supabase/supabase-js');
@@ -4805,6 +4806,31 @@ app.post('/api/vouchers/:voucherId/mark-paid', async (req, res) => {
     if (!['awaiting_payment', 'completed'].includes(voucher.status))
       return res.status(400).json({ error: `Voucher must be awaiting_payment or completed to mark as paid (current: ${voucher.status})` });
 
+    // Reciprocal guard: reject if this voucher is locked into a pending payment batch.
+    // A pending batch must be paid or cancelled through the batch flow, not bypassed here.
+    //
+    // Two-query approach (no join-filter): avoids the !inner+.eq('table.col') PostgREST
+    // syntax which has no precedent elsewhere in this codebase and cannot be tested until
+    // migration 032 is applied. Simple sequential queries follow the established pattern.
+    const { data: batchVoucherRow } = await supabase
+      .from('payment_batch_vouchers')
+      .select('batch_id')
+      .eq('voucher_id', req.params.voucherId)
+      .maybeSingle();
+    if (batchVoucherRow) {
+      const { data: pendingBatch } = await supabase
+        .from('payment_batches')
+        .select('batch_reference, status')
+        .eq('id', batchVoucherRow.batch_id)
+        .eq('status', 'pending')
+        .maybeSingle();
+      if (pendingBatch) {
+        return res.status(409).json({
+          error: `This voucher is part of pending payment batch ${pendingBatch.batch_reference}. Pay or cancel the batch instead of marking this voucher individually.`
+        });
+      }
+    }
+
     // Upload receipt if provided
     let receiptUrl = null;
     if (receiptData && receiptMimeType) {
@@ -5031,13 +5057,661 @@ app.post('/api/suspense-settlements/:id/mark-topup-paid', async (req, res) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// POST /api/receipts/match-voucher
+// Match a payment receipt (image or PDF) against the company's payment queue.
+//
+// Request body (JSON):
+//   requestedBy     {string}  userId of the requesting user (auth check)
+//   receiptData     {string}  Base64-encoded file bytes (same shape as mark-paid)
+//   receiptMimeType {string}  e.g. 'image/jpeg' | 'image/png' | 'application/pdf'
+//   companyId       {string}  Company whose vouchers to search
+//
+// Success response (HTTP 200):
+//   { confidence, matchedVoucherId, extractedReference, candidateVouchers }
+//   NOTE: confidence:'none' is a success response, not an error — it means the
+//   file was read but no VCH reference was found (or the PDF has no text layer).
+//
+// Error response — thrown error (HTTP 422 or 503):
+//   { error: true, message: string, retryable: boolean }
+//   retryable:true  → transient: rate-limit (429) or OpenAI/network 5xx  → user can retry
+//   retryable:false → permanent: content-policy, bad key, corrupt PDF, bad MIME → won't fix on retry
+// ---------------------------------------------------------------------------
+app.post('/api/receipts/match-voucher', async (req, res) => {
+  const { requestedBy, receiptData, receiptMimeType, companyId } = req.body;
+
+  if (!requestedBy)
+    return res.status(400).json({ error: 'requestedBy is required' });
+  if (!receiptData)
+    return res.status(400).json({ error: 'receiptData (base64) is required' });
+  if (!receiptMimeType)
+    return res.status(400).json({ error: 'receiptMimeType is required' });
+  if (!companyId)
+    return res.status(400).json({ error: 'companyId is required' });
+
+  // Auth: only Accounts, Admin, or Super Admin may use this endpoint.
+  // (Same set of roles that interact with the payment queue.)
+  const actor = await getActorRole(requestedBy);
+  if (actor.role !== 'accounts' && actor.role !== 'admin' && !actor.is_super_admin)
+    return res.status(403).json({ error: 'Only Accounts or Admin users can match receipts to vouchers' });
+
+  if (!receiptMimeType.startsWith('image/') && receiptMimeType !== 'application/pdf') {
+    return res.status(400).json({
+      error: true,
+      message: `Unsupported file type "${receiptMimeType}". Accepted: image/jpeg, image/png, image/webp, application/pdf.`,
+      retryable: false,
+    });
+  }
+
+  let fileBuffer;
+  try {
+    fileBuffer = Buffer.from(receiptData, 'base64');
+  } catch {
+    return res.status(400).json({ error: 'receiptData is not valid base64' });
+  }
+
+  try {
+    const result = await matchReceiptToVoucher(fileBuffer, receiptMimeType, companyId);
+    return res.json(result);
+  } catch (err) {
+    // Retryable = ONLY transient service failures: rate-limit (429) or server errors (5xx)
+    // and low-level network resets.  Everything else — content-policy rejection, bad API
+    // key (401), bad request (400), corrupt PDF, unsupported MIME — is NOT retryable
+    // because the same input will produce the same failure on every retry.
+    const retryable =
+      /openai api error (429|5\d{2})\b/i.test(err.message) ||
+      /econnreset|econnrefused|etimedout|network timeout/i.test(err.message);
+
+    const httpStatus = retryable ? 503 : 422;
+    console.error(`[match-voucher] error (retryable=${retryable}):`, err.message);
+    return res.status(httpStatus).json({
+      error: true,
+      message: err.message,
+      retryable,
+    });
+  }
+});
+
 // Health check
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// ────────────────────────────────────────────────────────────────────────────────
+// PAYMENT BATCH ENDPOINTS (Migration 032)
+// All three mutating routes require accounts/admin/super_admin — the same gate
+// used by every payment-queue endpoint in this file.
+// ────────────────────────────────────────────────────────────────────────────────
+
+// List batches for a company (all statuses, most recent first)
+app.get('/api/companies/:companyId/batches', async (req, res) => {
+  try {
+    const { data: batches, error } = await supabase
+      .from('payment_batches')
+      .select('*, payee:payees(id,name,bank_account,upi_id,ifsc,bank_name), creator:users!created_by(id,name)')
+      .eq('company_id', req.params.companyId)
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+
+    // Fetch vouchers per batch via two-query pattern (consistent with codebase style)
+    const batchIds = (batches || []).map(b => b.id);
+    const vouchersByBatch = {};
+    if (batchIds.length > 0) {
+      const { data: bvRows } = await supabase
+        .from('payment_batch_vouchers').select('batch_id, voucher_id').in('batch_id', batchIds);
+      const vIds = (bvRows || []).map(r => r.voucher_id);
+      let vMap = {};
+      if (vIds.length > 0) {
+        const { data: vData } = await supabase.from('vouchers').select('id, serial_number, amount').in('id', vIds);
+        (vData || []).forEach(v => { vMap[v.id] = v; });
+      }
+      (bvRows || []).forEach(r => {
+        if (!vouchersByBatch[r.batch_id]) vouchersByBatch[r.batch_id] = [];
+        if (vMap[r.voucher_id]) vouchersByBatch[r.batch_id].push(vMap[r.voucher_id]);
+      });
+    }
+
+    const result = (batches || []).map(b => ({
+      ...b,
+      payee_name: b.payee?.name, payee_bank_account: b.payee?.bank_account,
+      payee_upi_id: b.payee?.upi_id, payee_ifsc: b.payee?.ifsc, payee_bank_name: b.payee?.bank_name,
+      creator_name: b.creator?.name, vouchers: vouchersByBatch[b.id] || [],
+    }));
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+// Create a payment batch
+app.post('/api/batches', async (req, res) => {
+  const { createdBy, companyId, voucherIds } = req.body;
+  if (!createdBy) return res.status(400).json({ error: 'createdBy is required' });
+  if (!companyId) return res.status(400).json({ error: 'companyId is required' });
+  if (!Array.isArray(voucherIds) || voucherIds.length < 2)
+    return res.status(400).json({ error: 'At least 2 voucherIds are required to create a batch' });
+
+  try {
+    const actor = await getActorRole(createdBy);
+    if (actor.role !== 'accounts' && actor.role !== 'admin' && !actor.is_super_admin)
+      return res.status(403).json({ error: 'Only Accounts or Admin users can create payment batches' });
+
+    const { data: vouchers, error: vErr } = await supabase
+      .from('vouchers')
+      .select('id, serial_number, amount, payee_id, payment_mode, status, company_id')
+      .in('id', voucherIds);
+    if (vErr) throw vErr;
+    if (!vouchers || vouchers.length !== voucherIds.length)
+      return res.status(404).json({ error: 'One or more vouchers not found' });
+
+    const wrongCompany = vouchers.find(v => v.company_id !== companyId);
+    if (wrongCompany)
+      return res.status(400).json({ error: `Voucher ${wrongCompany.serial_number} does not belong to this company` });
+
+    for (const v of vouchers) {
+      if (!['awaiting_payment', 'completed'].includes(v.status))
+        return res.status(400).json({ error: `Voucher ${v.serial_number} is not payable (status: ${v.status})` });
+    }
+
+    const uniquePayeeIds = [...new Set(vouchers.map(v => v.payee_id))];
+    if (uniquePayeeIds.length > 1)
+      return res.status(400).json({ error: 'All vouchers in a batch must have the same payee. Vouchers with different payees must be separate payments.' });
+
+    const uniqueModes = [...new Set(vouchers.map(v => v.payment_mode))];
+    if (uniqueModes.length > 1)
+      return res.status(400).json({ error: 'All vouchers in a batch must use the same payment mode. Vouchers with different modes must be separate payments.' });
+    if (uniqueModes[0] === 'Cash')
+      return res.status(400).json({ error: 'Cash payment vouchers cannot be batched. Combine only UPI or Account Transfer vouchers.' });
+
+    const totalAmount = vouchers.reduce((sum, v) => sum + parseFloat(v.amount), 0);
+
+    const { data: batchRef, error: rpcErr } = await supabase.rpc('get_next_batch_reference', { p_company_id: companyId });
+    if (rpcErr) throw rpcErr;
+
+    const { data: batch, error: batchErr } = await supabase
+      .from('payment_batches')
+      .insert({ company_id: companyId, batch_reference: batchRef, payee_id: uniquePayeeIds[0],
+                payment_mode: uniqueModes[0], total_amount: totalAmount, status: 'pending', created_by: createdBy })
+      .select().single();
+    if (batchErr) throw batchErr;
+
+    const { error: joinErr } = await supabase.from('payment_batch_vouchers')
+      .insert(voucherIds.map(vid => ({ batch_id: batch.id, voucher_id: vid })));
+    if (joinErr) {
+      // Rollback note: the join INSERT is a single Postgres statement; the
+      // check_batch_voucher_compatibility trigger uses RAISE EXCEPTION which
+      // rolls back the ENTIRE statement (all join rows), so partial-commit of
+      // join rows is impossible. The only orphan risk is the payment_batches row
+      // itself if this cleanup DELETE fails (e.g. network blip). That is an
+      // unlikely edge case: an orphaned pending batch with zero vouchers causes
+      // no functional harm and can be cleaned up via cancel_payment_batch RPC.
+      await supabase.from('payment_batches').delete().eq('id', batch.id);
+      return res.status(400).json({ error: joinErr.message });
+    }
+
+    console.log(`   💳 Batch ${batchRef} created by ${createdBy} — ${voucherIds.length} vouchers, ₹${totalAmount.toFixed(2)}`);
+    res.json({ success: true, batchId: batch.id, batchReference: batchRef, totalAmount, voucherCount: voucherIds.length });
+  } catch (error) {
+    console.error('create-batch error:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Cancel a payment batch
+app.post('/api/batches/:id/cancel', async (req, res) => {
+  const { cancelledBy, reason } = req.body;
+  if (!cancelledBy) return res.status(400).json({ error: 'cancelledBy is required' });
+  try {
+    const actor = await getActorRole(cancelledBy);
+    if (actor.role !== 'accounts' && actor.role !== 'admin' && !actor.is_super_admin)
+      return res.status(403).json({ error: 'Only Accounts or Admin users can cancel payment batches' });
+
+    const { data: rpcResult, error: rpcErr } = await supabase.rpc('cancel_payment_batch', {
+      p_batch_id: req.params.id, p_cancelled_by: cancelledBy, p_reason: reason || null
+    });
+    if (rpcErr) return res.status(400).json({ error: rpcErr.message });
+
+    // Notify the batch creator (if different from canceller)
+    const { data: batch } = await supabase.from('payment_batches')
+      .select('created_by, batch_reference').eq('id', req.params.id).single();
+    if (batch?.created_by && batch.created_by !== cancelledBy) {
+      const { data: canceller } = await supabase.from('users').select('name').eq('id', cancelledBy).single();
+      await supabase.from('notifications').insert({
+        user_id: batch.created_by,
+        title: '🚫 Payment Batch Cancelled',
+        message: `Batch ${rpcResult?.batch_reference || batch.batch_reference} cancelled by ${canceller?.name || 'Admin'}.${reason ? ` Reason: ${reason}` : ''} Vouchers released back to queue.`,
+        type: 'warning'
+      });
+    }
+
+    console.log(`   🚫 Batch ${req.params.id} cancelled by ${cancelledBy} — ${rpcResult?.vouchers_released} vouchers released`);
+    res.json({ success: true, ...rpcResult });
+  } catch (error) {
+    console.error('cancel-batch error:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Mark a payment batch as paid (atomic via batch_mark_paid Postgres RPC)
+app.post('/api/batches/:id/mark-paid', async (req, res) => {
+  const { paidBy, paymentReference, paymentNotes, receiptData, receiptMimeType } = req.body;
+  if (!paidBy) return res.status(400).json({ error: 'paidBy is required' });
+  if (!paymentReference && !receiptData)
+    return res.status(400).json({ error: 'Enter a UTR reference or upload a receipt — at least one is required' });
+
+  try {
+    const actor = await getActorRole(paidBy);
+    if (actor.role !== 'accounts' && actor.role !== 'admin' && !actor.is_super_admin)
+      return res.status(403).json({ error: 'Only Accounts or Admin users can confirm batch payments' });
+
+    const { data: batch, error: bErr } = await supabase.from('payment_batches')
+      .select('id, batch_reference, company_id, total_amount, status').eq('id', req.params.id).single();
+    if (bErr || !batch) return res.status(404).json({ error: 'Payment batch not found' });
+    if (batch.status !== 'pending')
+      return res.status(400).json({ error: `Batch ${batch.batch_reference} is already ${batch.status}` });
+
+    let receiptUrl = null;
+    if (receiptData && receiptMimeType) {
+      const ext = receiptMimeType === 'application/pdf' ? 'pdf'
+        : receiptMimeType.startsWith('image/') ? receiptMimeType.split('/')[1] : 'jpg';
+      const fileName = `${batch.company_id}/batch-receipts/${req.params.id}/receipt_${Date.now()}.${ext}`;
+      const buffer = Buffer.from(receiptData, 'base64');
+      const { error: storageErr } = await supabase.storage.from('voucher-bills')
+        .upload(fileName, buffer, { contentType: receiptMimeType, upsert: true });
+      if (!storageErr) {
+        const { data: urlData } = supabase.storage.from('voucher-bills').getPublicUrl(fileName);
+        receiptUrl = urlData.publicUrl;
+      } else {
+        console.warn('Batch receipt upload failed:', storageErr.message, '— continuing without receipt URL');
+      }
+    }
+
+    const { data: rpcResult, error: rpcErr } = await supabase.rpc('batch_mark_paid', {
+      p_batch_id: req.params.id, p_paid_by: paidBy,
+      p_payment_reference: paymentReference || null,
+      p_payment_notes: paymentNotes || null,
+      p_receipt_url: receiptUrl
+    });
+    if (rpcErr) return res.status(400).json({ error: rpcErr.message });
+
+    // Notify all voucher preparers
+    const { data: bvRows } = await supabase.from('payment_batch_vouchers')
+      .select('voucher_id').eq('batch_id', req.params.id);
+    const vIds = (bvRows || []).map(r => r.voucher_id);
+    if (vIds.length > 0) {
+      const { data: paidVouchers } = await supabase.from('vouchers')
+        .select('serial_number, prepared_by').in('id', vIds);
+      const { data: payer } = await supabase.from('users').select('name').eq('id', paidBy).single();
+      const preparerIds = [...new Set((paidVouchers || []).map(v => v.prepared_by).filter(Boolean))];
+      for (const uid of preparerIds) {
+        const mine = (paidVouchers || []).filter(v => v.prepared_by === uid);
+        await supabase.from('notifications').insert({
+          user_id: uid,
+          title: '✅ Batch Payment Completed',
+          message: `${mine.map(v => v.serial_number).join(', ')} paid via batch ${batch.batch_reference}.${paymentReference ? ` UTR: ${paymentReference}` : ''} — ${payer?.name || 'Accounts'}`,
+          type: 'completed'
+        });
+      }
+    }
+
+    console.log(`   ✅ Batch ${batch.batch_reference} marked paid by ${paidBy} — ${rpcResult?.vouchers_paid} vouchers | UTR: ${paymentReference || 'N/A'}`);
+    res.json({ success: true, ...rpcResult, receiptUrl });
+  } catch (error) {
+    console.error('mark-batch-paid error:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Receipt → Voucher matching (AI-powered)
+// ---------------------------------------------------------------------------
+
+/**
+ * Strip all characters except ASCII letters and digits, uppercase the result.
+ * Used for normalised comparisons.
+ */
+function alphanumOnly(str) {
+  return String(str).replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+}
+
+/**
+ * Parse the digit groups from a VCH regex capture and return an array of
+ * integer sequence numbers.
+ *
+ * Two cases:
+ *   Compound single reference — at least one segment looks like a financial year
+ *   (>= 2000): e.g. "VCH-2026-27-00507" or "VCH 2026 27 478".
+ *   → Return ONLY the last segment as the sequence (478 or 507).
+ *
+ *   Multi-voucher remark — no year component, all segments are small sequence
+ *   numbers: e.g. "VCH 476 477 499 500 501".
+ *   → Return EVERY segment as a separate sequence.
+ *
+ * This distinguishes "VCH 2026 27 478" (one voucher, FY embedded) from
+ * "VCH 476 477 499" (multiple vouchers in a combined payment remark).
+ */
+function _parseVchCapture(capture) {
+  const segments = capture.split(/\D+/).filter(Boolean);
+  if (segments.length === 0) return [];
+
+  const nums = segments.map(s => parseInt(s, 10)).filter(n => !isNaN(n) && n > 0);
+  const hasYear = nums.some(n => n >= 2000);
+  if (hasYear) {
+    // Compound single ref — year segments are not voucher numbers; use last segment.
+    return [nums[nums.length - 1]];
+  }
+  // Multi-seq remark — every number is a voucher sequence.
+  return nums;
+}
+
+/**
+ * Scan raw text (as extracted from an image or PDF) for all VCH references.
+ * Returns an array of objects: { seq: <integer>, raw: <matched string> }.
+ * Multiple matches may exist; the first is used as the primary candidate.
+ */
+function extractVchNumbers(text) {
+  const results = [];
+  const VCH_RE = /VCH((?:(?:[ \t]+-?|[ \t]*-(?!-)[ \t]*)?\d+)+)/gi;
+  let m;
+  while ((m = VCH_RE.exec(text)) !== null) {
+    const seqs = _parseVchCapture(m[1]);
+    const rawText = ('VCH' + m[1]).replace(/\s+/g, ' ').trim();
+    for (const seq of seqs) {
+      results.push({ seq, raw: rawText });
+    }
+  }
+  return results;
+}
+
+/**
+ * Parse the trailing sequence integer from a DB serial_number such as
+ * "VCH-2026-27-00507".  Returns null for non-VCH serials.
+ */
+function parseDbSerialSeq(serialNumber) {
+  if (!serialNumber || !/^VCH/i.test(serialNumber)) return null;
+  const parts = serialNumber.split(/[\-\s]+/);
+  const last = parts[parts.length - 1];
+  const n = parseInt(last, 10);
+  return isNaN(n) ? null : n;
+}
+
+/**
+ * Scan raw text for CPAY batch references (format CPAY-{FY}-{seq}).
+ *
+ * Unlike VCH references, CPAY is NEVER ambiguous: it always has exactly one
+ * FY component + one sequence, since a batch reference points to one batch.
+ * Therefore we do NOT use _parseVchCapture's multi-sequence detection — we
+ * simply take the last numeric segment as the sequence number.
+ *
+ * Examples matched: CPAY-2026-27-00001, CPAY 2026 27 00001, CPAY00001
+ */
+function extractBatchRefs(text) {
+  const results = [];
+  const CPAY_RE = /CPAY((?:(?:[ \t]+-?|[ \t]*-(?!-)[ \t]*)?\d+)+)/gi;
+  let m;
+  while ((m = CPAY_RE.exec(text)) !== null) {
+    const segs = m[1].split(/\D+/).filter(Boolean);
+    if (!segs.length) continue;
+    const seq = parseInt(segs[segs.length - 1], 10);
+    if (!isNaN(seq) && seq > 0) {
+      results.push({ seq, raw: ('CPAY' + m[1]).replace(/\s+/g, ' ').trim() });
+    }
+  }
+  return results;
+}
+
+/**
+ * Parse the trailing sequence integer from a CPAY batch reference such as
+ * "CPAY-2026-27-00001".  Returns null for non-CPAY references.
+ */
+function parseDbBatchSeq(batchReference) {
+  if (!batchReference || !/^CPAY/i.test(batchReference)) return null;
+  const parts = batchReference.split(/[\-\s]+/);
+  const last = parts[parts.length - 1];
+  const n = parseInt(last, 10);
+  return isNaN(n) ? null : n;
+}
+
+/**
+ * Attempt to extract plain text from a PDF buffer using pdf-parse.
+ *
+ * Returns an empty string when the PDF parses successfully but contains no
+ * selectable text (i.e. it is an image-based / scanned PDF).
+ *
+ * Throws if pdf-parse itself fails (corrupted file, unsupported format, etc.).
+ * Callers must distinguish this thrown error from an empty-string return so
+ * that a parse failure is surfaced as an error rather than silently becoming
+ * confidence:'none'.
+ */
+async function _extractPdfText(buffer) {
+  // Let exceptions propagate — caller is responsible for catching and
+  // distinguishing "parse error" from "empty text".
+  const parser = new PDFParse({ data: buffer });
+  const result = await parser.getText();
+  return (result.text || '').trim();
+}
+
+/**
+ * Use GPT-4o Vision to extract all visible text from an image buffer.
+ * Returns the raw text string returned by the model.
+ */
+async function _extractImageText(buffer, mimeType) {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) throw new Error('OPENAI_API_KEY environment variable is not set');
+
+  const base64 = buffer.toString('base64');
+  const dataUrl = `data:${mimeType};base64,${base64}`;
+
+  const response = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: 'gpt-4o',
+      max_tokens: 800,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text:
+                'Extract ALL text visible in this payment receipt. Return only the raw extracted text, ' +
+                'preserving line breaks where meaningful. Pay special attention to any field labelled ' +
+                '"Note", "Remarks", "Narration", "Reference", or similar that may contain a voucher ' +
+                'code beginning with "VCH" followed by numbers (e.g. "VCH-2026-27-00507" or "VCH 510").',
+            },
+            {
+              type: 'image_url',
+              image_url: { url: dataUrl, detail: 'high' },
+            },
+          ],
+        },
+      ],
+    }),
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`OpenAI API error ${response.status}: ${body}`);
+  }
+
+  const json = await response.json();
+  const content = json.choices?.[0]?.message?.content;
+
+  // An empty or absent content field indicates an API-level failure (e.g.
+  // rate-limit finish_reason, content-policy rejection, malformed response)
+  // — NOT a receipt with no visible text.  Throw so the caller surfaces this
+  // as an error rather than silently returning confidence:'none'.
+  if (content == null || content.trim() === '') {
+    const finishReason = json.choices?.[0]?.finish_reason ?? 'unknown';
+    throw new Error(
+      `OpenAI Vision returned no text content (finish_reason: ${finishReason}). ` +
+        'This indicates a rate-limit, content-policy rejection, or malformed response — not an empty receipt.',
+    );
+  }
+
+  return content;
+}
+
+/**
+ * Match a payment receipt to a voucher in this company's payment queue.
+ *
+ * @param {Buffer}  fileBuffer  - Raw file bytes (image or PDF).
+ * @param {string}  mimeType    - MIME type, e.g. 'image/jpeg' or 'application/pdf'.
+ * @param {string}  companyId   - The company whose vouchers to search.
+ *
+ * @returns {Promise<{
+ *   matchedVoucherId: string|null,
+ *   confidence: 'high'|'low'|'none',
+ *   extractedReference: string|null,
+ *   candidateVouchers: Array
+ * }>}
+ *
+ * Confidence semantics:
+ *   'high' — exactly one exact normalised VCH-sequence match found in the queue.
+ *   'low'  — VCH reference found but ambiguous (0 or >1 matches), or no VCH
+ *            reference but the text does contain some recognisable content.
+ *   'none' — no VCH-like reference found in the extracted text at all.
+ */
+async function matchReceiptToVoucher(fileBuffer, mimeType, companyId) {
+  if (!Buffer.isBuffer(fileBuffer)) throw new TypeError('fileBuffer must be a Buffer');
+  if (!mimeType || typeof mimeType !== 'string') throw new TypeError('mimeType must be a string');
+  if (!companyId || typeof companyId !== 'string') throw new TypeError('companyId must be a string');
+
+  // ── Step 1: Extract raw text ───────────────────────────────────────────────
+  let extractedText = '';
+
+  if (mimeType === 'application/pdf') {
+    // _extractPdfText throws on parse failure; returns '' for image-based PDFs.
+    // We wrap it here to give callers a clear error message distinguishing
+    // "unreadable/corrupt PDF" (throws) from "image-based PDF, no text" (none).
+    let rawPdfText;
+    try {
+      rawPdfText = await _extractPdfText(fileBuffer);
+    } catch (err) {
+      throw new Error(`PDF could not be parsed — corrupted or unsupported format: ${err.message}`);
+    }
+
+    // After stripping pagination markers ("-- N of N --"), check whether anything
+    // substantive remains. Some bank portals (Canara, Federal) output only these
+    // markers — the actual receipt content is embedded as an image. We need to
+    // trigger the Vision fallback for those PDFs even though rawPdfText is non-empty.
+    const substantiveText = rawPdfText.replace(/--\s*\d+\s*of\s*\d+\s*--/gi, '').trim();
+
+    if (!substantiveText) {
+      // Only pagination markers remain — treat as image-based and fall through to
+      // the screenshot/Vision fallback below.
+      // Federal Bank, and any portal that renders receipts as embedded images).
+      // Fall back: render page 1 to PNG via pdf-parse getScreenshot(), then send
+      // to GPT-4o Vision exactly as we do for regular image receipts.
+      console.log(
+        '[matchReceiptToVoucher] PDF has no text layer — attempting page-render/Vision fallback.',
+      );
+      try {
+        const pdfParser = new PDFParse({ data: fileBuffer });
+        const screenshot = await pdfParser.getScreenshot();
+        const pages = (screenshot.pages || []).filter(p => p?.data);
+        if (pages.length === 0) {
+          console.warn('[matchReceiptToVoucher] getScreenshot returned no renderable pages.');
+          return { matchedVoucherId: null, confidence: 'none', extractedReference: null, candidateVouchers: [] };
+        }
+        // Scan pages sequentially; stop early once a VCH or CPAY reference is found
+        // so multi-page receipts don't make unnecessary extra Vision calls.
+        // Note: CPAY takes priority in Step 4, so stopping on either ref is correct.
+        let visionText = '';
+        for (const page of pages) {
+          const pageText = await _extractImageText(Buffer.from(page.data), 'image/png');
+          visionText += (visionText ? '\n' : '') + pageText;
+          if (extractVchNumbers(visionText).length > 0 || extractBatchRefs(visionText).length > 0) break;
+        }
+        console.log(`[matchReceiptToVoucher] PDF Vision fallback: ${pages.length} page(s) available, ${visionText.length} chars extracted.`);
+        extractedText = visionText;
+      } catch (fallbackErr) {
+        // Distinguish: if the GPT-4o call itself failed (API error, rate limit…),
+        // throw so the caller surfaces it as an error rather than confidence:'none'.
+        // The two failure shapes are:
+        //   "OpenAI API error …"  → API-level error, retryable
+        //   anything else         → rendering failed, treat as graceful none
+        if (/openai/i.test(fallbackErr.message)) {
+          throw new Error(`PDF image-based — Vision OCR failed: ${fallbackErr.message}`);
+        }
+        console.warn('[matchReceiptToVoucher] PDF page render failed:', fallbackErr.message, '— returning confidence:none.');
+        return { matchedVoucherId: null, confidence: 'none', extractedReference: null, candidateVouchers: [] };
+      }
+    } else {
+      extractedText = substantiveText;
+    }
+  } else if (mimeType.startsWith('image/')) {
+    // _extractImageText throws on API failure AND on empty response.
+    // Any non-throw return is guaranteed to be a non-empty string.
+    extractedText = await _extractImageText(fileBuffer, mimeType);
+  } else {
+    throw new Error(`Unsupported mimeType "${mimeType}". Supported: image/* and application/pdf.`);
+  }
+
+  console.log(
+    `[matchReceiptToVoucher] Extracted ${extractedText.length} chars from ${mimeType} for company ${companyId}`,
+  );
+
+  // ── Step 2: Find CPAY batch refs and VCH voucher refs in the text ──────────
+  const cpayMatches = extractBatchRefs(extractedText);
+  const vchMatches  = extractVchNumbers(extractedText);
+  const primaryCpay = cpayMatches[0] ?? null;
+  const primaryVch  = vchMatches[0]  ?? null;
+
+  // ── Step 3: Query candidate vouchers AND candidate batches ────────────────
+  const { data: candidateVouchers, error: dbError } = await supabase
+    .from('vouchers')
+    .select('id, serial_number, amount, status, payment_receipt_url')
+    .eq('company_id', companyId)
+    .in('status', ['awaiting_payment', 'completed'])
+    .is('payment_receipt_url', null);
+  if (dbError) throw new Error(`Voucher query failed: ${dbError.message}`);
+  const candidates = candidateVouchers ?? [];
+
+  const { data: batchData } = await supabase
+    .from('payment_batches')
+    .select('id, batch_reference, total_amount, status, payee_id, payment_mode, payees(name)')
+    .eq('company_id', companyId)
+    .eq('status', 'pending');
+  const batchCandidates = batchData ?? [];
+
+  // ── Step 4: CPAY match (takes priority — batch references are unambiguous) ─
+  if (primaryCpay) {
+    const batchHits = batchCandidates.filter(b => parseDbBatchSeq(b.batch_reference) === primaryCpay.seq);
+    if (batchHits.length === 1) {
+      console.log(`[matchReceiptToVoucher] HIGH confidence BATCH match: ${primaryCpay.raw} → ${batchHits[0].batch_reference}`);
+      return { matchType: 'batch', matchedVoucherId: null, matchedBatchId: batchHits[0].id, confidence: 'high', extractedReference: primaryCpay.raw, candidateVouchers: candidates, candidateBatches: batchCandidates };
+    }
+    console.log(`[matchReceiptToVoucher] LOW confidence BATCH: ref=${primaryCpay.raw} matched ${batchHits.length} batch(es)`);
+    return { matchType: 'batch', matchedVoucherId: null, matchedBatchId: null, confidence: 'low', extractedReference: primaryCpay.raw, candidateVouchers: candidates, candidateBatches: batchCandidates };
+  }
+
+  // ── Step 5: VCH match (single or multi-voucher) ───────────────────────────
+  if (!primaryVch) {
+    return { matchType: 'none', matchedVoucherId: null, matchedBatchId: null, confidence: 'none', extractedReference: null, candidateVouchers: candidates, candidateBatches: batchCandidates };
+  }
+
+  const allSeqs = [...new Set(vchMatches.map(m => m.seq))];
+  const exactHits = candidates.filter(v => {
+    const dbSeq = parseDbSerialSeq(v.serial_number);
+    return dbSeq !== null && allSeqs.includes(dbSeq);
+  });
+
+  if (exactHits.length === 1) {
+    console.log(`[matchReceiptToVoucher] HIGH confidence match: ${primaryVch.raw} → ${exactHits[0].serial_number}`);
+    return { matchType: 'voucher', matchedVoucherId: exactHits[0].id, matchedBatchId: null, confidence: 'high', extractedReference: primaryVch.raw, candidateVouchers: candidates, candidateBatches: batchCandidates };
+  }
+
+  console.log(`[matchReceiptToVoucher] LOW confidence: ${allSeqs.length} seq(s) [${allSeqs.join(',')}] matched ${exactHits.length} voucher(s) in queue`);
+  return { matchType: 'voucher', matchedVoucherId: null, matchedBatchId: null, confidence: 'low', extractedReference: primaryVch.raw, candidateVouchers: candidates, candidateBatches: batchCandidates };
+}
+
 // Export the Express app for Vercel serverless deployment
 module.exports = app;
+module.exports.matchReceiptToVoucher = matchReceiptToVoucher;
+module.exports._testHelpers = { extractVchNumbers, extractBatchRefs, parseDbSerialSeq, parseDbBatchSeq, alphanumOnly, _extractPdfText, _extractImageText, _parseVchCapture };
 
 // Only start server if running locally (not in Vercel)
 if (process.env.NODE_ENV !== 'production') {

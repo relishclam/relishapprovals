@@ -1,5 +1,5 @@
-const CACHE_NAME = 'relish-approvals-v45';
-const DYNAMIC_CACHE = 'relish-approvals-dynamic-v15';
+const CACHE_NAME = 'relish-approvals-v46';
+const DYNAMIC_CACHE = 'relish-approvals-dynamic-v16';
 const urlsToCache = [
   '/styles.css?v=16',
   '/app.js?v=29',
@@ -46,6 +46,67 @@ self.addEventListener('activate', (event) => {
 
 // Fetch event - serve from cache, fallback to network
 self.addEventListener('fetch', (event) => {
+  const _url = new URL(event.request.url);
+
+  // ── Web Share Target ────────────────────────────────────────────────────
+  // Android calls POST /share-target (multipart/form-data) when the user
+  // taps "Relish Approvals" in the share sheet.  We read the file here in
+  // the service worker (the only place POST form-data is accessible), convert
+  // it to base64, stash it in a named cache, then redirect the app to
+  // /?incoming-share=1 so the React layer can retrieve and process it.
+  if (event.request.method === 'POST' && _url.pathname === '/share-target') {
+    event.respondWith((async () => {
+      try {
+        const formData = await event.request.formData();
+        const file = formData.get('receipt');
+        if (file instanceof File && file.size > 0) {
+          const arrayBuffer = await file.arrayBuffer();
+          const bytes = new Uint8Array(arrayBuffer);
+          // Chunked btoa — avoids stack overflow on large files (2MB+ PDFs)
+          const chunkSize = 0x8000;
+          let binary = '';
+          for (let i = 0; i < bytes.byteLength; i += chunkSize) {
+            binary += String.fromCharCode.apply(
+              null, bytes.subarray(i, Math.min(i + chunkSize, bytes.byteLength))
+            );
+          }
+          const base64 = btoa(binary);
+          const payload = JSON.stringify({
+            mimeType: file.type || 'application/octet-stream',
+            base64Data: base64,
+            fileName: file.name || 'receipt'
+          });
+          const cache = await caches.open('relish-share-pending');
+          await cache.put('/_share_pending', new Response(payload, {
+            headers: { 'Content-Type': 'application/json' }
+          }));
+        }
+      } catch (err) {
+        console.warn('[SW] share-target processing failed:', err.message);
+      }
+      return Response.redirect('/?incoming-share=1', 303);
+    })());
+    return;
+  }
+
+  // ── Serve the stashed share payload back to the app ─────────────────────
+  // The app fetches GET /_share_pending after being redirected from /share-target.
+  // We serve it from the named cache and delete it immediately (consume-once).
+  if (event.request.method === 'GET' && _url.pathname === '/_share_pending') {
+    event.respondWith((async () => {
+      const cache = await caches.open('relish-share-pending');
+      const cached = await cache.match('/_share_pending');
+      if (cached) {
+        await cache.delete('/_share_pending');
+        return cached;
+      }
+      return new Response(JSON.stringify({ error: 'no pending share' }), {
+        status: 404, headers: { 'Content-Type': 'application/json' }
+      });
+    })());
+    return;
+  }
+
   // Skip non-GET requests
   if (event.request.method !== 'GET') return;
   

@@ -101,6 +101,49 @@ const Icons = {
 // Override Icons.loader with proper ClamFlowLoader (unique IDs, hardcoded teal colours)
 Icons.loader = <ClamFlowLoader width={56}/>;
 
+// WebView-safe clipboard helper.
+// navigator.clipboard.writeText is not available in all Android WebViews
+// (particularly older Chrome WebView versions).  Falls back to the legacy
+// document.execCommand approach when the Clipboard API is absent or throws.
+const copyToClipboard = (text) => {
+  if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+    return navigator.clipboard.writeText(text).catch(() => {
+      // Clipboard API rejected (e.g. permissions, focus) — try legacy fallback
+      legacyCopy(text);
+    });
+  }
+  legacyCopy(text);
+  return Promise.resolve();
+};
+const legacyCopy = (text) => {
+  const ta = document.createElement('textarea');
+  ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+  document.body.appendChild(ta); ta.focus(); ta.select();
+  try { document.execCommand('copy'); } catch {}
+  document.body.removeChild(ta);
+};
+
+// Generate a bank-safe alphanumeric reference key for a batch's transfer remarks.
+// CPAY-2026-27-00001 → "CPAY1"
+const computeCpayKey = (batchReference) => {
+  if (!batchReference) return null;
+  const parts = batchReference.split(/[-\s]+/);
+  const seq = parseInt(parts[parts.length - 1], 10);
+  if (isNaN(seq)) return null;
+  return `CPAY${seq}`;
+};
+
+// Generate a bank-safe alphanumeric reference key for a voucher's transfer remarks.
+// Banks reject dashes and other special characters in notes/remarks fields.
+// VCH-2026-27-00437 → "VCH437"  |  VCH-2025-26-00001 → "VCH1"
+const computeVchKey = (serialNumber) => {
+  if (!serialNumber) return null;
+  const parts = serialNumber.split(/[-\s]+/);
+  const seq = parseInt(parts[parts.length - 1], 10);
+  if (isNaN(seq)) return null;
+  return `VCH${seq}`;
+};
+
 // Number to Words Converter for Indian Rupees
 const numberToWordsIndian = (num) => {
   if (num === undefined || num === null || isNaN(num)) return '';
@@ -243,6 +286,16 @@ const api = {
   getPendingCloseRequests: (companyId) => fetch(`${API_BASE}/companies/${companyId}/pending-close-requests`).then(r => r.json()),
   recalculateSuspenseBalance: (suspenseId, requestedBy) => fetch(`${API_BASE}/suspense-vouchers/${suspenseId}/recalculate-balance`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ requestedBy }) }).then(r => r.json()),
   // Attachments
+  matchReceiptToVoucher: (data) => fetch(`${API_BASE}/receipts/match-voucher`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
+    .then(async r => { const json = await r.json(); if (!r.ok) throw new Error(json.message || 'Match request failed'); return json; }),
+  // Payment batches (Migration 032)
+  getPendingBatches: (companyId) => fetch(`${API_BASE}/companies/${companyId}/batches`).then(r => r.json()),
+  createBatch: (data) => fetch(`${API_BASE}/batches`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
+    .then(async r => { const json = await r.json(); if (!r.ok) throw new Error(json.error || 'Create batch failed'); return json; }),
+  cancelBatch: (batchId, data) => fetch(`${API_BASE}/batches/${batchId}/cancel`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
+    .then(async r => { const json = await r.json(); if (!r.ok) throw new Error(json.error || 'Cancel batch failed'); return json; }),
+  markBatchPaid: (batchId, data) => fetch(`${API_BASE}/batches/${batchId}/mark-paid`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
+    .then(async r => { const json = await r.json(); if (!r.ok) throw new Error(json.error || 'Mark batch paid failed'); return json; }),
   uploadAttachment: (data) => fetch(`${API_BASE}/attachments/upload`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
   getAttachments: (params) => fetch(`${API_BASE}/attachments?${new URLSearchParams(params)}`).then(r => r.json()),
   deleteAttachment: (id, deletedBy) => fetch(`${API_BASE}/attachments/${id}`, { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ deletedBy }) }).then(r => r.json()),
@@ -2136,7 +2189,7 @@ const CreateVoucher = () => {
           </div>
           <div className="card-body">
             <p style={{ fontSize: '0.85rem', color: '#047857', marginBottom: '0.75rem' }}>You can attach the bill or invoice now, or come back to it later from the voucher list.</p>
-            <BillAttachmentPanel voucherId={createdVoucher.id} voucherType="regular" companyId={user.company.id} />
+            <BillAttachmentPanel voucherId={createdVoucher.id} voucherSerialNumber={createdVoucher.serialNumber} voucherType="regular" companyId={user.company.id} />
           </div>
         </div>
       )}
@@ -2609,6 +2662,11 @@ const VoucherList = ({ filter }) => {
   
   // Payment tracking state (Phase-2)
   const [selectedRows, setSelectedRows] = useState(new Set());
+  // Batch combination constraint: set when first voucher is checked in awaiting_payment
+  // view; subsequent checkboxes that don't match are visually disabled.
+  const [batchConstraint, setBatchConstraint] = useState(null); // null | { payeeId, paymentMode }
+  // Holds batch object after createBatch succeeds, driving the Pay Now (batch) modal.
+  const [payNowBatch, setPayNowBatch] = useState(null);
   const [showMarkPaidModal, setShowMarkPaidModal] = useState(false);
   const [markPaidVoucher, setMarkPaidVoucher] = useState(null);
   const [paymentReference, setPaymentReference] = useState('');
@@ -2740,7 +2798,7 @@ const VoucherList = ({ filter }) => {
   }, [editForm.narrationItems, useNarrationTable]);
 
   // Clear bulk selection when tab changes
-  useEffect(() => { setSelectedRows(new Set()); }, [filter]);
+  useEffect(() => { setSelectedRows(new Set()); setBatchConstraint(null); }, [filter]);
 
   const baseFiltered = vouchers.filter(v => { 
     if (filter === 'draft') return v.status === 'draft';
@@ -3383,6 +3441,7 @@ const VoucherList = ({ filter }) => {
         `Amount: ₹${parseFloat(v.amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}\n` +
         `Mode: ${v.payment_mode}\n` +
         (detail ? `${detail}\n` : '') +
+        (v.payment_mode === 'Account Transfer' && computeVchKey(v.serial_number) ? `Transfer Remarks: ${computeVchKey(v.serial_number)}\n` : '') +
         (v.invoice_reference ? `Invoice Ref: ${v.invoice_reference}\n` : '') +
         `\nhttps://relishvoucher.vercel.app`;
     }
@@ -3547,12 +3606,21 @@ const VoucherList = ({ filter }) => {
       )}
 
       <div className="card"><div className="card-body" style={{ padding: 0 }}>
+        {filter === 'awaiting_payment' && batchConstraint && (
+          <div style={{margin:'0.75rem 0.75rem 0', padding:'0.5rem 0.75rem', background:'#eff6ff', border:'1px solid #bfdbfe', borderRadius:'6px', fontSize:'0.82rem', color:'#1d4ed8', display:'flex', alignItems:'center', gap:'0.4rem'}}>
+            🔗 Combining: <strong>{batchConstraint.paymentMode}</strong> vouchers to the same payee.
+            Other rows are <strong>disabled</strong>. Tap ✕ in the bar below to clear.
+          </div>
+        )}
         {filtered.length === 0 ? <div className="empty-state">{Icons.fileText}<p>No vouchers found</p></div> : (
           <div className="table-container"><table className="table"><thead><tr>
-            {filter === 'awaiting_payment' && <th style={{width:'36px'}}><input type="checkbox" onChange={(e) => { if (e.target.checked) setSelectedRows(new Set(filtered.map(v => v.id))); else setSelectedRows(new Set()); }} checked={selectedRows.size === filtered.length && filtered.length > 0} style={{width:'16px',height:'16px',cursor:'pointer'}} /></th>}
+            {filter === 'awaiting_payment' && <th style={{width:'36px'}}><input type="checkbox" onChange={(e) => { if (e.target.checked) { const compatible = batchConstraint ? filtered.filter(v => v.payee_id === batchConstraint.payeeId && v.payment_mode === batchConstraint.paymentMode) : filtered; const next = new Set(compatible.map(v => v.id)); if (!batchConstraint && compatible.length > 0) setBatchConstraint({ payeeId: compatible[0].payee_id, paymentMode: compatible[0].payment_mode }); setSelectedRows(next); } else { setSelectedRows(new Set()); setBatchConstraint(null); } }} checked={selectedRows.size > 0 && selectedRows.size === (batchConstraint ? filtered.filter(v => v.payee_id === batchConstraint.payeeId && v.payment_mode === batchConstraint.paymentMode) : filtered).length} style={{width:'16px',height:'16px',cursor:'pointer'}} /></th>}
             <th>Serial No.</th><th>Head of Account</th><th>Payee</th><th>Amount</th><th>Mode</th><th>Status</th><th>Date</th><th>Actions</th></tr></thead><tbody>
             {filtered.map(v => (<tr key={v.id}>
-              {filter === 'awaiting_payment' && <td><input type="checkbox" checked={selectedRows.has(v.id)} onChange={(e) => { const next = new Set(selectedRows); e.target.checked ? next.add(v.id) : next.delete(v.id); setSelectedRows(next); }} style={{width:'16px',height:'16px',cursor:'pointer'}} /></td>}
+              {filter === 'awaiting_payment' && (() => {
+                const isConstrained = batchConstraint && (batchConstraint.payeeId !== v.payee_id || batchConstraint.paymentMode !== v.payment_mode);
+                return <td title={isConstrained ? `Different payee or mode — only ${batchConstraint.paymentMode} payments to the selected payee can be combined` : undefined}><input type="checkbox" checked={selectedRows.has(v.id)} disabled={!!isConstrained} onChange={(e) => { const next = new Set(selectedRows); if (e.target.checked) { next.add(v.id); if (!batchConstraint) setBatchConstraint({ payeeId: v.payee_id, paymentMode: v.payment_mode }); } else { next.delete(v.id); if (next.size === 0) setBatchConstraint(null); } setSelectedRows(next); }} style={{width:'16px',height:'16px',cursor: isConstrained ? 'not-allowed' : 'pointer', opacity: isConstrained ? 0.3 : 1}} /></td>;
+              })()}
               <td className="text-mono fw-600">{v.serial_number}{v.attachment_count > 0 && <span title={`${v.attachment_count} bill attachment${v.attachment_count > 1 ? 's' : ''}`} style={{marginLeft: '6px', color: '#f5841f', verticalAlign: 'middle', display: 'inline-flex'}}>{Icons.paperclip}</span>}{v.payment_receipt_url && <span title="Payment receipt attached" style={{marginLeft: '4px', color: '#16a34a', verticalAlign: 'middle', display: 'inline-flex'}}>{Icons.receiptCheck}</span>}</td><td>{v.head_of_account}</td><td>{v.payee_name}</td><td className="fw-600">{formatRupees(v.amount, 0)}</td><td>{v.payment_mode}</td><td><span className={`status-badge status-${v.status}`}>{v.status === 'completed' ? 'OTP Verified' : v.status === 'awaiting_payment' ? 'Awaiting Payment' : v.status === 'paid' ? 'Paid' : v.status.replace(/_/g, ' ')}</span></td><td>{new Date(v.created_at).toLocaleDateString('en-IN')}</td>
               <td><div style={{display:'flex',gap:'0.4rem',flexWrap:'wrap',alignItems:'center'}}>
                 <button className="btn btn-sm btn-secondary" onClick={() => openVoucher(v)}>{Icons.eye} View</button>
@@ -3574,16 +3642,42 @@ const VoucherList = ({ filter }) => {
           </tbody></table></div>
         )}
       </div></div>
-      {/* Floating WhatsApp bulk-share bar */}
-      {selectedRows.size > 0 && (
-        <div style={{position:'fixed',bottom:'24px',left:'50%',transform:'translateX(-50%)',background:'#1a1a2e',color:'white',borderRadius:'12px',padding:'0.75rem 1.25rem',display:'flex',alignItems:'center',gap:'1rem',boxShadow:'0 8px 32px rgba(0,0,0,0.35)',zIndex:9999,minWidth:'300px',justifyContent:'space-between'}}>
-          <span style={{fontWeight:600,fontSize:'0.9rem'}}>✓ {selectedRows.size} selected</span>
-          <div style={{display:'flex',gap:'0.5rem'}}>
-            <button style={{background:'#25d366',color:'white',border:'none',borderRadius:'8px',padding:'0.4rem 0.9rem',fontWeight:600,cursor:'pointer',fontSize:'0.85rem'}} onClick={() => { const list = filtered.filter(v => selectedRows.has(v.id)); shareOnWhatsApp(list); }}>💬 Share on WhatsApp</button>
-            <button style={{background:'rgba(255,255,255,0.15)',color:'white',border:'1px solid rgba(255,255,255,0.3)',borderRadius:'8px',padding:'0.4rem 0.7rem',cursor:'pointer',fontSize:'0.85rem'}} onClick={() => setSelectedRows(new Set())}>✕</button>
+      {/* Floating action bar: combine + WhatsApp */}
+      {selectedRows.size > 0 && (() => {
+        const selectedVouchers = filtered.filter(v => selectedRows.has(v.id));
+        const selectedTotal = selectedVouchers.reduce((s, v) => s + parseFloat(v.amount || 0), 0);
+        const canCombine = selectedRows.size >= 2 && filter === 'awaiting_payment' && (user.role === 'accounts' || user.isSuperAdmin);
+
+        const handleCombineAndPay = async () => {
+          setLoading(true);
+          try {
+            const result = await api.createBatch({ createdBy: user.id, companyId: user.company.id, voucherIds: [...selectedRows] });
+            addToast(`Batch ${result.batchReference} created — ₹${parseFloat(result.totalAmount).toLocaleString('en-IN', { minimumFractionDigits: 2 })} total`, 'success');
+            setSelectedRows(new Set()); setBatchConstraint(null);
+            const fv = selectedVouchers[0];
+            setPayNowBatch({ ...result, payment_mode: fv.payment_mode, payee_name: fv.payee_name,
+              payee_bank_account: fv.payee_bank_account, payee_ifsc: fv.payee_ifsc,
+              payee_bank_name: fv.payee_bank_name, payee_upi_id: fv.payee_upi_id,
+              amount: result.totalAmount, vouchers: selectedVouchers });
+            refreshVouchers();
+          } catch (err) { addToast(err.message || 'Failed to create batch', 'error'); }
+          setLoading(false);
+        };
+
+        return (
+          <div style={{position:'fixed',bottom:'24px',left:'50%',transform:'translateX(-50%)',background:'#1a1a2e',color:'white',borderRadius:'12px',padding:'0.75rem 1.25rem',display:'flex',alignItems:'center',gap:'1rem',boxShadow:'0 8px 32px rgba(0,0,0,0.35)',zIndex:9999,minWidth:'340px',justifyContent:'space-between'}}>
+            <div style={{display:'flex',flexDirection:'column',gap:'2px'}}>
+              <span style={{fontWeight:600,fontSize:'0.9rem'}}>✓ {selectedRows.size} selected{canCombine ? ` · ₹${selectedTotal.toLocaleString('en-IN', {minimumFractionDigits:2})}` : ''}</span>
+              {batchConstraint && <span style={{fontSize:'0.72rem',opacity:0.75}}>{batchConstraint.paymentMode} · same payee only</span>}
+            </div>
+            <div style={{display:'flex',gap:'0.5rem'}}>
+              {canCombine && <button style={{background:'#16a34a',color:'white',border:'none',borderRadius:'8px',padding:'0.4rem 0.9rem',fontWeight:600,cursor:'pointer',fontSize:'0.85rem'}} onClick={handleCombineAndPay} disabled={loading}>💳 Combine & Pay</button>}
+              <button style={{background:'#25d366',color:'white',border:'none',borderRadius:'8px',padding:'0.4rem 0.9rem',fontWeight:600,cursor:'pointer',fontSize:'0.85rem'}} onClick={() => { shareOnWhatsApp(selectedVouchers); }}>💬 Share on WhatsApp</button>
+              <button style={{background:'rgba(255,255,255,0.15)',color:'white',border:'1px solid rgba(255,255,255,0.3)',borderRadius:'8px',padding:'0.4rem 0.7rem',cursor:'pointer',fontSize:'0.85rem'}} onClick={() => { setSelectedRows(new Set()); setBatchConstraint(null); }}>✕</button>
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
       {showModal && selectedVoucher && (
         <div className="modal-overlay" onClick={() => setShowModal(false)}><div className="modal modal-lg" onClick={(e) => e.stopPropagation()}>
           <div className="modal-header" style={{background: '#f5841f', color: 'white'}}>
@@ -3612,6 +3706,7 @@ const VoucherList = ({ filter }) => {
             {/* Bill Attachments — visible on all statuses */}
             <BillAttachmentPanel
               voucherId={selectedVoucher.id}
+              voucherSerialNumber={selectedVoucher.serial_number}
               voucherType="regular"
               companyId={user.company.id}
             />
@@ -4058,6 +4153,7 @@ const VoucherList = ({ filter }) => {
             </div>
             <BillAttachmentPanel
               voucherId={selectedVoucher.id}
+              voucherSerialNumber={selectedVoucher.serial_number}
               voucherType="regular"
               companyId={user.company.id}
             />
@@ -4087,7 +4183,8 @@ const VoucherList = ({ filter }) => {
           ? `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(upiUrl)}&bgcolor=ffffff&color=1a1a1a&margin=10`
           : null;
         const copyBankDetails = () => {
-          const text = [`Payee: ${v.payee_name}`, `Account No: ${v.payee_bank_account || '—'}`, `IFSC: ${v.payee_ifsc || '—'}`, `Bank: ${v.payee_bank_name || '—'}`, `Amount: ₹${parseFloat(v.amount).toLocaleString('en-IN', {minimumFractionDigits:2})}`, `Reference: ${v.serial_number}`].join('\n');
+          const vchKey = computeVchKey(v.serial_number);
+          const text = [`Payee: ${v.payee_name}`, `Account No: ${v.payee_bank_account || '—'}`, `IFSC: ${v.payee_ifsc || '—'}`, `Bank: ${v.payee_bank_name || '—'}`, `Amount: ₹${parseFloat(v.amount).toLocaleString('en-IN', {minimumFractionDigits:2})}`, `Reference: ${v.serial_number}`, ...(vchKey ? [`Remarks key: ${vchKey}`] : [])].join('\n');
           navigator.clipboard.writeText(text).then(() => addToast('Bank details copied', 'success'));
         };
         return (
@@ -4168,6 +4265,15 @@ const VoucherList = ({ filter }) => {
                         </div>
                       ))}
                     </div>
+                    {computeVchKey(v.serial_number) && (
+                      <div style={{marginTop:'0.75rem',padding:'0.75rem 1rem',background:'#eff6ff',border:'1px solid #bfdbfe',borderRadius:'8px',display:'flex',alignItems:'center',justifyContent:'space-between',gap:'0.75rem'}}>
+                        <div>
+                          <div style={{fontSize:'0.72rem',color:'#1d4ed8',fontWeight:700,textTransform:'uppercase',letterSpacing:'0.04em',marginBottom:'2px'}}>📝 Type in bank Remarks / Notes field</div>
+                          <code style={{fontSize:'1.05rem',fontWeight:800,letterSpacing:'0.08em',color:'#1e3a8a'}}>{computeVchKey(v.serial_number)}</code>
+                        </div>
+                        <button className="btn btn-sm" style={{background:'#2563eb',color:'white',border:'none',borderRadius:'6px',padding:'4px 12px',fontWeight:600,cursor:'pointer',flexShrink:0}} onClick={() => copyToClipboard(computeVchKey(v.serial_number)).then(() => addToast('Reference key copied', 'success'))}>📋 Copy</button>
+                      </div>
+                    )}
                     <button className="btn btn-secondary" style={{width:'100%',marginTop:'0.75rem'}} onClick={copyBankDetails}>📋 Copy All Details</button>
                   </div>
                 )}
@@ -4177,6 +4283,106 @@ const VoucherList = ({ filter }) => {
                 {/* Account Transfer in OTP Verified: Accounts can proceed directly to confirm payment */}
                 {v.status === 'completed' && v.payment_mode === 'Account Transfer' && (user.role === 'accounts' || user.isSuperAdmin) && (
                   <button className="btn btn-success" onClick={() => { setPayNowVoucher(null); setMarkPaidVoucher(v); setShowMarkPaidModal(true); }}>✅ Confirm Payment →</button>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── Batch Pay Now Modal ────────────────────────────────────────────── */}
+      {payNowBatch && (() => {
+        const b = payNowBatch;
+        const cpayKey = computeCpayKey(b.batchReference);
+        const [batchPaidRef, setBatchPaidRef] = React.useState('');
+        const [batchPaidNotes, setBatchPaidNotes] = React.useState('');
+        const [batchReceiptData, setBatchReceiptData] = React.useState('');
+        const [batchReceiptMime, setBatchReceiptMime] = React.useState('');
+        const [batchReceiptPreview, setBatchReceiptPreview] = React.useState('');
+        const [batchPaying, setBatchPaying] = React.useState(false);
+
+        const handleBatchReceiptUpload = (e) => {
+          const file = e.target.files[0];
+          if (!file) return;
+          if (file.size > 5 * 1024 * 1024) { addToast('Receipt must be under 5 MB', 'error'); return; }
+          const reader = new FileReader();
+          reader.onload = (ev) => {
+            const base64 = ev.target.result.split(',')[1];
+            setBatchReceiptData(base64); setBatchReceiptMime(file.type);
+            setBatchReceiptPreview(file.type.startsWith('image/') ? ev.target.result : 'pdf');
+          };
+          reader.readAsDataURL(file);
+        };
+
+        const handleConfirmBatchPaid = async () => {
+          if (!batchPaidRef.trim() && !batchReceiptData) { addToast('Enter a UTR reference or upload a receipt', 'error'); return; }
+          setBatchPaying(true);
+          try {
+            const result = await api.markBatchPaid(b.batchId, { paidBy: user.id, paymentReference: batchPaidRef.trim() || null, paymentNotes: batchPaidNotes.trim() || null, receiptData: batchReceiptData || null, receiptMimeType: batchReceiptMime || null });
+            if (result.success) { addToast(`Batch ${b.batchReference} marked paid — ${result.vouchers_paid} vouchers ✅`, 'success'); setPayNowBatch(null); refreshVouchers(); }
+            else addToast(result.error || 'Failed', 'error');
+          } catch (err) { addToast(err.message || 'Failed', 'error'); }
+          setBatchPaying(false);
+        };
+
+        return (
+          <div className="modal-overlay" onClick={() => setPayNowBatch(null)}>
+            <div className="modal" onClick={e => e.stopPropagation()} style={{maxWidth:'460px'}}>
+              <div className="modal-header" style={{background:'#1d4ed8',color:'white'}}>
+                <h3 className="modal-title" style={{color:'white'}}>💳 Pay Batch — {b.batchReference}</h3>
+                <button className="modal-close" style={{color:'white'}} onClick={() => setPayNowBatch(null)}>×</button>
+              </div>
+              <div className="modal-body">
+                <div style={{background:'#eff6ff',border:'1px solid #bfdbfe',borderRadius:'8px',padding:'0.75rem',marginBottom:'0.75rem',fontSize:'0.9rem'}}>
+                  <div style={{display:'flex',justifyContent:'space-between',marginBottom:'4px'}}><span style={{color:'#1d4ed8'}}>Batch</span><strong style={{fontFamily:'monospace'}}>{b.batchReference}</strong></div>
+                  <div style={{display:'flex',justifyContent:'space-between',marginBottom:'4px'}}><span style={{color:'#1d4ed8'}}>Payee</span><strong>{b.payee_name}</strong></div>
+                  <div style={{display:'flex',justifyContent:'space-between',marginBottom:'4px'}}><span style={{color:'#1d4ed8'}}>Total</span><strong style={{fontFamily:'monospace',fontSize:'1.1rem'}}>₹{parseFloat(b.totalAmount).toLocaleString('en-IN',{minimumFractionDigits:2})}</strong></div>
+                  <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#1d4ed8'}}>Mode</span><strong>{b.payment_mode}</strong></div>
+                  {b.vouchers?.length > 0 && <div style={{marginTop:'6px',fontSize:'0.78rem',color:'#3730a3'}}>{b.vouchers.map(v => v.serial_number).join(' · ')}</div>}
+                </div>
+
+                {b.payment_mode === 'Account Transfer' && (
+                  <div>
+                    <p style={{fontSize:'0.85rem',color:'#555',marginBottom:'0.75rem'}}>Use these details in your banking app (NEFT / IMPS / RTGS).</p>
+                    <div style={{background:'#f8fafc',border:'1px solid #e2e8f0',borderRadius:'8px',padding:'1rem',fontSize:'0.9rem',marginBottom:'0.75rem'}}>
+                      {[['Payee', b.payee_name], ['Account No', b.payee_bank_account || '—'], ['IFSC', b.payee_ifsc || '—'], ['Bank', b.payee_bank_name || '—'], ['Amount', `₹${parseFloat(b.totalAmount).toLocaleString('en-IN',{minimumFractionDigits:2})}`]].map(([label, val]) => (
+                        <div key={label} style={{display:'flex',justifyContent:'space-between',padding:'0.35rem 0',borderBottom:'1px solid #e2e8f0'}}>
+                          <span style={{color:'#64748b'}}>{label}</span><strong style={{textAlign:'right',maxWidth:'60%',wordBreak:'break-all'}}>{val}</strong>
+                        </div>
+                      ))}
+                    </div>
+                    {cpayKey && (
+                      <div style={{background:'#eff6ff',border:'1px solid #bfdbfe',borderRadius:'8px',padding:'0.75rem 1rem',display:'flex',alignItems:'center',justifyContent:'space-between',gap:'0.75rem',marginBottom:'0.75rem'}}>
+                        <div>
+                          <div style={{fontSize:'0.72rem',color:'#1d4ed8',fontWeight:700,textTransform:'uppercase',letterSpacing:'0.04em',marginBottom:'2px'}}>📝 Type in bank Remarks / Notes field</div>
+                          <code style={{fontSize:'1.05rem',fontWeight:800,letterSpacing:'0.08em',color:'#1e3a8a'}}>{cpayKey}</code>
+                        </div>
+                        <button className="btn btn-sm" style={{background:'#2563eb',color:'white',border:'none',borderRadius:'6px',padding:'4px 12px',fontWeight:600,cursor:'pointer',flexShrink:0}} onClick={() => copyToClipboard(cpayKey).then(() => addToast('Batch key copied', 'success'))}>📋 Copy</button>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Confirm-paid section */}
+                {(user.role === 'accounts' || user.isSuperAdmin) && (
+                  <div style={{borderTop:'1px solid #e5e7eb',paddingTop:'0.75rem',marginTop:'0.25rem'}}>
+                    <p style={{fontSize:'0.82rem',fontWeight:600,color:'#374151',marginBottom:'0.5rem'}}>Confirm payment made:</p>
+                    <input className="form-input" placeholder="UTR / Transaction reference" value={batchPaidRef} onChange={e => setBatchPaidRef(e.target.value)} style={{marginBottom:'0.5rem'}} />
+                    <textarea className="form-input" placeholder="Notes (optional)" value={batchPaidNotes} onChange={e => setBatchPaidNotes(e.target.value)} rows={2} style={{marginBottom:'0.5rem',resize:'none'}} />
+                    <label className="btn btn-sm btn-secondary" style={{cursor:'pointer',display:'inline-flex',alignItems:'center',gap:'4px',marginBottom:'0.25rem'}}>
+                      📎 {batchReceiptPreview ? (batchReceiptPreview === 'pdf' ? 'PDF selected' : 'Image selected') : 'Upload receipt'}
+                      <input type="file" accept="image/*,.pdf" style={{display:'none'}} onChange={handleBatchReceiptUpload} />
+                    </label>
+                    {batchReceiptPreview && batchReceiptPreview !== 'pdf' && <img src={batchReceiptPreview} alt="receipt" style={{display:'block',maxHeight:'80px',borderRadius:'4px',marginTop:'4px'}} />}
+                  </div>
+                )}
+              </div>
+              <div className="modal-footer">
+                <button className="btn btn-secondary" onClick={() => setPayNowBatch(null)}>Close</button>
+                {(user.role === 'accounts' || user.isSuperAdmin) && (
+                  <button className="btn btn-success" onClick={handleConfirmBatchPaid} disabled={batchPaying || (!batchPaidRef.trim() && !batchReceiptData)}>
+                    {batchPaying ? Icons.loader : '✅'} Confirm Batch Paid
+                  </button>
                 )}
               </div>
             </div>
@@ -6532,7 +6738,7 @@ const AccountsManagement = () => {
 // ─────────────────────────────────────────────────────────────────────────────
 // BILL ATTACHMENT PANEL
 // ─────────────────────────────────────────────────────────────────────────────
-const BillAttachmentPanel = ({ voucherId, voucherType = 'regular', suspenseId, settlementId, companyId: companyIdProp }) => {
+const BillAttachmentPanel = ({ voucherId, voucherSerialNumber, voucherType = 'regular', suspenseId, settlementId, companyId: companyIdProp }) => {
   const { user, addToast } = useApp();
   const isMobile = /Mobi|Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || navigator.maxTouchPoints > 1;
   const companyId = companyIdProp || user.company.id;
@@ -6554,6 +6760,9 @@ const BillAttachmentPanel = ({ voucherId, voucherType = 'regular', suspenseId, s
   // Category required when uploading directly to a suspense voucher (not to an entry)
   const [attachmentCategory, setAttachmentCategory] = React.useState(null);
   const needsCategory = voucherType === 'suspense' && !settlementId;
+  // Holds encoded file data when a high-confidence voucher mismatch is detected;
+  // cleared when user dismisses the warning (Cancel) or proceeds (Upload Anyway).
+  const [mismatchWarning, setMismatchWarning] = React.useState(null);
 
   const loadAttachments = async () => {
     setLoading(true);
@@ -6599,12 +6808,50 @@ const BillAttachmentPanel = ({ voucherId, voucherType = 'regular', suspenseId, s
     setUploading(true);
     try {
       const { data, mimeType, name } = await compressAndEncode(file);
+
+      // Pre-upload receipt-matching check: only for regular vouchers.
+      // On any error (API failure, network issue) we silently skip the check
+      // and let the upload proceed — matching must never block an upload.
+      if (voucherType === 'regular' && voucherId) {
+        try {
+          const matchResult = await api.matchReceiptToVoucher({
+            requestedBy: user.id,
+            receiptData: data.replace(/^data:.*?;base64,/, ''),
+            receiptMimeType: mimeType,
+            companyId,
+          });
+          if (
+            matchResult.confidence === 'high' &&
+            matchResult.matchedVoucherId &&
+            matchResult.matchedVoucherId !== voucherId
+          ) {
+            // High-confidence mismatch: pause and let the user decide.
+            setUploading(false);
+            setMismatchWarning({ fileData: data, mimeType, fileName: name, extractedReference: matchResult.extractedReference });
+            e.target.value = '';
+            return;
+          }
+        } catch { /* matching failed — proceed with upload unchanged */ }
+      }
+
       const result = await api.uploadAttachment({ fileData: data, mimeType, fileName: name, voucherId, voucherType, suspenseId, settlementId, uploadedBy: user.id, companyId, attachmentCategory: needsCategory ? attachmentCategory : undefined });
       if (result.success) { addToast('Attachment uploaded', 'success'); loadAttachments(); if (needsCategory) setAttachmentCategory(null); }
       else addToast(result.error || 'Upload failed', 'error');
     } catch { addToast('Upload failed', 'error'); }
     setUploading(false);
     e.target.value = '';
+  };
+
+  const handleMismatchContinue = async () => {
+    const { fileData, mimeType, fileName } = mismatchWarning;
+    setMismatchWarning(null);
+    setUploading(true);
+    try {
+      const result = await api.uploadAttachment({ fileData, mimeType, fileName, voucherId, voucherType, suspenseId, settlementId, uploadedBy: user.id, companyId, attachmentCategory: needsCategory ? attachmentCategory : undefined });
+      if (result.success) { addToast('Attachment uploaded', 'success'); loadAttachments(); if (needsCategory) setAttachmentCategory(null); }
+      else addToast(result.error || 'Upload failed', 'error');
+    } catch { addToast('Upload failed', 'error'); }
+    setUploading(false);
   };
 
   const handleDelete = async (attId) => {
@@ -6829,6 +7076,23 @@ const BillAttachmentPanel = ({ voucherId, voucherType = 'regular', suspenseId, s
             >🧾 Expense Bill</button>
           </div>
           {!attachmentCategory && <p style={{ fontSize: '0.72rem', color: '#9ca3af', margin: '0.4rem 0 0' }}>Select the document type before uploading.</p>}
+        </div>
+      )}
+
+      {/* ── RECEIPT MISMATCH WARNING ── */}
+      {mismatchWarning && (
+        <div style={{ background: '#fffbeb', border: '2px solid #f59e0b', borderRadius: '10px', padding: '1rem', marginBottom: '0.75rem' }}>
+          <p style={{ fontWeight: 700, color: '#92400e', marginBottom: '0.5rem', fontSize: '0.9rem' }}>⚠️ Receipt may belong to a different voucher</p>
+          <p style={{ fontSize: '0.875rem', color: '#78350f', lineHeight: 1.5, marginBottom: '0.75rem' }}>
+            This receipt appears to reference <strong style={{ fontFamily: 'monospace' }}>{mismatchWarning.extractedReference}</strong>,
+            {' '}but you are uploading it to <strong style={{ fontFamily: 'monospace' }}>{voucherSerialNumber}</strong>. Continue anyway?
+          </p>
+          <div style={{ display: 'flex', gap: '0.5rem' }}>
+            <button className="btn btn-sm btn-secondary" onClick={() => setMismatchWarning(null)}>Cancel</button>
+            <button className="btn btn-sm" style={{ background: '#f59e0b', color: '#fff', border: 'none', borderRadius: '6px', padding: '4px 14px', fontWeight: 600, cursor: 'pointer' }} onClick={handleMismatchContinue}>
+              {uploading ? Icons.loader : null} Upload Anyway
+            </button>
+          </div>
         </div>
       )}
 
@@ -8552,7 +8816,7 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
             </div>
             <div className="modal-body">
               <VoucherPreview voucher={linkedVoucher} />
-              <BillAttachmentPanel voucherId={linkedVoucher.id} voucherType="regular" companyId={user.company.id} />
+              <BillAttachmentPanel voucherId={linkedVoucher.id} voucherSerialNumber={linkedVoucher.serial_number} voucherType="regular" companyId={user.company.id} />
               {linkedVoucher.status === 'paid' && (linkedVoucher.payment_reference || linkedVoucher.payment_receipt_url) && (
                 <div style={{ background: '#f0fdf4', border: '1px solid #86efac', borderRadius: '8px', padding: '1rem', marginTop: '1rem' }}>
                   <p style={{ fontWeight: 600, color: '#166534', marginBottom: '0.6rem' }}>✅ Payment Record</p>
@@ -9747,6 +10011,328 @@ const CaptureSessionPage = ({ sessionId }) => {
   );
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// RECEIPT SHARE MODAL (Query 3 — Android share-intent + manual trigger)
+// ─────────────────────────────────────────────────────────────────────────────
+const ReceiptShareModal = ({ state, onClose }) => {
+  const { user, addToast } = useApp();
+  const [pickerMode, setPickerMode] = React.useState(false);
+  const [pickerSearch, setPickerSearch] = React.useState('');
+  const [attaching, setAttaching] = React.useState(false);
+
+  if (!state) return null;
+  const { step, mimeType, base64Data, matchResult, errorMsg } = state;
+  const fileDataUrl = base64Data && !base64Data.startsWith('data:') ? `data:${mimeType};base64,${base64Data}` : (base64Data || '');
+
+  const isHigh = !pickerMode && matchResult?.confidence === 'high' && matchResult?.matchedVoucherId && matchResult?.matchType !== 'batch';
+  const isBatchHigh = !pickerMode && matchResult?.confidence === 'high' && matchResult?.matchedBatchId && matchResult?.matchType === 'batch';
+  const matchedBatch = isBatchHigh ? (matchResult?.candidateBatches || []).find(b => b.id === matchResult.matchedBatchId) : null;
+  const candidates = matchResult?.candidateVouchers || [];
+  const isImageBasedPdf = matchResult?.confidence === 'none' && candidates.length === 0 && mimeType === 'application/pdf';
+  const matchedVoucher = isHigh ? candidates.find(v => v.id === matchResult.matchedVoucherId) : null;
+  const filteredCandidates = candidates.filter(v => {
+    if (!pickerSearch) return true;
+    const s = pickerSearch.toLowerCase();
+    return v.serial_number?.toLowerCase().includes(s) || String(v.amount).includes(s);
+  });
+
+  const doAttach = async (voucherId) => {
+    setAttaching(true);
+    try {
+      const ext = mimeType === 'application/pdf' ? 'pdf' : (mimeType.split('/')[1] || 'jpg');
+      const res = await api.uploadAttachment({ fileData: fileDataUrl, mimeType, fileName: `receipt_${Date.now()}.${ext}`, voucherId, voucherType: 'regular', uploadedBy: user.id, companyId: user.company.id });
+      if (res.success) { addToast('Receipt attached', 'success'); onClose(); }
+      else addToast(res.error || 'Attach failed', 'error');
+    } catch { addToast('Attach failed', 'error'); }
+    setAttaching(false);
+  };
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '480px', maxHeight: '88vh', display: 'flex', flexDirection: 'column' }}>
+        <div className="modal-header" style={{ background: '#1e40af', color: 'white' }}>
+          <h3 className="modal-title" style={{ color: 'white' }}>📩 Receipt Received</h3>
+          <button className="modal-close" style={{ color: 'white' }} onClick={onClose}>×</button>
+        </div>
+        <div className="modal-body" style={{ overflowY: 'auto', flex: 1 }}>
+          {step === 'matching' && (
+            <div style={{ textAlign: 'center', padding: '2.5rem 1rem' }}>
+              {Icons.loader}
+              <p style={{ color: '#6b7280', marginTop: '1rem' }}>Identifying voucher from receipt…</p>
+            </div>
+          )}
+          {step === 'result' && (
+            <>
+              {errorMsg && (
+                <div style={{ background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: '8px', padding: '0.75rem', marginBottom: '1rem', fontSize: '0.875rem', color: '#991b1b' }}>
+                  ⚠️ Matching unavailable — {errorMsg}. Select the voucher manually below.
+                </div>
+              )}
+              {isImageBasedPdf && !errorMsg && (
+                <div style={{ background: '#fffbeb', border: '1px solid #fde68a', borderRadius: '8px', padding: '0.75rem', marginBottom: '1rem', fontSize: '0.875rem', color: '#92400e' }}>
+                  ℹ️ No reference detected — this bank's PDF format may not support automatic matching yet. Please select the voucher manually.
+                </div>
+              )}
+              {isHigh && !errorMsg && (
+                <>
+                  <div style={{ background: '#f0fdf4', border: '2px solid #86efac', borderRadius: '10px', padding: '1rem', marginBottom: '1rem' }}>
+                    <div style={{ fontSize: '0.72rem', color: '#166534', fontWeight: 700, textTransform: 'uppercase', marginBottom: '6px' }}>✅ Voucher identified</div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}><span style={{ color: '#166534' }}>Voucher</span><strong style={{ fontFamily: 'monospace' }}>{matchedVoucher?.serial_number || '—'}</strong></div>
+                    {matchedVoucher?.amount && <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}><span style={{ color: '#166534' }}>Amount</span><strong>₹{parseFloat(matchedVoucher.amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</strong></div>}
+                    {matchResult.extractedReference && <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#166534' }}>Ref in receipt</span><code style={{ fontSize: '0.82rem' }}>{matchResult.extractedReference}</code></div>}
+                  </div>
+                  <button className="btn btn-success" style={{ width: '100%', marginBottom: '0.5rem' }} onClick={() => doAttach(matchResult.matchedVoucherId)} disabled={attaching}>
+                    {attaching ? Icons.loader : '📎'} Attach to {matchedVoucher?.serial_number || 'voucher'}
+                  </button>
+                  <button className="btn btn-secondary" style={{ width: '100%', fontSize: '0.85rem' }} onClick={() => setPickerMode(true)}>Choose a different voucher</button>
+                </>
+              )}
+              {isBatchHigh && !errorMsg && (() => {
+                const [bRef, setBRef] = React.useState('');
+                const [bNotes, setBNotes] = React.useState('');
+                const [bPaying, setBPaying] = React.useState(false);
+                const confirmBatchPaid = async () => {
+                  if (!bRef.trim() && !base64Data) { addToast('Enter a UTR or upload receipt', 'error'); return; }
+                  setBPaying(true);
+                  try {
+                    const r = await api.markBatchPaid(matchResult.matchedBatchId, { paidBy: user.id, paymentReference: bRef.trim() || null, paymentNotes: bNotes.trim() || null });
+                    if (r.success) { addToast(`Batch ${matchedBatch?.batch_reference} marked paid ✅`, 'success'); onClose(); }
+                    else addToast(r.error || 'Failed', 'error');
+                  } catch (e) { addToast(e.message || 'Failed', 'error'); }
+                  setBPaying(false);
+                };
+                return (
+                  <>
+                    <div style={{ background: '#eff6ff', border: '2px solid #bfdbfe', borderRadius: '10px', padding: '1rem', marginBottom: '1rem' }}>
+                      <div style={{ fontSize: '0.72rem', color: '#1d4ed8', fontWeight: 700, textTransform: 'uppercase', marginBottom: '6px' }}>💳 Payment batch matched</div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}><span style={{ color: '#1d4ed8' }}>Batch</span><strong style={{ fontFamily: 'monospace' }}>{matchedBatch?.batch_reference || '—'}</strong></div>
+                      {matchedBatch?.total_amount && <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}><span style={{ color: '#1d4ed8' }}>Total</span><strong>₹{parseFloat(matchedBatch.total_amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</strong></div>}
+                      {matchResult.extractedReference && <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#1d4ed8' }}>Ref in receipt</span><code style={{ fontSize: '0.82rem' }}>{matchResult.extractedReference}</code></div>}
+                    </div>
+                    {(user.role === 'accounts' || user.isSuperAdmin) && <>
+                      <input className="form-input" placeholder="UTR / Transaction reference" value={bRef} onChange={e => setBRef(e.target.value)} style={{ marginBottom: '0.5rem' }} />
+                      <textarea className="form-input" placeholder="Notes (optional)" value={bNotes} onChange={e => setBNotes(e.target.value)} rows={2} style={{ marginBottom: '0.5rem', resize: 'none' }} />
+                      <button className="btn btn-success" style={{ width: '100%', marginBottom: '0.5rem' }} onClick={confirmBatchPaid} disabled={bPaying || !bRef.trim()}>
+                        {bPaying ? Icons.loader : '✅'} Confirm Batch Paid
+                      </button>
+                    </>}
+                    <button className="btn btn-secondary" style={{ width: '100%', fontSize: '0.85rem' }} onClick={() => setPickerMode(true)}>Choose a different voucher instead</button>
+                  </>
+                );
+              })()}
+              {(!isHigh || pickerMode) && !errorMsg && (
+                <>
+                  {matchResult?.confidence === 'low' && matchResult.extractedReference && (
+                    <p style={{ fontSize: '0.875rem', color: '#6b7280', marginBottom: '0.5rem' }}>Found <code>{matchResult.extractedReference}</code> but no exact queue match — please select:</p>
+                  )}
+                  {matchResult?.confidence === 'none' && !isImageBasedPdf && (
+                    <p style={{ fontSize: '0.875rem', color: '#6b7280', marginBottom: '0.5rem' }}>No voucher reference detected. Please select the voucher manually:</p>
+                  )}
+                  {pickerMode && <p style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.5rem' }}>Choose a different voucher:</p>}
+                  <input className="form-input" placeholder="Search by serial or amount…" value={pickerSearch} onChange={e => setPickerSearch(e.target.value)} style={{ marginBottom: '0.5rem' }} autoFocus />
+                  {filteredCandidates.length === 0 ? (
+                    <div style={{ textAlign: 'center', padding: '1.5rem', color: '#9ca3af', fontSize: '0.875rem' }}>{candidates.length === 0 ? 'No vouchers in the payment queue for this company.' : 'No matches for that search.'}</div>
+                  ) : (
+                    <div style={{ maxHeight: '300px', overflowY: 'auto', border: '1px solid #e5e7eb', borderRadius: '8px' }}>
+                      {filteredCandidates.map(v => (
+                        <div key={v.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.55rem 0.75rem', borderBottom: '1px solid #f3f4f6', gap: '0.5rem' }}>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontFamily: 'monospace', fontWeight: 700, fontSize: '0.85rem' }}>{v.serial_number}</div>
+                            <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>₹{parseFloat(v.amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })} · {v.status}</div>
+                          </div>
+                          <button className="btn btn-sm btn-success" onClick={() => doAttach(v.id)} disabled={attaching} style={{ flexShrink: 0, fontSize: '0.78rem' }}>{attaching ? Icons.loader : '📎 Attach'}</button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+            </>
+          )}
+        </div>
+        <div className="modal-footer">
+          <button className="btn btn-secondary" onClick={onClose}>Dismiss</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RECONCILE RECEIPTS PAGE (Query 4 — Desktop bulk drag-and-drop)
+// ─────────────────────────────────────────────────────────────────────────────
+const ReconcileReceipts = () => {
+  const { user, addToast } = useApp();
+  const [dragOver, setDragOver] = React.useState(false);
+  const [rows, setRows] = React.useState([]);
+  const fileInputRef = React.useRef(null);
+
+  const readFile = (file) => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve({ dataUrl: reader.result, name: file.name, mimeType: file.type || 'application/octet-stream' });
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+
+  const processRow = async (rowId, mimeType, fileDataUrl) => {
+    setRows(prev => prev.map(r => r.id === rowId ? { ...r, status: 'matching' } : r));
+    try {
+      const matchResult = await api.matchReceiptToVoucher({
+        requestedBy: user.id,
+        receiptData: fileDataUrl.replace(/^data:.*?;base64,/, ''),
+        receiptMimeType: mimeType,
+        companyId: user.company.id,
+      });
+      setRows(prev => prev.map(r => r.id === rowId ? { ...r, status: 'done', matchResult } : r));
+    } catch (err) {
+      setRows(prev => prev.map(r => r.id === rowId ? { ...r, status: 'done', matchResult: { confidence: 'none', extractedReference: null, candidateVouchers: [], errorMsg: err.message } } : r));
+    }
+  };
+
+  const addFiles = async (fileList) => {
+    const valid = Array.from(fileList).filter(f => f.type.startsWith('image/') || f.type === 'application/pdf');
+    if (!valid.length) { addToast('Only image or PDF files are supported', 'error'); return; }
+    const newRows = [];
+    for (const file of valid) {
+      try {
+        const { dataUrl, name, mimeType } = await readFile(file);
+        newRows.push({ id: `${Date.now()}-${Math.random().toString(36).slice(2)}`, name, mimeType, fileDataUrl: dataUrl, status: 'pending', matchResult: null, attaching: false, attached: null, pickerOpen: false, pickerSearch: '' });
+      } catch { /* skip unreadable file */ }
+    }
+    setRows(prev => [...prev, ...newRows]);
+    for (const row of newRows) await processRow(row.id, row.mimeType, row.fileDataUrl);
+  };
+
+  const doAttach = async (rowId, voucherId) => {
+    const row = rows.find(r => r.id === rowId);
+    if (!row) return;
+    setRows(prev => prev.map(r => r.id === rowId ? { ...r, attaching: true } : r));
+    try {
+      const ext = row.mimeType === 'application/pdf' ? 'pdf' : (row.mimeType.split('/')[1] || 'jpg');
+      const res = await api.uploadAttachment({ fileData: row.fileDataUrl, mimeType: row.mimeType, fileName: `receipt_${Date.now()}.${ext}`, voucherId, voucherType: 'regular', uploadedBy: user.id, companyId: user.company.id });
+      if (res.success) {
+        const serial = (row.matchResult?.candidateVouchers || []).find(v => v.id === voucherId)?.serial_number || '—';
+        setRows(prev => prev.map(r => r.id === rowId ? { ...r, attaching: false, attached: { voucherId, serial }, pickerOpen: false } : r));
+        addToast(`${row.name} → ${serial}`, 'success');
+      } else {
+        addToast(res.error || 'Attach failed', 'error');
+        setRows(prev => prev.map(r => r.id === rowId ? { ...r, attaching: false } : r));
+      }
+    } catch {
+      addToast('Attach failed', 'error');
+      setRows(prev => prev.map(r => r.id === rowId ? { ...r, attaching: false } : r));
+    }
+  };
+
+  const confidenceBadge = (c) => {
+    if (c === 'high')  return <span style={{ background: '#dcfce7', color: '#166534', padding: '2px 8px', borderRadius: '10px', fontSize: '0.72rem', fontWeight: 700 }}>HIGH</span>;
+    if (c === 'low')   return <span style={{ background: '#fef9c3', color: '#713f12', padding: '2px 8px', borderRadius: '10px', fontSize: '0.72rem', fontWeight: 700 }}>LOW</span>;
+    return <span style={{ background: '#f3f4f6', color: '#6b7280', padding: '2px 8px', borderRadius: '10px', fontSize: '0.72rem', fontWeight: 700 }}>NONE</span>;
+  };
+
+  return (
+    <div style={{ maxWidth: '900px', margin: '0 auto', padding: '1.5rem 1rem' }}>
+      <div style={{ marginBottom: '1.5rem' }}>
+        <h2 style={{ fontWeight: 700, fontSize: '1.25rem', marginBottom: '0.35rem' }}>🗂️ Reconcile Receipts</h2>
+        <p style={{ color: '#6b7280', fontSize: '0.875rem' }}>Drop payment receipts here. Each file is matched against the current payment queue. Review each result and click <strong>Attach</strong> to confirm.</p>
+      </div>
+
+      {/* Drop zone */}
+      <div
+        onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={e => { e.preventDefault(); setDragOver(false); addFiles(e.dataTransfer.files); }}
+        onClick={() => fileInputRef.current?.click()}
+        style={{ border: `2px dashed ${dragOver ? '#2563eb' : '#d1d5db'}`, borderRadius: '12px', padding: '2rem', textAlign: 'center', cursor: 'pointer', background: dragOver ? '#eff6ff' : '#fafafa', transition: 'all 0.15s', marginBottom: '1.5rem', userSelect: 'none' }}
+      >
+        <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>📂</div>
+        <div style={{ fontWeight: 600, color: dragOver ? '#2563eb' : '#374151' }}>Drop receipts here, or click to select files</div>
+        <div style={{ fontSize: '0.8rem', color: '#9ca3af', marginTop: '4px' }}>JPEG · PNG · WebP · PDF</div>
+        <input ref={fileInputRef} type="file" accept="image/*,.pdf" multiple style={{ display: 'none' }} onChange={e => { addFiles(e.target.files); e.target.value = ''; }} />
+      </div>
+
+      {/* Results */}
+      {rows.length === 0 ? (
+        <div style={{ textAlign: 'center', padding: '2rem', color: '#9ca3af', background: '#fafafa', borderRadius: '8px', border: '1px solid #e5e7eb' }}>No files added yet.</div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+          {rows.map(row => {
+            const mr = row.matchResult;
+            const isImagePdf = mr?.confidence === 'none' && mr?.candidateVouchers?.length === 0 && row.mimeType === 'application/pdf';
+            const matchedV = mr?.confidence === 'high' && mr?.matchedVoucherId ? (mr.candidateVouchers || []).find(v => v.id === mr.matchedVoucherId) : null;
+            const filtered = (mr?.candidateVouchers || []).filter(v => {
+              if (!row.pickerSearch) return true;
+              const s = row.pickerSearch.toLowerCase();
+              return v.serial_number?.toLowerCase().includes(s) || String(v.amount).includes(s);
+            });
+
+            return (
+              <div key={row.id} style={{ border: `1px solid ${row.attached ? '#86efac' : '#e5e7eb'}`, borderRadius: '10px', padding: '0.875rem 1rem', background: row.attached ? '#f0fdf4' : 'white' }}>
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem', flexWrap: 'wrap' }}>
+                  {/* File name + status */}
+                  <div style={{ flex: '1 1 200px', minWidth: 0 }}>
+                    <div style={{ fontWeight: 600, fontSize: '0.875rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{row.name}</div>
+                    {row.status === 'matching' && <div style={{ fontSize: '0.78rem', color: '#2563eb', display: 'flex', alignItems: 'center', gap: '4px', marginTop: '2px' }}>{Icons.loader} Matching…</div>}
+                    {row.status === 'done' && mr && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '4px', flexWrap: 'wrap' }}>
+                        {confidenceBadge(mr.confidence)}
+                        {mr.extractedReference && <code style={{ fontSize: '0.78rem', background: '#f3f4f6', padding: '1px 5px', borderRadius: '3px' }}>{mr.extractedReference}</code>}
+                        {matchedV && <span style={{ fontSize: '0.78rem', color: '#166534', fontWeight: 600 }}>→ {matchedV.serial_number} · ₹{parseFloat(matchedV.amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>}
+                        {isImagePdf && <span style={{ fontSize: '0.78rem', color: '#92400e' }}>⚠️ No reference — bank PDF format not supported yet</span>}
+                      </div>
+                    )}
+                    {row.attached && <div style={{ fontSize: '0.78rem', color: '#166534', fontWeight: 600, marginTop: '4px' }}>✅ Attached to {row.attached.serial}</div>}
+                  </div>
+
+                  {/* Action buttons */}
+                  {!row.attached && row.status === 'done' && mr && (
+                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexShrink: 0 }}>
+                      {mr.confidence === 'high' && matchedV && !row.pickerOpen && (
+                        <button className="btn btn-sm btn-success" onClick={() => doAttach(row.id, mr.matchedVoucherId)} disabled={row.attaching}>
+                          {row.attaching ? Icons.loader : `📎 Attach to ${matchedV.serial_number}`}
+                        </button>
+                      )}
+                      <button
+                        className="btn btn-sm btn-secondary"
+                        onClick={() => setRows(prev => prev.map(r => r.id === row.id ? { ...r, pickerOpen: !r.pickerOpen, pickerSearch: '' } : r))}
+                      >
+                        {row.pickerOpen ? '▲ Close' : (mr.confidence === 'high' ? 'Choose different' : '🔍 Choose voucher')}
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Inline picker */}
+                {row.pickerOpen && !row.attached && (
+                  <div style={{ marginTop: '0.75rem', paddingTop: '0.75rem', borderTop: '1px solid #e5e7eb' }}>
+                    <input
+                      className="form-input"
+                      placeholder="Search by serial or amount…"
+                      value={row.pickerSearch}
+                      onChange={e => setRows(prev => prev.map(r => r.id === row.id ? { ...r, pickerSearch: e.target.value } : r))}
+                      style={{ marginBottom: '0.5rem', fontSize: '0.85rem' }}
+                    />
+                    <div style={{ maxHeight: '200px', overflowY: 'auto', border: '1px solid #e5e7eb', borderRadius: '6px' }}>
+                      {filtered.length === 0 ? (
+                        <div style={{ padding: '1rem', textAlign: 'center', color: '#9ca3af', fontSize: '0.8rem' }}>{(mr.candidateVouchers || []).length === 0 ? 'No vouchers in payment queue.' : 'No matches.'}</div>
+                      ) : filtered.map(v => (
+                        <div key={v.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.45rem 0.65rem', borderBottom: '1px solid #f3f4f6', gap: '0.5rem' }}>
+                          <div><div style={{ fontFamily: 'monospace', fontSize: '0.82rem', fontWeight: 700 }}>{v.serial_number}</div><div style={{ fontSize: '0.73rem', color: '#6b7280' }}>₹{parseFloat(v.amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })} · {v.status}</div></div>
+                          <button className="btn btn-sm btn-success" style={{ fontSize: '0.75rem' }} onClick={() => doAttach(row.id, v.id)} disabled={row.attaching}>{row.attaching ? Icons.loader : '📎 Attach'}</button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+};
+
 // Main App
 const App = () => {
   const [user, setUser] = useState(() => {
@@ -9832,6 +10418,9 @@ const App = () => {
   const [toasts, setToasts] = useState([]);
   const [pushEnabled, setPushEnabled] = useState(false);
   const [suspenseDetailId, setSuspenseDetailId] = useState(null);
+  // Receipt share state — populated by window.onReceiptShared (Android share-intent)
+  // or any future trigger; drives ReceiptShareModal.
+  const [receiptShare, setReceiptShare] = useState(null);
   const [settlementToken] = useState(() => {
     const m = window.location.pathname.match(/^\/settlement\/([^/]+)/);
     if (m) return m[1];
@@ -10191,9 +10780,58 @@ const App = () => {
   }
 
   const contextValue = { user, vouchers, notifications, addToast, refreshVouchers, refreshNotifications, navigateToSuspense: (id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); try { localStorage.setItem('relish_page', 'suspense-detail'); } catch {} } };
+
+  // Register Android share-intent handler.
+  // Two entry points:
+  //   1. Direct call: window.onReceiptShared({ mimeType, base64Data }) — used
+  //      by any native wrapper or WebView bridge.
+  //   2. Web Share Target (Android share sheet): the service worker intercepts
+  //      POST /share-target, stashes the file, then redirects here with
+  //      ?incoming-share=1.  On mount we detect that param, fetch the stashed
+  //      data from /_share_pending, and call window.onReceiptShared ourselves.
+  React.useEffect(() => {
+    if (!user) return;
+    window.onReceiptShared = ({ mimeType, base64Data }) => {
+      // Normalise: ensure we always hold a data-URL internally.
+      const dataUrl = base64Data && !base64Data.startsWith('data:')
+        ? `data:${mimeType};base64,${base64Data}`
+        : (base64Data || '');
+      setReceiptShare({ step: 'matching', mimeType, base64Data: dataUrl });
+      api.matchReceiptToVoucher({
+        requestedBy: user.id,
+        receiptData: dataUrl.replace(/^data:.*?;base64,/, ''),
+        receiptMimeType: mimeType,
+        companyId: user.company.id,
+      }).then(matchResult => {
+        setReceiptShare(prev => prev ? { ...prev, step: 'result', matchResult } : null);
+      }).catch(err => {
+        setReceiptShare(prev => prev ? { ...prev, step: 'result', matchResult: { confidence: 'none', extractedReference: null, candidateVouchers: [] }, errorMsg: err.message } : null);
+      });
+    };
+
+    // Detect incoming Web Share Target redirect: service worker redirects here
+    // with ?incoming-share=1 after stashing the file in /_share_pending cache.
+    // We fetch it (consume-once), clean the URL, then fire window.onReceiptShared.
+    const _params = new URLSearchParams(window.location.search);
+    if (_params.get('incoming-share') === '1') {
+      // Remove the query param immediately so a refresh doesn't re-trigger
+      window.history.replaceState({}, '', window.location.pathname);
+      fetch('/_share_pending')
+        .then(r => r.ok ? r.json() : null)
+        .then(data => {
+          if (data && data.mimeType && data.base64Data) {
+            window.onReceiptShared({ mimeType: data.mimeType, base64Data: data.base64Data });
+          }
+        })
+        .catch(err => console.warn('[share-target] Failed to retrieve pending share:', err.message));
+    }
+
+    return () => { window.onReceiptShared = null; };
+  }, [user]);
+
   const renderPage = () => {
     if (user.role === 'auditor') return <VoucherList filter="completed" />;
-    switch(currentPage) { case 'dashboard': return <Dashboard />; case 'create': return (user.role === 'accounts' || user.isSuperAdmin) ? <CreateVoucher /> : <Dashboard />; case 'drafts': return (user.role === 'accounts' || user.isSuperAdmin) ? <VoucherList filter="draft" /> : <Dashboard />; case 'pending': return <VoucherList filter="pending" />; case 'approved': return <VoucherList filter="approved" />; case 'completed': return <VoucherList filter="completed" />; case 'awaiting_payment': return <VoucherList filter="awaiting_payment" />; case 'paid': return <VoucherList filter="paid" />; case 'all': return <VoucherList filter="all" />; case 'users': return user.isSuperAdmin ? <UsersManagement /> : <Dashboard />; case 'payees': return (user.role === 'accounts' || user.isSuperAdmin) ? <PayeesManagement /> : <Dashboard />; case 'accounts': return (user.role === 'accounts' || user.isSuperAdmin) ? <AccountsManagement /> : <Dashboard />; case 'pay-from-accounts': return (user.role === 'accounts' || user.isSuperAdmin) ? <PaymentAccountsManagement /> : <Dashboard />; case 'suspense': return <SuspenseVoucherList onViewDetail={(id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); }} />; case 'create-suspense': return (user.role === 'accounts' || user.isSuperAdmin) ? <SuspenseVoucherForm onCreated={() => { setCurrentPage('suspense'); }} onViewDetail={(id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); }} /> : <Dashboard />; case 'suspense-detail': return suspenseDetailId ? <SuspenseVoucherDetail suspenseId={suspenseDetailId} onBack={() => setCurrentPage('suspense')} /> : <SuspenseVoucherList onViewDetail={(id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); }} />; default: return <Dashboard />; } };
+    switch(currentPage) { case 'dashboard': return <Dashboard />; case 'create': return (user.role === 'accounts' || user.isSuperAdmin) ? <CreateVoucher /> : <Dashboard />; case 'drafts': return (user.role === 'accounts' || user.isSuperAdmin) ? <VoucherList filter="draft" /> : <Dashboard />; case 'pending': return <VoucherList filter="pending" />; case 'approved': return <VoucherList filter="approved" />; case 'completed': return <VoucherList filter="completed" />; case 'awaiting_payment': return <VoucherList filter="awaiting_payment" />; case 'paid': return <VoucherList filter="paid" />; case 'all': return <VoucherList filter="all" />; case 'users': return user.isSuperAdmin ? <UsersManagement /> : <Dashboard />; case 'payees': return (user.role === 'accounts' || user.isSuperAdmin) ? <PayeesManagement /> : <Dashboard />; case 'accounts': return (user.role === 'accounts' || user.isSuperAdmin) ? <AccountsManagement /> : <Dashboard />; case 'pay-from-accounts': return (user.role === 'accounts' || user.isSuperAdmin) ? <PaymentAccountsManagement /> : <Dashboard />; case 'suspense': return <SuspenseVoucherList onViewDetail={(id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); }} />; case 'create-suspense': return (user.role === 'accounts' || user.isSuperAdmin) ? <SuspenseVoucherForm onCreated={() => { setCurrentPage('suspense'); }} onViewDetail={(id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); }} /> : <Dashboard />; case 'suspense-detail': return suspenseDetailId ? <SuspenseVoucherDetail suspenseId={suspenseDetailId} onBack={() => setCurrentPage('suspense')} /> : <SuspenseVoucherList onViewDetail={(id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); }} />; case 'reconcile': return (user.role === 'accounts' || user.isSuperAdmin) ? <ReconcileReceipts /> : <Dashboard />; default: return <Dashboard />; } };
 
   React.useEffect(() => {
     // After React renders the new page, scroll main-content to top.
@@ -10217,6 +10855,7 @@ const App = () => {
       <PWAInstallPrompt />
       {showPinSetup && <SetPinModal onPinSet={handlePinSet} onSkip={() => setShowPinSetup(false)} />}
       {showSecurityModal && user && <SecurityModal user={user} onClose={() => setShowSecurityModal(false)} />}
+      {receiptShare && <ReceiptShareModal state={receiptShare} onClose={() => setReceiptShare(null)} />}
       {showDeviceLockSetup && deviceLockSetupUser && (
         <DeviceLockPromptModal
           user={deviceLockSetupUser}
@@ -10330,6 +10969,9 @@ const App = () => {
               <div className={`nav-item ${currentPage === 'accounts' ? 'active' : ''}`} onClick={() => handleNavClick('accounts')}>{Icons.fileText} Heads of Account</div>
               <div className={`nav-item ${currentPage === 'pay-from-accounts' ? 'active' : ''}`} onClick={() => handleNavClick('pay-from-accounts')}>🏦 Pay From Accounts</div>
             </div>}
+            {(user.role === 'accounts' || user.isSuperAdmin) && <div className="nav-section"><div className="nav-section-title">Payments</div>
+              <div className={`nav-item ${currentPage === 'reconcile' ? 'active' : ''}`} onClick={() => handleNavClick('reconcile')}>🗂️ Reconcile Receipts</div>
+            </div>}
             {user.isSuperAdmin && <div className="nav-section"><div className="nav-section-title">Admin Dashboard</div><div className={`nav-item ${currentPage === 'users' ? 'active' : ''}`} onClick={() => handleNavClick('users')}>{Icons.users} User Management</div></div>}
             </>)}
           </aside>
@@ -10392,6 +11034,9 @@ const App = () => {
                   <div className={`nav-item ${currentPage === 'payees' ? 'active' : ''}`} onClick={() => handleNavClick('payees')}>{Icons.users} Manage Payees</div>
                   <div className={`nav-item ${currentPage === 'accounts' ? 'active' : ''}`} onClick={() => handleNavClick('accounts')}>{Icons.fileText} Heads of Account</div>
                   <div className={`nav-item ${currentPage === 'pay-from-accounts' ? 'active' : ''}`} onClick={() => handleNavClick('pay-from-accounts')}>🏦 Pay From Accounts</div>
+                </div>}
+                {(user.role === 'accounts' || user.isSuperAdmin) && <div className="nav-section"><div className="nav-section-title">Payments</div>
+                  <div className={`nav-item ${currentPage === 'reconcile' ? 'active' : ''}`} onClick={() => handleNavClick('reconcile')}>🗂️ Reconcile Receipts</div>
                 </div>}
                 {user.isSuperAdmin && <div className="nav-section"><div className="nav-section-title">Admin Dashboard</div><div className={`nav-item ${currentPage === 'users' ? 'active' : ''}`} onClick={() => handleNavClick('users')}>{Icons.users} User Management</div></div>}
                 </>)}
