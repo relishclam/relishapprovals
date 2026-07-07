@@ -3,7 +3,11 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const fetch = require('node-fetch');
-const { PDFParse } = require('pdf-parse');
+// pdf-parse v2 uses @napi-rs/canvas (native Rust binary) which is OS-specific.
+// Requiring it at module top-level crashes Vercel's Linux Lambda when the
+// Windows-built binary is deployed.  Instead we lazy-require it inside
+// _extractPdfText() so the server starts cleanly and all other endpoints work
+// regardless of whether the native canvas addon is available.
 const webpush = require('web-push');
 const crypto = require('crypto');
 const { createClient } = require('@supabase/supabase-js');
@@ -5482,6 +5486,14 @@ function parseDbBatchSeq(batchReference) {
  * confidence:'none'.
  */
 async function _extractPdfText(buffer) {
+  // Lazy-require pdf-parse so a missing native canvas addon doesn't crash the
+  // server at startup (Vercel Linux vs Windows binary mismatch).
+  let PDFParse;
+  try {
+    ({ PDFParse } = require('pdf-parse'));
+  } catch (loadErr) {
+    throw new Error(`pdf-parse could not be loaded in this environment: ${loadErr.message}`);
+  }
   // Let exceptions propagate — caller is responsible for catching and
   // distinguishing "parse error" from "empty text".
   const parser = new PDFParse({ data: buffer });
@@ -5609,7 +5621,7 @@ async function matchReceiptToVoucher(fileBuffer, mimeType, companyId) {
         '[matchReceiptToVoucher] PDF has no text layer — attempting page-render/Vision fallback.',
       );
       try {
-        const pdfParser = new PDFParse({ data: fileBuffer });
+        const pdfParser = new (require('pdf-parse').PDFParse)({ data: fileBuffer });
         const screenshot = await pdfParser.getScreenshot();
         const pages = (screenshot.pages || []).filter(p => p?.data);
         if (pages.length === 0) {
