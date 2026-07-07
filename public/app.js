@@ -8071,6 +8071,23 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
     setLinkedVoucherLoading(false);
   };
 
+  // Approve a pending suspense-settlement voucher directly from this context.
+  // The server fast-path (is_suspense_settlement=true) immediately marks it
+  // completed — no OTP required since the advance was already pre-authorised.
+  const approveLinkedVoucher = async (voucherId, serialNumber) => {
+    setLinkedVoucherLoading(true);
+    try {
+      const result = await api.approveVoucher(voucherId, user.id);
+      if (result.success) {
+        addToast(`${serialNumber} approved ✔`, 'success');
+        await load(); // refresh the suspense detail so badges update
+      } else {
+        addToast(result.error || 'Approval failed', 'error');
+      }
+    } catch (e) { addToast(e.message || 'Approval failed', 'error'); }
+    setLinkedVoucherLoading(false);
+  };
+
   const load = async () => {
     setLoading(true);
     try {
@@ -8553,7 +8570,19 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
                     {v.status && <span className={`status-badge status-${v.status}`} style={{ fontSize: '0.72rem' }}>{v.status.replace(/_/g, ' ')}</span>}
                     {v.payment_mode && <span style={{ fontSize: '0.75rem', color: '#6b7280' }}>{v.payment_mode}</span>}
                   </div>
-                  <button className="btn btn-sm btn-secondary" style={{ fontSize: '0.78rem', padding: '3px 12px', fontWeight: 600 }} onClick={() => openLinkedVoucher(v.id)} disabled={linkedVoucherLoading}>🧾 View →</button>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
+                    {(user.role === 'admin' || user.isSuperAdmin) && v.status === 'pending' && (
+                      <button
+                        className="btn btn-sm"
+                        style={{ fontSize: '0.78rem', padding: '3px 12px', fontWeight: 600, background: '#16a34a', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer' }}
+                        onClick={() => approveLinkedVoucher(v.id, v.serial_number)}
+                        disabled={linkedVoucherLoading}
+                        title="Approve this voucher — marks it completed immediately (pre-paid via suspense advance)">
+                        ✔ Approve
+                      </button>
+                    )}
+                    <button className="btn btn-sm btn-secondary" style={{ fontSize: '0.78rem', padding: '3px 12px', fontWeight: 600 }} onClick={() => openLinkedVoucher(v.id)} disabled={linkedVoucherLoading}>🧾 View →</button>
+                  </div>
                 </div>
               ))}
             </div>
