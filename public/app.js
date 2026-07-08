@@ -526,8 +526,8 @@ const SetPinModal = ({ onPinSet, onSkip }) => {
 
 // ─── Mobile Lock Screen (biometric first → PIN fallback) ─────────────────────
 const MobileLockScreen = ({ savedUser, onUnlock, onSignOut }) => {
-  const hasPin   = !!localStorage.getItem('relish_mobile_pin');
-  const hasBio   = !!localStorage.getItem('relish_mobile_bio_id');
+  const hasPin   = !!localStorage.getItem('relish_mobile_pin_' + savedUser.id);
+  const hasBio   = !!localStorage.getItem('relish_mobile_bio_id_' + savedUser.id);
   const [mode, setMode]     = useState(hasBio ? 'bio' : 'pin');
   const [pin, setPin]       = useState('');
   const [error, setError]   = useState('');
@@ -541,7 +541,7 @@ const MobileLockScreen = ({ savedUser, onUnlock, onSignOut }) => {
   const attemptBio = async () => {
     setBioLoading(true); setError('');
     try {
-      const credIdB64 = localStorage.getItem('relish_mobile_bio_id');
+      const credIdB64 = localStorage.getItem('relish_mobile_bio_id_' + savedUser.id);
       const challenge = crypto.getRandomValues(new Uint8Array(32));
       const credIdBytes = Uint8Array.from(atob(credIdB64), c => c.charCodeAt(0));
       await navigator.credentials.get({
@@ -563,7 +563,7 @@ const MobileLockScreen = ({ savedUser, onUnlock, onSignOut }) => {
   const handlePinChange = (v) => {
     setPin(v); setError('');
     if (v.length === 4) {
-      const stored = localStorage.getItem('relish_mobile_pin');
+      const stored = localStorage.getItem('relish_mobile_pin_' + savedUser.id);
       if (stored && hashPin(v) === stored) {
         onUnlock(savedUser);
       } else {
@@ -573,7 +573,7 @@ const MobileLockScreen = ({ savedUser, onUnlock, onSignOut }) => {
         setPin('');
         if (att >= 5) {
           setError('Too many attempts — please sign in again.');
-          setTimeout(() => { localStorage.removeItem('relish_session'); localStorage.removeItem('relish_mobile_pin'); localStorage.removeItem('relish_mobile_bio_id'); localStorage.removeItem('relish_page'); onSignOut(); }, 2000);
+          setTimeout(() => { localStorage.removeItem('relish_session'); localStorage.removeItem('relish_mobile_pin_' + savedUser.id); localStorage.removeItem('relish_mobile_bio_id_' + savedUser.id); localStorage.removeItem('relish_page'); onSignOut(); }, 2000);
         } else {
           setError(`Incorrect PIN — ${5-att} attempt${5-att===1?'':'s'} left`);
         }
@@ -657,7 +657,7 @@ const registerMobileBiometric = async (userData) => {
     });
     if (credential) {
       const credId = btoa(String.fromCharCode(...new Uint8Array(credential.rawId)));
-      localStorage.setItem('relish_mobile_bio_id', credId);
+      localStorage.setItem('relish_mobile_bio_id_' + userData.id, credId);
       return true;
     }
   } catch (e) {
@@ -690,9 +690,9 @@ const DeviceLockPromptModal = ({ user, onDone }) => {
       const verResult = await api.webauthnRegisterVerify(user.id, regResponse, deviceName);
       if (verResult.success) {
         // Save credential ID to localStorage so MobileLockScreen also benefits
-        try { localStorage.setItem('relish_mobile_bio_id', verResult.credentialId); } catch {}
-        // Remove any previous decline flag for this user on this device
-        try { localStorage.removeItem('relish_bio_declined_' + user.id); } catch {}
+        try { localStorage.setItem('relish_mobile_bio_id_' + user.id, verResult.credentialId); } catch {}
+        // Mark Device Lock as registered on this device so setup modal doesn't re-appear
+        try { localStorage.setItem('relish_bio_declined_' + user.id, 'registered'); } catch {}
         setStatus('success');
       } else {
         setErrorMsg(verResult.error || 'Registration failed');
@@ -810,8 +810,8 @@ const SecurityModal = ({ user, onClose }) => {
       const verResult = await api.webauthnRegisterVerify(user.id, regResponse, deviceName);
       if (verResult.success) {
         // Save credential ID to localStorage so session lock screen can use the same biometric
-        try { localStorage.setItem('relish_mobile_bio_id', verResult.credentialId); } catch {}
-        try { localStorage.removeItem('relish_bio_declined_' + user.id); } catch {}
+        try { localStorage.setItem('relish_mobile_bio_id_' + user.id, verResult.credentialId); } catch {}
+        try { localStorage.setItem('relish_bio_declined_' + user.id, 'registered'); } catch {}
         setMsg(`Device "${verResult.deviceName}" registered for Device Lock`); setMsgType('success');
         loadDevices();
       } else { setMsg(verResult.error || 'Device registration failed'); setMsgType('error'); }
@@ -10383,8 +10383,10 @@ const App = () => {
     try {
       // On mobile with lock active, start as null — lock screen will re-hydrate
       if (isMobileDevice()) {
-        const hasLock = !!localStorage.getItem('relish_mobile_pin') || !!localStorage.getItem('relish_mobile_bio_id');
-        if (hasLock && localStorage.getItem('relish_session')) return null;
+        const _s = localStorage.getItem('relish_session');
+        const _uid = _s ? (() => { try { return JSON.parse(_s)?.id; } catch { return null; } })() : null;
+        const hasLock = _uid && (!!localStorage.getItem('relish_mobile_pin_' + _uid) || !!localStorage.getItem('relish_mobile_bio_id_' + _uid));
+        if (hasLock && _s) return null;
       }
       const s = localStorage.getItem('relish_session');
       return s ? JSON.parse(s) : null;
@@ -10395,15 +10397,19 @@ const App = () => {
   const [mobileLocked, setMobileLocked] = useState(() => {
     try {
       if (!isMobileDevice()) return false;
-      const hasLock = !!localStorage.getItem('relish_mobile_pin') || !!localStorage.getItem('relish_mobile_bio_id');
-      return hasLock && !!localStorage.getItem('relish_session');
+      const _s = localStorage.getItem('relish_session');
+      const _uid = _s ? (() => { try { return JSON.parse(_s)?.id; } catch { return null; } })() : null;
+      const hasLock = _uid && (!!localStorage.getItem('relish_mobile_pin_' + _uid) || !!localStorage.getItem('relish_mobile_bio_id_' + _uid));
+      return !!(hasLock && _s);
     } catch { return false; }
   });
   const [mobileSavedUser, setMobileSavedUser] = useState(() => {
     try {
       if (!isMobileDevice()) return null;
-      const hasLock = !!localStorage.getItem('relish_mobile_pin') || !!localStorage.getItem('relish_mobile_bio_id');
-      if (hasLock) { const s = localStorage.getItem('relish_session'); return s ? JSON.parse(s) : null; }
+      const _s = localStorage.getItem('relish_session');
+      const _uid = _s ? (() => { try { return JSON.parse(_s)?.id; } catch { return null; } })() : null;
+      const hasLock = _uid && (!!localStorage.getItem('relish_mobile_pin_' + _uid) || !!localStorage.getItem('relish_mobile_bio_id_' + _uid));
+      if (hasLock) { return _s ? JSON.parse(_s) : null; }
     } catch {}
     return null;
   });
@@ -10422,7 +10428,7 @@ const App = () => {
       } else if (document.visibilityState === 'visible') {
         const elapsed = bgTimestamp.current ? Date.now() - bgTimestamp.current : 0;
         bgTimestamp.current = null;
-        const hasLock = !!localStorage.getItem('relish_mobile_pin') || !!localStorage.getItem('relish_mobile_bio_id');
+        const hasLock = !!localStorage.getItem('relish_mobile_pin_' + user?.id) || !!localStorage.getItem('relish_mobile_bio_id_' + user?.id);
         if (elapsed > 10000 && hasLock && user) {
           setMobileSavedUser(user);
           setMobileLocked(true);
@@ -10730,13 +10736,14 @@ const App = () => {
     // Skip if they just logged in via WebAuthn (they already have Device Lock set up).
     if (!fromWebAuthn && window.PublicKeyCredential && typeof window.SimpleWebAuthnBrowser !== 'undefined') {
       const declinedKey = 'relish_bio_declined_' + userData.id;
-      if (!localStorage.getItem(declinedKey)) {
+      const alreadyRegistered = !!localStorage.getItem('relish_mobile_bio_id_' + userData.id);
+      if (!localStorage.getItem(declinedKey) && !alreadyRegistered) {
         setDeviceLockSetupUser(userData);
         setShowDeviceLockSetup(true);
       }
     } else if (isMobileDevice()) {
       // Fallback for browsers without WebAuthn: offer PIN lock
-      const alreadySetup = !!localStorage.getItem('relish_mobile_pin');
+      const alreadySetup = !!localStorage.getItem('relish_mobile_pin_' + userData.id);
       if (!alreadySetup) setShowPinSetup(true);
     }
   };
@@ -10745,8 +10752,8 @@ const App = () => {
       localStorage.removeItem('relish_session');
       localStorage.removeItem('relish_page');
       localStorage.removeItem('relish_biometric_id');
-      localStorage.removeItem('relish_mobile_pin');
-      localStorage.removeItem('relish_mobile_bio_id');
+      // Note: relish_mobile_pin_{uid} and relish_mobile_bio_id_{uid} are intentionally
+      // preserved so Device Lock reactivates after the user logs back in.
     } catch {}
     setMobileLocked(false); setMobileSavedUser(null); setShowPinSetup(false);
     setUser(null); setVouchers([]); setNotifications([]); setCurrentPage('dashboard');
@@ -10762,13 +10769,17 @@ const App = () => {
     try {
       localStorage.removeItem('relish_session');
       localStorage.removeItem('relish_page');
-      localStorage.removeItem('relish_mobile_pin');
-      localStorage.removeItem('relish_mobile_bio_id');
+      // Clear lock keys for this specific user (account switch — different person)
+      if (mobileSavedUser?.id) {
+        localStorage.removeItem('relish_mobile_pin_' + mobileSavedUser.id);
+        localStorage.removeItem('relish_mobile_bio_id_' + mobileSavedUser.id);
+        localStorage.removeItem('relish_bio_declined_' + mobileSavedUser.id);
+      }
     } catch {}
     setMobileLocked(false); setMobileSavedUser(null);
   };
   const handlePinSet = (pin) => {
-    localStorage.setItem('relish_mobile_pin', hashPin(pin));
+    localStorage.setItem('relish_mobile_pin_' + user.id, hashPin(pin));
     setShowPinSetup(false);
     addToast('PIN set! App will lock when you leave.', 'success');
   };
