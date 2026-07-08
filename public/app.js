@@ -5377,6 +5377,7 @@ const PayeesManagement = () => {
   const [editPayee, setEditPayee] = useState({ id: '', name: '', alias: '', mobile: '', bankAccount: '', ifsc: '', upiId: '', is_global: false, payee_type: 'registered', requires_otp: true, is_staff: false, user_id: '' });
   const [importData, setImportData] = useState('');
   const [importMethod, setImportMethod] = useState('excel'); // 'paste' or 'excel'
+  const [searchQuery, setSearchQuery] = useState('');
 
   const refreshPayees = () => {
     api.getPayees(user.company.id).then(setPayees).finally(() => setLoading(false));
@@ -5666,6 +5667,17 @@ const PayeesManagement = () => {
         </div>
       </div>
 
+      <div style={{marginBottom: '1rem'}}>
+        <input
+          type="text"
+          className="form-input"
+          placeholder="🔍 Search by name or mobile number…"
+          value={searchQuery}
+          onChange={e => setSearchQuery(e.target.value)}
+          style={{maxWidth: '360px'}}
+        />
+      </div>
+
       <div className="card">
         <div className="card-body" style={{ padding: 0 }}>
           <div className="table-container">
@@ -5680,10 +5692,22 @@ const PayeesManagement = () => {
                 </tr>
               </thead>
               <tbody>
-                {payees.length === 0 ? (
-                  <tr><td colSpan="5" style={{textAlign: 'center', padding: '2rem', color: 'var(--text-secondary)'}}>No payees added yet. Click "Add Payee" to get started.</td></tr>
-                ) : (
-                  payees.map(p => (
+                {(() => {
+                  const q = searchQuery.trim().toLowerCase();
+                  const filtered = q
+                    ? payees.filter(p =>
+                        (p.name || '').toLowerCase().includes(q) ||
+                        (p.alias || '').toLowerCase().includes(q) ||
+                        (p.mobile || '').includes(q)
+                      )
+                    : payees;
+                  if (payees.length === 0) return (
+                    <tr><td colSpan="5" style={{textAlign: 'center', padding: '2rem', color: 'var(--text-secondary)'}}>No payees added yet. Click "Add Payee" to get started.</td></tr>
+                  );
+                  if (filtered.length === 0) return (
+                    <tr><td colSpan="5" style={{textAlign: 'center', padding: '2rem', color: 'var(--text-secondary)'}}>No payees match "{searchQuery}".</td></tr>
+                  );
+                  return filtered.map(p => (
                     <tr key={p.id} style={p.is_global && p.company_id !== user.company.id ? {background: '#f0f9ff'} : {}}>
                       <td className="fw-600">
                         {p.name}
@@ -5720,8 +5744,8 @@ const PayeesManagement = () => {
                         )}
                       </td>
                     </tr>
-                  ))
-                )}
+                  ));
+                })()}
               </tbody>
             </table>
           </div>
