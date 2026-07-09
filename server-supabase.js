@@ -655,6 +655,53 @@ app.delete('/api/users/:userId', async (req, res) => {
 });
 
 // Session refresh — returns current user profile (used on app load to hydrate stored session)
+// ── Pending share context — cross-device receipt routing (Migration 033) ──────
+// A Pay Now modal on any device writes its context here so a bank/UPI receipt
+// shared from the Admin's phone (a DIFFERENT device) can route to the correct
+// confirmation modal instead of the generic reconcile flow.
+// Works for all cross-device combos: desktop → phone, phone A → phone B, etc.
+
+// PUT: called when a Pay Now modal opens on any device
+app.put('/api/users/:userId/pending-share-context', async (req, res) => {
+  const { type, entityId, suspenseId } = req.body;
+  if (!type || !entityId) return res.status(400).json({ error: 'type and entityId are required' });
+  const ctx = {
+    type,
+    entityId,
+    suspenseId: suspenseId || null,
+    expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString()
+  };
+  const { error } = await supabase.from('users')
+    .update({ pending_share_ctx: ctx })
+    .eq('id', req.params.userId);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ success: true });
+});
+
+// GET: consume-once — returns context and immediately clears it
+app.get('/api/users/:userId/pending-share-context', async (req, res) => {
+  try {
+    const { data: u, error } = await supabase.from('users')
+      .select('pending_share_ctx')
+      .eq('id', req.params.userId)
+      .single();
+    if (error || !u?.pending_share_ctx) return res.json({ context: null });
+    const ctx = u.pending_share_ctx;
+    // Always clear immediately (consume-once), expired or not
+    await supabase.from('users').update({ pending_share_ctx: null }).eq('id', req.params.userId);
+    if (ctx.expiresAt && new Date(ctx.expiresAt) < new Date()) return res.json({ context: null });
+    res.json({ context: ctx });
+  } catch (err) {
+    res.json({ context: null }); // fail-open: falls through to reconcile
+  }
+});
+
+// DELETE: explicit clear — called when Pay Now modal closes without payment
+app.delete('/api/users/:userId/pending-share-context', async (req, res) => {
+  await supabase.from('users').update({ pending_share_ctx: null }).eq('id', req.params.userId);
+  res.json({ success: true });
+});
+
 app.get('/api/users/:userId/session', async (req, res) => {
   const { userId } = req.params;
   try {
@@ -4841,7 +4888,12 @@ app.post('/api/vouchers/:voucherId/mark-paid', async (req, res) => {
       const ext = receiptMimeType === 'application/pdf' ? 'pdf'
         : receiptMimeType.startsWith('image/') ? receiptMimeType.split('/')[1]
         : 'jpg';
-      const fileName = `${voucher.company_id}/payment-receipts/${req.params.voucherId}/receipt_${Date.now()}.${ext}`;
+      // Use a meaningful storage name: {serial}-PMT-{date}.{ext} regardless of what
+      // the bank app named the original receipt file on the user's device.
+      const _pd = new Date();
+      const _pds = `${String(_pd.getDate()).padStart(2,'0')}-${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][_pd.getMonth()]}-${_pd.getFullYear()}`;
+      const _psn = (voucher.serial_number || 'VCH').replace(/[^A-Za-z0-9-]/g, '-');
+      const fileName = `${voucher.company_id}/payment-receipts/${req.params.voucherId}/${_psn}-PMT-${_pds}.${ext}`;
       const buffer = Buffer.from(receiptData, 'base64');
       const { error: storageErr } = await supabase.storage
         .from('voucher-bills')
@@ -4947,7 +4999,11 @@ app.post('/api/suspense-vouchers/:id/mark-advance-paid', async (req, res) => {
       const ext = receiptMimeType === 'application/pdf' ? 'pdf'
         : receiptMimeType.startsWith('image/') ? receiptMimeType.split('/')[1]
         : 'jpg';
-      const fileName = `${sv.company_id}/advance-receipts/${req.params.id}/receipt_${Date.now()}.${ext}`;
+      // Rename to {serial}-ADV-{date}.{ext} — bank receipts have opaque system names.
+      const _ad = new Date();
+      const _ads = `${String(_ad.getDate()).padStart(2,'0')}-${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][_ad.getMonth()]}-${_ad.getFullYear()}`;
+      const _asn = (sv.serial_number || 'SV').replace(/[^A-Za-z0-9-]/g, '-');
+      const fileName = `${sv.company_id}/advance-receipts/${req.params.id}/${_asn}-ADV-${_ads}.${ext}`;
       const buffer = Buffer.from(receiptData, 'base64');
       const { error: storageErr } = await supabase.storage
         .from('voucher-bills')
@@ -5019,7 +5075,11 @@ app.post('/api/suspense-settlements/:id/mark-topup-paid', async (req, res) => {
       const ext = receiptMimeType === 'application/pdf' ? 'pdf'
         : receiptMimeType.startsWith('image/') ? receiptMimeType.split('/')[1]
         : 'jpg';
-      const fileName = `${sv.company_id}/topup-receipts/${req.params.id}/receipt_${Date.now()}.${ext}`;
+      // Rename to {serial}-TOPUP-{date}.{ext} — bank receipts have opaque system names.
+      const _td = new Date();
+      const _tds = `${String(_td.getDate()).padStart(2,'0')}-${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][_td.getMonth()]}-${_td.getFullYear()}`;
+      const _tsn = (sv.serial_number || 'SV').replace(/[^A-Za-z0-9-]/g, '-');
+      const fileName = `${sv.company_id}/topup-receipts/${req.params.id}/${_tsn}-TOPUP-${_tds}.${ext}`;
       const buffer = Buffer.from(receiptData, 'base64');
       const { error: storageErr } = await supabase.storage
         .from('voucher-bills')
@@ -5082,7 +5142,7 @@ app.post('/api/suspense-settlements/:id/mark-topup-paid', async (req, res) => {
 //   retryable:false → permanent: content-policy, bad key, corrupt PDF, bad MIME → won't fix on retry
 // ---------------------------------------------------------------------------
 app.post('/api/receipts/match-voucher', async (req, res) => {
-  const { requestedBy, receiptData, receiptMimeType, companyId } = req.body;
+  const { requestedBy, receiptData, receiptMimeType, companyId, fileName } = req.body;
 
   if (!requestedBy)
     return res.status(400).json({ error: 'requestedBy is required' });
@@ -5115,7 +5175,7 @@ app.post('/api/receipts/match-voucher', async (req, res) => {
   }
 
   try {
-    const result = await matchReceiptToVoucher(fileBuffer, receiptMimeType, companyId);
+    const result = await matchReceiptToVoucher(fileBuffer, receiptMimeType, companyId, fileName || '');
     return res.json(result);
   } catch (err) {
     // Retryable = ONLY transient service failures: rate-limit (429) or server errors (5xx)
@@ -5613,7 +5673,7 @@ async function _extractImageText(buffer, mimeType) {
  *            reference but the text does contain some recognisable content.
  *   'none' — no VCH-like reference found in the extracted text at all.
  */
-async function matchReceiptToVoucher(fileBuffer, mimeType, companyId) {
+async function matchReceiptToVoucher(fileBuffer, mimeType, companyId, fileName = '') {
   if (!Buffer.isBuffer(fileBuffer)) throw new TypeError('fileBuffer must be a Buffer');
   if (!mimeType || typeof mimeType !== 'string') throw new TypeError('mimeType must be a string');
   if (!companyId || typeof companyId !== 'string') throw new TypeError('companyId must be a string');
@@ -5639,45 +5699,10 @@ async function matchReceiptToVoucher(fileBuffer, mimeType, companyId) {
     const substantiveText = rawPdfText.replace(/--\s*\d+\s*of\s*\d+\s*--/gi, '').trim();
 
     if (!substantiveText) {
-      // Only pagination markers remain — treat as image-based and fall through to
-      // the screenshot/Vision fallback below.
-      // Federal Bank, and any portal that renders receipts as embedded images).
-      // Fall back: render page 1 to PNG via pdf-parse getScreenshot(), then send
-      // to GPT-4o Vision exactly as we do for regular image receipts.
-      console.log(
-        '[matchReceiptToVoucher] PDF has no text layer — attempting page-render/Vision fallback.',
-      );
-      try {
-        const pdfParser = new (require('pdf-parse').PDFParse)({ data: fileBuffer });
-        const screenshot = await pdfParser.getScreenshot();
-        const pages = (screenshot.pages || []).filter(p => p?.data);
-        if (pages.length === 0) {
-          console.warn('[matchReceiptToVoucher] getScreenshot returned no renderable pages.');
-          return { matchedVoucherId: null, confidence: 'none', extractedReference: null, candidateVouchers: [] };
-        }
-        // Scan pages sequentially; stop early once a VCH or CPAY reference is found
-        // so multi-page receipts don't make unnecessary extra Vision calls.
-        // Note: CPAY takes priority in Step 4, so stopping on either ref is correct.
-        let visionText = '';
-        for (const page of pages) {
-          const pageText = await _extractImageText(Buffer.from(page.data), 'image/png');
-          visionText += (visionText ? '\n' : '') + pageText;
-          if (extractVchNumbers(visionText).length > 0 || extractBatchRefs(visionText).length > 0) break;
-        }
-        console.log(`[matchReceiptToVoucher] PDF Vision fallback: ${pages.length} page(s) available, ${visionText.length} chars extracted.`);
-        extractedText = visionText;
-      } catch (fallbackErr) {
-        // Distinguish: if the GPT-4o call itself failed (API error, rate limit…),
-        // throw so the caller surfaces it as an error rather than confidence:'none'.
-        // The two failure shapes are:
-        //   "OpenAI API error …"  → API-level error, retryable
-        //   anything else         → rendering failed, treat as graceful none
-        if (/openai/i.test(fallbackErr.message)) {
-          throw new Error(`PDF image-based — Vision OCR failed: ${fallbackErr.message}`);
-        }
-        console.warn('[matchReceiptToVoucher] PDF page render failed:', fallbackErr.message, '— returning confidence:none.');
-        return { matchedVoucherId: null, confidence: 'none', extractedReference: null, candidateVouchers: [] };
-      }
+      // PDF has no selectable text layer (image-based receipt from bank portals).
+      // pdf-parse does not support page rendering — skip to filename fallback below.
+      console.log('[matchReceiptToVoucher] PDF has no text layer — skipping Vision fallback (page-render unavailable); will try filename extraction.');
+      extractedText = '';
     } else {
       extractedText = substantiveText;
     }
@@ -5692,6 +5717,19 @@ async function matchReceiptToVoucher(fileBuffer, mimeType, companyId) {
   console.log(
     `[matchReceiptToVoucher] Extracted ${extractedText.length} chars from ${mimeType} for company ${companyId}`,
   );
+
+  // ── Filename fallback: when content extraction yields nothing, scan the
+  //    original filename for VCH/CPAY references.  Bank payment receipts are
+  //    often saved as "Payee _VCH476 477 499 500.pdf" — a reliable fallback.
+  if (!extractedText && fileName) {
+    const cleanName = fileName.replace(/\.[^/.]+$/, '').replace(/[_]/g, ' ');
+    const fnVch  = extractVchNumbers(cleanName);
+    const fnCpay = extractBatchRefs(cleanName);
+    if (fnVch.length > 0 || fnCpay.length > 0) {
+      console.log(`[matchReceiptToVoucher] Filename fallback: "${fileName}" → ${fnVch.length} VCH + ${fnCpay.length} CPAY ref(s)`);
+      extractedText = cleanName;
+    }
+  }
 
   // ── Step 2: Find CPAY batch refs and VCH voucher refs in the text ──────────
   const cpayMatches = extractBatchRefs(extractedText);

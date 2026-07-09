@@ -446,3 +446,268 @@ Pay Now Modal
 payment_status = 'paid'
 Settlement row shows: ✅ Paid · UTR: xxx · 📎 Receipt
 ```
+
+---
+
+## Receipt Storage Naming Convention
+
+> Updated by migrations 029/030 implementation (Jul 2026).
+
+All payment receipts are now stored with **human-readable names** regardless of the opaque filename assigned by the bank/UPI app (e.g. `HDFC_TXN_20260709.pdf`). The bank's filename is discarded on upload; our convention is applied server-side.
+
+| Payment type | Storage path |
+|---|---|
+| Regular voucher | `voucher-bills/{companyId}/payment-receipts/{voucherId}/{serial}-PMT-{DD}-{Mon}-{YYYY}.{ext}` |
+| Suspense advance | `voucher-bills/{companyId}/advance-receipts/{svId}/{serial}-ADV-{DD}-{Mon}-{YYYY}.{ext}` |
+| Top-up | `voucher-bills/{companyId}/topup-receipts/{settlementId}/{serial}-TOPUP-{DD}-{Mon}-{YYYY}.{ext}` |
+
+Example: `SV-2026-27-001-TOPUP-09-Jul-2026.pdf`
+
+The extension (`pdf`, `jpeg`, `png`, `webp`) matches the actual uploaded file type.
+
+---
+
+## Receipt Share-to-App: Cross-Device Routing (Migration 033)
+
+### Problem
+
+RBI/NPCI intent-based payment limits (₹2,000) mean Admin **must** scan the QR from a second device. This is the standard real-world flow:
+
+```
+Device A (desktop / Accounts phone)   →   Pay Now modal open, QR displayed
+Device B (Admin's phone)              →   Scans QR, pays via UPI/Bank app,
+                                           downloads receipt, taps Share
+```
+
+`localStorage` is per-device, so the routing context set on Device A is invisible to Device B. `migrations/033_pending_share_context.sql` fixes this with a server-side consume-once context stored on the `users` table.
+
+### Three-Level Routing
+
+When the Android wrapper fires `window.onReceiptShared` on the Admin's phone:
+
+```
+1. localStorage (same-device fast path, ~0 ms)
+   └─ context found → route to modal immediately
+
+2. Server DB (cross-device, ~100 ms round-trip)
+   └─ PUT /api/users/:userId/pending-share-context was written by
+      whichever device had Pay Now open (desktop, tablet, another phone)
+   └─ context found & not expired → route to modal
+
+3. Reconcile flow (fallback — no Pay Now modal was open anywhere)
+   └─ receipt matched by voucher reference text extraction
+```
+
+All three paths end in `window.onReceiptShared` → `_routeCtx()` or `_runReconcile()`.
+
+---
+
+## ⚠️ ANDROID WRAPPER — REQUIRED CHANGES
+
+> **When the `relish-approvals-android` project is opened**, make the following changes
+> precisely. The wrapper project is at:
+> `C:\Users\user\Desktop\SOFTWARE DEV\APP Folders\relish-approvals-android`
+
+### Why this is critical
+
+**"Relish Approvals" will NOT appear in the Android share sheet from PhonePe / Google Pay / HDFC / any bank app unless the native wrapper declares the correct `intent-filter`.** The PWA manifest `share_target` only works for TWA; a WebView wrapper must declare intents natively.
+
+---
+
+### Change 1 — `AndroidManifest.xml`
+
+Find the `<activity android:name=".MainActivity">` element and add the following `<intent-filter>` blocks **inside** it, after any existing intent-filters:
+
+```xml
+<!-- ── Share Target: bank/UPI receipt images and PDFs ──────────────────────
+     These filters cause "Relish Approvals" to appear in the Android share
+     sheet when Admin shares a payment receipt from Google Pay, PhonePe,
+     HDFC, ICICI, or any bank app that shares image or PDF receipts.
+     CRITICAL: without these, the app is invisible in the share sheet.    -->
+
+<intent-filter android:label="Share to Relish Approvals">
+    <action android:name="android.intent.action.SEND" />
+    <category android:name="android.intent.category.DEFAULT" />
+    <data android:mimeType="image/jpeg" />
+</intent-filter>
+
+<intent-filter android:label="Share to Relish Approvals">
+    <action android:name="android.intent.action.SEND" />
+    <category android:name="android.intent.category.DEFAULT" />
+    <data android:mimeType="image/png" />
+</intent-filter>
+
+<intent-filter android:label="Share to Relish Approvals">
+    <action android:name="android.intent.action.SEND" />
+    <category android:name="android.intent.category.DEFAULT" />
+    <data android:mimeType="image/webp" />
+</intent-filter>
+
+<intent-filter android:label="Share to Relish Approvals">
+    <action android:name="android.intent.action.SEND" />
+    <category android:name="android.intent.category.DEFAULT" />
+    <data android:mimeType="application/pdf" />
+</intent-filter>
+```
+
+Also confirm the `<activity>` has `android:launchMode="singleTask"` (so the existing app instance is reused rather than creating a second one when the share arrives):
+
+```xml
+<activity
+    android:name=".MainActivity"
+    android:launchMode="singleTask"
+    ... >
+```
+
+---
+
+### Change 2 — `MainActivity.kt` (or `.java`)
+
+#### 2a. Add `onNewIntent` override
+
+When the app is **already running** (in foreground or background), Android calls `onNewIntent` instead of `onCreate` for a `singleTask` activity. Add:
+
+```kotlin
+override fun onNewIntent(intent: Intent) {
+    super.onNewIntent(intent)
+    setIntent(intent)
+    handleShareIntent(intent)
+}
+```
+
+#### 2b. Call `handleShareIntent` from `onCreate`
+
+In the existing `onCreate`, **after** the WebView is fully initialised and the page has loaded, add:
+
+```kotlin
+// Handle share intent if app was launched cold by a share action
+handleShareIntent(intent)
+```
+
+> **Important**: call this only after `webView.setWebViewClient` / `onPageFinished` fires,
+> or the JS call will target a blank page. If you have a `WebViewClient.onPageFinished`
+> callback already, put the call there. If not, a simple `webView.postDelayed({ handleShareIntent(intent) }, 800)` is acceptable as a fallback.
+
+#### 2c. Add the `handleShareIntent` function
+
+```kotlin
+private fun handleShareIntent(intent: Intent) {
+    if (intent.action != Intent.ACTION_SEND) return
+    val mimeType = intent.type ?: return
+    if (!mimeType.startsWith("image/") && mimeType != "application/pdf") return
+
+    val uri: Uri = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+        intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+    } else {
+        @Suppress("DEPRECATION")
+        intent.getParcelableExtra(Intent.EXTRA_STREAM)
+    } ?: return
+
+    // Read on a background thread — never on main thread
+    Thread {
+        try {
+            // Resolve display name (bank apps use content:// URIs)
+            var fileName = "receipt"
+            contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                val col = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                if (cursor.moveToFirst() && col >= 0) fileName = cursor.getString(col) ?: "receipt"
+            }
+
+            val inputStream = contentResolver.openInputStream(uri) ?: return@Thread
+            val bytes = inputStream.readBytes()
+            inputStream.close()
+
+            // Base64 chars are [A-Za-z0-9+/=] — safe to embed in a JS string.
+            // Only the fileName needs sanitisation.
+            val base64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
+            val safeMime = mimeType.replace("'", "")
+            val safeName = fileName.replace("\\", "").replace("'", "").replace("\"", "")
+
+            // Build the JS call
+            val js = """
+                (function() {
+                    if (typeof window.onReceiptShared === 'function') {
+                        // App is ready — dispatch immediately
+                        window.onReceiptShared({
+                            mimeType: '$safeMime',
+                            base64Data: '$base64',
+                            fileName: '$safeName'
+                        });
+                    } else {
+                        // App still loading (cold start) — stash for when it registers
+                        window._pendingSharedReceipt = {
+                            mimeType: '$safeMime',
+                            base64Data: '$base64',
+                            fileName: '$safeName'
+                        };
+                    }
+                })();
+            """.trimIndent()
+
+            runOnUiThread { webView.evaluateJavascript(js, null) }
+        } catch (e: Exception) {
+            android.util.Log.e("RelishApprovals", "Share intent handling failed: ${e.message}")
+        }
+    }.start()
+}
+```
+
+---
+
+### Change 3 — No changes needed to `AndroidManifest.xml` permissions
+
+Android 10+ (API 29+) uses scoped storage. Accessing a file via a content:// URI shared by another app does **not** require `READ_EXTERNAL_STORAGE`. `contentResolver.openInputStream(uri)` is the correct API and works without extra permissions.
+
+If the project targets API 28 or lower, add:
+```xml
+<uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
+    android:maxSdkVersion="28" />
+```
+
+---
+
+### PWA-side change (already done in `app.js`)
+
+The PWA already handles the `window._pendingSharedReceipt` fallback. After `window.onReceiptShared` is registered, the `useEffect` now checks:
+
+```javascript
+if (window._pendingSharedReceipt) {
+  const _p = window._pendingSharedReceipt;
+  window._pendingSharedReceipt = null;
+  window.onReceiptShared({ mimeType: _p.mimeType, base64Data: _p.base64Data, fileName: _p.fileName || '' });
+}
+```
+
+This ensures receipts shared during a cold start are never silently dropped.
+
+---
+
+### End-to-end flow after wrapper changes
+
+```
+Admin's Phone (Relish Approvals wrapper installed)
+──────────────────────────────────────────────────
+1. UPI/Bank app shows "Share" button after transaction
+2. Admin taps Share → Android share sheet opens
+3. "Relish Approvals" appears ← REQUIRES Change 1 (intent-filter)
+4. Admin taps "Relish Approvals"
+5. Android delivers ACTION_SEND intent to MainActivity
+6. handleShareIntent() reads file via contentResolver ← REQUIRES Change 2
+7. base64 data injected into WebView via evaluateJavascript
+8. window.onReceiptShared() fires in PWA
+9. Three-level routing:
+   a. localStorage context?    → open correct modal (same-device only)
+   b. Server DB context?       → open correct modal (cross-device ✓)
+   c. No context?              → Reconcile Receipts flow
+10. Admin enters UTR and confirms payment
+```
+
+---
+
+### Testing checklist (after wrapper changes are deployed)
+
+- [ ] Open Google Pay → make a small test payment → tap "Share receipt" → "Relish Approvals" appears in share sheet
+- [ ] Share a screenshot from gallery → Relish opens on Reconcile screen
+- [ ] With Pay Now modal open on desktop for a specific topup → Admin shares receipt on phone → Relish opens on the suspense detail page with Mark Paid modal pre-filled
+- [ ] Kill the Relish app → share a receipt → app launches from cold start → receipt is processed (not dropped)
+

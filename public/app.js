@@ -280,6 +280,12 @@ const api = {
   rejectTopUp: (settlementId, rejectedBy, reason) => fetch(`${API_BASE}/suspense-settlements/${settlementId}/reject-topup`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rejectedBy, reason }) }).then(r => r.json()),
   markTopupPaid: (settlementId, paidBy, paymentReference, paymentNotes, receiptData, receiptMimeType) => fetch(`${API_BASE}/suspense-settlements/${settlementId}/mark-topup-paid`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ paidBy, paymentReference, paymentNotes, receiptData: receiptData || undefined, receiptMimeType: receiptMimeType || undefined }) }).then(r => r.json()),
   markAdvancePaid: (suspenseId, paidBy, paymentReference, paymentNotes, receiptData, receiptMimeType) => fetch(`${API_BASE}/suspense-vouchers/${suspenseId}/mark-advance-paid`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ paidBy, paymentReference, paymentNotes, receiptData: receiptData || undefined, receiptMimeType: receiptMimeType || undefined }) }).then(r => r.json()),
+  // Cross-device receipt routing: Pay Now modal writes context to server so a receipt
+  // shared from the Admin’s phone can route back to the correct confirmation modal
+  // regardless of which device originally displayed the Pay Now QR (Migration 033).
+  setPendingShareContext: (userId, ctx) => fetch(`${API_BASE}/users/${userId}/pending-share-context`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(ctx) }).then(r => r.json()),
+  consumePendingShareContext: (userId) => fetch(`${API_BASE}/users/${userId}/pending-share-context`).then(r => r.json()),
+  clearPendingShareContext: (userId) => fetch(`${API_BASE}/users/${userId}/pending-share-context`, { method: 'DELETE' }).then(r => r.json()),
   closeSuspenseVoucher: (suspenseId, closedBy, closeHoa, closeSubHoa, closeNotes) => fetch(`${API_BASE}/suspense-vouchers/${suspenseId}/close`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ closedBy, closeHoa, closeSubHoa, closeNotes }) }).then(r => r.json()),
   approveSuspenseClose: (suspenseId, approvedBy) => fetch(`${API_BASE}/suspense-vouchers/${suspenseId}/approve-close`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ approvedBy }) }).then(r => r.json()),
   rejectSuspenseClose: (suspenseId, rejectedBy, reason) => fetch(`${API_BASE}/suspense-vouchers/${suspenseId}/reject-close`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rejectedBy, reason }) }).then(r => r.json()),
@@ -2640,7 +2646,7 @@ const PreviewVoucher = ({ formData, payees, user }) => {
 
 // Voucher List
 const VoucherList = ({ filter }) => {
-  const { user, vouchers, addToast, refreshVouchers, navigateToSuspense } = useApp();
+  const { user, vouchers, addToast, refreshVouchers, navigateToSuspense, pendingShareForConfirmation, consumePendingShare } = useApp();
   const [selectedVoucher, setSelectedVoucher] = useState(null);
   const [showModal, setShowModal] = useState(false);
   const [payeeOtp, setPayeeOtp] = useState('');
@@ -2815,6 +2821,33 @@ const VoucherList = ({ filter }) => {
       setBatchPaying(false);
     }
   }, [payNowBatch]);
+
+  // Write a pending-confirmation context to localStorage when the voucher Pay Now
+  // modal opens. If the admin shares a bank receipt from their phone, the Web Share
+  // Target handler reads this context and routes the file here instead of reconcile.
+  useEffect(() => {
+    if (!payNowVoucher) return;
+    const _ctx = { type: 'voucher', entityId: payNowVoucher.id, suspenseId: null };
+    try { localStorage.setItem('relish_share_context', JSON.stringify({ ..._ctx, expires: Date.now() + 15 * 60 * 1000 })); } catch {}
+    api.setPendingShareContext(user.id, _ctx).catch(() => {}); // cross-device server copy
+    return () => { try { const _r = localStorage.getItem('relish_share_context'); if (_r) { const _c = JSON.parse(_r); if (_c?.type === 'voucher' && _c?.entityId === payNowVoucher?.id) localStorage.removeItem('relish_share_context'); } } catch {} };
+  }, [payNowVoucher?.id]);
+
+  // Consume a receipt routed to a specific voucher's Pay Now confirmation modal.
+  useEffect(() => {
+    if (!pendingShareForConfirmation || pendingShareForConfirmation.type !== 'voucher') return;
+    if (!vouchers || !vouchers.length) return;
+    const _target = vouchers.find(v => v.id === pendingShareForConfirmation.entityId);
+    if (!_target) return;
+    const _psc = pendingShareForConfirmation;
+    const _b64 = _psc.receipt.dataUrl.replace(/^data:.*?;base64,/, '');
+    setPaymentReceiptData(_b64);
+    setPaymentReceiptMimeType(_psc.receipt.mimeType);
+    setPaymentReceiptPreview(_psc.receipt.mimeType.startsWith('image/') ? _psc.receipt.dataUrl : 'pdf');
+    setMarkPaidVoucher(_target);
+    setShowMarkPaidModal(true);
+    consumePendingShare();
+  }, [vouchers, pendingShareForConfirmation]);
 
   const baseFiltered = vouchers.filter(v => { 
     if (filter === 'draft') return v.status === 'draft';
@@ -3906,6 +3939,13 @@ const VoucherList = ({ filter }) => {
             <p style={{fontSize:'0.8rem',color:'#6b7280',marginBottom:'1rem',background:'#f9fafb',padding:'0.5rem 0.75rem',borderRadius:'6px',border:'1px solid #e5e7eb'}}>
               💡 Provide a UTR / transaction reference <strong>and/or</strong> upload the payment receipt — at least one is required.
             </p>
+            {/* Stored-as filename — shown regardless of what the bank app called the receipt */}
+            {(() => { const _fd = new Date(); const _fds = `${String(_fd.getDate()).padStart(2,'0')}-${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][_fd.getMonth()]}-${_fd.getFullYear()}`; const _fnm = `${(markPaidVoucher?.serial_number||'VCH').replace(/[^A-Za-z0-9-]/g,'-')}-PMT-${_fds}`; return (
+            <div style={{background:'#f0fdf4',border:'1px solid #86efac',borderRadius:'6px',padding:'0.45rem 0.75rem',marginBottom:'1rem',display:'flex',alignItems:'center',justifyContent:'space-between',gap:'0.5rem'}}>
+              <div style={{fontSize:'0.78rem',overflow:'hidden'}}><span style={{color:'#166534',fontWeight:600}}>📁 Stored as: </span><code style={{color:'#14532d',fontSize:'0.75rem',wordBreak:'break-all'}}>{_fnm}.<span style={{color:'#6b7280'}}>pdf/img</span></code></div>
+              <button style={{background:'none',border:'1px solid #86efac',borderRadius:'4px',padding:'2px 8px',cursor:'pointer',fontSize:'0.73rem',color:'#166534',fontWeight:600,flexShrink:0,whiteSpace:'nowrap'}} onClick={() => navigator.clipboard.writeText(_fnm+'.pdf').then(()=>addToast('Filename copied','success'))}>📋 Copy</button>
+            </div>
+            ); })()}
             {/* UTR */}
             <div className="form-group">
               <label className="form-label">UTR / Transaction Reference</label>
@@ -8040,7 +8080,7 @@ const SettlementEntryForm = ({ suspenseId, onDone, onClose }) => {
 // SUSPENSE VOUCHER DETAIL
 // ─────────────────────────────────────────────────────────────────────────────
 const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
-  const { user, addToast } = useApp();
+  const { user, addToast, pendingShareForConfirmation, consumePendingShare } = useApp();
   const [sv, setSv] = useState(null);
   const [loading, setLoading] = useState(true);
   const [showSettlement, setShowSettlement] = useState(false);
@@ -8137,6 +8177,48 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
   };
 
   useEffect(() => { load(); }, [suspenseId]);
+
+  // Write pending-confirmation context to localStorage when advance/topup Pay Now
+  // modal opens so a bank receipt shared from the mobile share-sheet routes back here.
+  React.useEffect(() => {
+    if (!payNowAdvance || !sv) return;
+    const _ctx = { type: 'advance', entityId: sv.id, suspenseId: sv.id };
+    try { localStorage.setItem('relish_share_context', JSON.stringify({ ..._ctx, expires: Date.now() + 15 * 60 * 1000 })); } catch {}
+    api.setPendingShareContext(user.id, _ctx).catch(() => {}); // cross-device server copy
+    return () => { try { const _r = localStorage.getItem('relish_share_context'); if (_r) { const _c = JSON.parse(_r); if (_c?.type === 'advance' && _c?.entityId === sv?.id) localStorage.removeItem('relish_share_context'); } } catch {} };
+  }, [payNowAdvance]);
+
+  React.useEffect(() => {
+    if (!payNowTopup) return;
+    const _ctx = { type: 'topup', entityId: payNowTopup._topupId, suspenseId: suspenseId };
+    try { localStorage.setItem('relish_share_context', JSON.stringify({ ..._ctx, expires: Date.now() + 15 * 60 * 1000 })); } catch {}
+    api.setPendingShareContext(user.id, _ctx).catch(() => {}); // cross-device server copy
+    return () => { try { const _r = localStorage.getItem('relish_share_context'); if (_r) { const _c = JSON.parse(_r); if (_c?.type === 'topup' && _c?.entityId === payNowTopup?._topupId) localStorage.removeItem('relish_share_context'); } } catch {} };
+  }, [payNowTopup?._topupId]);
+
+  // Consume a shared receipt routed to this suspense voucher's advance/topup confirmation.
+  React.useEffect(() => {
+    if (!pendingShareForConfirmation || !sv) return;
+    const _psc = pendingShareForConfirmation;
+    const _b64 = _psc.receipt.dataUrl.replace(/^data:.*?;base64,/, '');
+    const _isImg = _psc.receipt.mimeType.startsWith('image/');
+    if (_psc.type === 'topup' && _psc.entityId) {
+      const _entry = (sv.settlements || []).find(s => s.id === _psc.entityId && s.entry_type === 'topup');
+      if (!_entry) return;
+      setTopupReceiptData(_b64);
+      setTopupReceiptMimeType(_psc.receipt.mimeType);
+      setTopupReceiptPreview(_isImg ? _psc.receipt.dataUrl : 'pdf');
+      setTopupPaidEntry(_entry);
+      setShowTopupPaidModal(true);
+      consumePendingShare();
+    } else if (_psc.type === 'advance') {
+      setAdvancePaidReceiptData(_b64);
+      setAdvancePaidReceiptMimeType(_psc.receipt.mimeType);
+      setAdvancePaidReceiptPreview(_isImg ? _psc.receipt.dataUrl : 'pdf');
+      setShowAdvancePaidModal(true);
+      consumePendingShare();
+    }
+  }, [sv, pendingShareForConfirmation]);
 
   const handleApprove = async () => {
     setActionLoading(true);
@@ -8998,6 +9080,12 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem' }}><span style={{ color: '#166534' }}>Staff Payee</span><strong>{sv.staff_payee?.name || sv.staff?.name}</strong></div>
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#166534' }}>Advance Amount</span><strong style={{ fontFamily: 'monospace' }}>₹{parseFloat(sv.advance_amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</strong></div>
               </div>
+              {(() => { const _fd = new Date(); const _fds = `${String(_fd.getDate()).padStart(2,'0')}-${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][_fd.getMonth()]}-${_fd.getFullYear()}`; const _fnm = `${(sv.serial_number||'SV').replace(/[^A-Za-z0-9-]/g,'-')}-ADV-${_fds}`; return (
+              <div style={{ background: '#f0fdf4', border: '1px solid #86efac', borderRadius: '6px', padding: '0.45rem 0.75rem', marginBottom: '1rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem' }}>
+                <div style={{ fontSize: '0.78rem', overflow: 'hidden' }}><span style={{ color: '#166534', fontWeight: 600 }}>📁 Stored as: </span><code style={{ color: '#14532d', fontSize: '0.75rem', wordBreak: 'break-all' }}>{_fnm}.<span style={{ color: '#6b7280' }}>pdf/img</span></code></div>
+                <button style={{ background: 'none', border: '1px solid #86efac', borderRadius: '4px', padding: '2px 8px', cursor: 'pointer', fontSize: '0.73rem', color: '#166534', fontWeight: 600, flexShrink: 0, whiteSpace: 'nowrap' }} onClick={() => navigator.clipboard.writeText(_fnm+'.pdf').then(() => addToast('Filename copied', 'success'))}>📋 Copy</button>
+              </div>
+              ); })()}
               <div className="form-group">
                 <label className="form-label">UTR / Transaction ID <span style={{ color: '#888', fontWeight: 400 }}>(optional if receipt uploaded)</span></label>
                 <input className="form-input" type="text" placeholder="e.g. 426123456789" value={advancePaidRef} onChange={e => setAdvancePaidRef(e.target.value)} autoFocus />
@@ -9122,6 +9210,12 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem' }}><span style={{ color: '#166534' }}>Staff Payee</span><strong>{sv.staff_payee?.name || sv.staff?.name}</strong></div>
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#166534' }}>Amount</span><strong style={{ fontFamily: 'monospace' }}>₹{parseFloat(topupPaidEntry.amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</strong></div>
               </div>
+              {(() => { const _fd = new Date(); const _fds = `${String(_fd.getDate()).padStart(2,'0')}-${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][_fd.getMonth()]}-${_fd.getFullYear()}`; const _fnm = `${(sv.serial_number||'SV').replace(/[^A-Za-z0-9-]/g,'-')}-TOPUP-${_fds}`; return (
+              <div style={{ background: '#f0fdf4', border: '1px solid #86efac', borderRadius: '6px', padding: '0.45rem 0.75rem', marginBottom: '1rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem' }}>
+                <div style={{ fontSize: '0.78rem', overflow: 'hidden' }}><span style={{ color: '#166534', fontWeight: 600 }}>📁 Stored as: </span><code style={{ color: '#14532d', fontSize: '0.75rem', wordBreak: 'break-all' }}>{_fnm}.<span style={{ color: '#6b7280' }}>pdf/img</span></code></div>
+                <button style={{ background: 'none', border: '1px solid #86efac', borderRadius: '4px', padding: '2px 8px', cursor: 'pointer', fontSize: '0.73rem', color: '#166634', fontWeight: 600, flexShrink: 0, whiteSpace: 'nowrap' }} onClick={() => navigator.clipboard.writeText(_fnm+'.pdf').then(() => addToast('Filename copied', 'success'))}>📋 Copy</button>
+              </div>
+              ); })()}
               <div className="form-group">
                 <label className="form-label">UTR / Transaction ID <span style={{ color: '#888', fontWeight: 400 }}>(optional if receipt uploaded)</span></label>
                 <input className="form-input" type="text" placeholder="e.g. 426123456789" value={topupPaymentRef} onChange={e => setTopupPaymentRef(e.target.value)} autoFocus />
@@ -10242,7 +10336,7 @@ const ReconcileReceipts = () => {
     reader.readAsDataURL(file);
   });
 
-  const processRow = async (rowId, mimeType, fileDataUrl) => {
+  const processRow = async (rowId, mimeType, fileDataUrl, fileName) => {
     setRows(prev => prev.map(r => r.id === rowId ? { ...r, status: 'matching' } : r));
     try {
       const matchResult = await api.matchReceiptToVoucher({
@@ -10250,6 +10344,7 @@ const ReconcileReceipts = () => {
         receiptData: fileDataUrl.replace(/^data:.*?;base64,/, ''),
         receiptMimeType: mimeType,
         companyId: user.company.id,
+        fileName: fileName || '',
       });
       setRows(prev => prev.map(r => r.id === rowId ? { ...r, status: 'done', matchResult } : r));
     } catch (err) {
@@ -10262,13 +10357,14 @@ const ReconcileReceipts = () => {
     if (!valid.length) { addToast('Only image or PDF files are supported', 'error'); return; }
     const newRows = [];
     for (const file of valid) {
+      if (rows.some(r => r.name === file.name)) { addToast(`${file.name} is already in the list`, 'info'); continue; }
       try {
         const { dataUrl, name, mimeType } = await readFile(file);
         newRows.push({ id: `${Date.now()}-${Math.random().toString(36).slice(2)}`, name, mimeType, fileDataUrl: dataUrl, status: 'pending', matchResult: null, attaching: false, attached: null, pickerOpen: false, pickerSearch: '' });
       } catch { /* skip unreadable file */ }
     }
     setRows(prev => [...prev, ...newRows]);
-    for (const row of newRows) await processRow(row.id, row.mimeType, row.fileDataUrl);
+    for (const row of newRows) await processRow(row.id, row.mimeType, row.fileDataUrl, row.name);
   };
 
   const doAttach = async (rowId, voucherId) => {
@@ -10326,7 +10422,8 @@ const ReconcileReceipts = () => {
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
           {rows.map(row => {
             const mr = row.matchResult;
-            const isImagePdf = mr?.confidence === 'none' && mr?.candidateVouchers?.length === 0 && row.mimeType === 'application/pdf';
+            const hasError = mr?.error === true;
+            const isImagePdf = !hasError && mr?.confidence === 'none' && !mr?.extractedReference && row.mimeType === 'application/pdf';
             const matchedV = mr?.confidence === 'high' && mr?.matchedVoucherId ? (mr.candidateVouchers || []).find(v => v.id === mr.matchedVoucherId) : null;
             const filtered = (mr?.candidateVouchers || []).filter(v => {
               if (!row.pickerSearch) return true;
@@ -10346,7 +10443,8 @@ const ReconcileReceipts = () => {
                         {confidenceBadge(mr.confidence)}
                         {mr.extractedReference && <code style={{ fontSize: '0.78rem', background: '#f3f4f6', padding: '1px 5px', borderRadius: '3px' }}>{mr.extractedReference}</code>}
                         {matchedV && <span style={{ fontSize: '0.78rem', color: '#166534', fontWeight: 600 }}>→ {matchedV.serial_number} · ₹{parseFloat(matchedV.amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>}
-                        {isImagePdf && <span style={{ fontSize: '0.78rem', color: '#92400e' }}>⚠️ No reference — bank PDF format not supported yet</span>}
+                        {isImagePdf && <span style={{ fontSize: '0.78rem', color: '#92400e' }}>⚠️ No text in PDF — try selecting the voucher manually below</span>}
+                        {hasError && <span style={{ fontSize: '0.78rem', color: '#dc2626' }}>⚠️ {mr.message || mr.errorMsg || 'Processing failed — try re-uploading'}</span>}
                       </div>
                     )}
                     {row.attached && <div style={{ fontSize: '0.78rem', color: '#166534', fontWeight: 600, marginTop: '4px' }}>✅ Attached to {row.attached.serial}</div>}
@@ -10495,6 +10593,10 @@ const App = () => {
   // Receipt share state — populated by window.onReceiptShared (Android share-intent)
   // or any future trigger; drives ReceiptShareModal.
   const [receiptShare, setReceiptShare] = useState(null);
+  // When a Pay Now modal is open and the user leaves for their bank/UPI app, the modal
+  // writes a context to localStorage. If they then share a receipt back to the app, the
+  // service worker routes it here instead of the generic reconcile flow.
+  const [pendingShareForConfirmation, setPendingShareForConfirmation] = useState(null);
   const [settlementToken] = useState(() => {
     const m = window.location.pathname.match(/^\/settlement\/([^/]+)/);
     if (m) return m[1];
@@ -10858,7 +10960,7 @@ const App = () => {
     );
   }
 
-  const contextValue = { user, vouchers, notifications, addToast, refreshVouchers, refreshNotifications, navigateToSuspense: (id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); try { localStorage.setItem('relish_page', 'suspense-detail'); } catch {} } };
+  const contextValue = { user, vouchers, notifications, addToast, refreshVouchers, refreshNotifications, navigateToSuspense: (id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); try { localStorage.setItem('relish_page', 'suspense-detail'); } catch {} }, pendingShareForConfirmation, consumePendingShare: () => setPendingShareForConfirmation(null) };
 
   // Register Android share-intent handler.
   // Two entry points:
@@ -10870,22 +10972,59 @@ const App = () => {
   //      data from /_share_pending, and call window.onReceiptShared ourselves.
   React.useEffect(() => {
     if (!user) return;
-    window.onReceiptShared = ({ mimeType, base64Data }) => {
+    window.onReceiptShared = ({ mimeType, base64Data, fileName }) => {
       // Normalise: ensure we always hold a data-URL internally.
       const dataUrl = base64Data && !base64Data.startsWith('data:')
         ? `data:${mimeType};base64,${base64Data}`
         : (base64Data || '');
-      setReceiptShare({ step: 'matching', mimeType, base64Data: dataUrl });
-      api.matchReceiptToVoucher({
-        requestedBy: user.id,
-        receiptData: dataUrl.replace(/^data:.*?;base64,/, ''),
-        receiptMimeType: mimeType,
-        companyId: user.company.id,
-      }).then(matchResult => {
-        setReceiptShare(prev => prev ? { ...prev, step: 'result', matchResult } : null);
-      }).catch(err => {
-        setReceiptShare(prev => prev ? { ...prev, step: 'result', matchResult: { confidence: 'none', extractedReference: null, candidateVouchers: [] }, errorMsg: err.message } : null);
-      });
+
+      // Helper: route a confirmed context to the target confirmation modal.
+      const _routeCtx = (_ctx) => {
+        setPendingShareForConfirmation({ type: _ctx.type, entityId: _ctx.entityId, suspenseId: _ctx.suspenseId, receipt: { dataUrl, mimeType, fileName: fileName || '' } });
+        if (_ctx.type === 'topup' || _ctx.type === 'advance') {
+          setSuspenseDetailId(_ctx.suspenseId);
+          setCurrentPage('suspense-detail');
+          try { localStorage.setItem('relish_page', 'suspense-detail'); } catch {}
+        } else if (_ctx.type === 'voucher') {
+          setCurrentPage('awaiting_payment');
+          try { localStorage.setItem('relish_page', 'awaiting_payment'); } catch {}
+        }
+      };
+
+      // Helper: fall through to generic reconcile flow.
+      const _runReconcile = () => {
+        setReceiptShare({ step: 'matching', mimeType, base64Data: dataUrl });
+        api.matchReceiptToVoucher({
+          requestedBy: user.id,
+          receiptData: dataUrl.replace(/^data:.*?;base64,/, ''),
+          receiptMimeType: mimeType,
+          companyId: user.company.id,
+        }).then(matchResult => {
+          setReceiptShare(prev => prev ? { ...prev, step: 'result', matchResult } : null);
+        }).catch(err => {
+          setReceiptShare(prev => prev ? { ...prev, step: 'result', matchResult: { confidence: 'none', extractedReference: null, candidateVouchers: [] }, errorMsg: err.message } : null);
+        });
+      };
+
+      // 1. Fast path: localStorage (same device — context was set by Pay Now on this device).
+      try {
+        const _rawCtx = localStorage.getItem('relish_share_context');
+        if (_rawCtx) {
+          const _ctx = JSON.parse(_rawCtx);
+          if (_ctx && _ctx.expires > Date.now()) {
+            localStorage.removeItem('relish_share_context');
+            _routeCtx(_ctx);
+            return;
+          }
+          localStorage.removeItem('relish_share_context'); // expired
+        }
+      } catch {}
+
+      // 2. Slow path: server-side context (cross-device — Pay Now was open on another
+      //    device: desktop, tablet, or a different phone). consume-once GET clears it.
+      api.consumePendingShareContext(user.id)
+        .then(({ context }) => { if (context) { _routeCtx(context); } else { _runReconcile(); } })
+        .catch(() => { _runReconcile(); });
     };
 
     // Detect incoming Web Share Target redirect: service worker redirects here
@@ -10899,10 +11038,21 @@ const App = () => {
         .then(r => r.ok ? r.json() : null)
         .then(data => {
           if (data && data.mimeType && data.base64Data) {
-            window.onReceiptShared({ mimeType: data.mimeType, base64Data: data.base64Data });
+            window.onReceiptShared({ mimeType: data.mimeType, base64Data: data.base64Data, fileName: data.fileName || '' });
           }
         })
         .catch(err => console.warn('[share-target] Failed to retrieve pending share:', err.message));
+    }
+
+    // Check for a receipt the native Android wrapper tried to share before the PWA
+    // was ready to handle it.  When the wrapper fires the share intent and
+    // window.onReceiptShared is not yet registered (app still loading / cold start),
+    // it sets window._pendingSharedReceipt instead.  We consume it here once the
+    // handler is registered so no share is ever silently dropped.
+    if (window._pendingSharedReceipt) {
+      const _p = window._pendingSharedReceipt;
+      window._pendingSharedReceipt = null; // consume-once
+      window.onReceiptShared({ mimeType: _p.mimeType, base64Data: _p.base64Data, fileName: _p.fileName || '' });
     }
 
     return () => { window.onReceiptShared = null; };
