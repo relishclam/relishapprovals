@@ -5145,19 +5145,18 @@ app.post('/api/receipts/match-voucher', async (req, res) => {
   const { requestedBy, receiptData, receiptMimeType, companyId, fileName } = req.body;
 
   if (!requestedBy)
-    return res.status(400).json({ error: 'requestedBy is required' });
+    return res.status(400).json({ error: true, message: 'requestedBy is required' });
   if (!receiptData)
-    return res.status(400).json({ error: 'receiptData (base64) is required' });
+    return res.status(400).json({ error: true, message: 'receiptData (base64) is required' });
   if (!receiptMimeType)
-    return res.status(400).json({ error: 'receiptMimeType is required' });
+    return res.status(400).json({ error: true, message: 'receiptMimeType is required' });
   if (!companyId)
-    return res.status(400).json({ error: 'companyId is required' });
+    return res.status(400).json({ error: true, message: 'companyId is required' });
 
   // Auth: only Accounts, Admin, or Super Admin may use this endpoint.
-  // (Same set of roles that interact with the payment queue.)
   const actor = await getActorRole(requestedBy);
   if (actor.role !== 'accounts' && actor.role !== 'admin' && !actor.is_super_admin)
-    return res.status(403).json({ error: 'Only Accounts or Admin users can match receipts to vouchers' });
+    return res.status(403).json({ error: true, message: 'Only Accounts or Admin users can match receipts to vouchers', retryable: false });
 
   if (!receiptMimeType.startsWith('image/') && receiptMimeType !== 'application/pdf') {
     return res.status(400).json({
@@ -5171,7 +5170,7 @@ app.post('/api/receipts/match-voucher', async (req, res) => {
   try {
     fileBuffer = Buffer.from(receiptData, 'base64');
   } catch {
-    return res.status(400).json({ error: 'receiptData is not valid base64' });
+    return res.status(400).json({ error: true, message: 'receiptData is not valid base64', retryable: false });
   }
 
   try {
@@ -5179,9 +5178,7 @@ app.post('/api/receipts/match-voucher', async (req, res) => {
     return res.json(result);
   } catch (err) {
     // Retryable = ONLY transient service failures: rate-limit (429) or server errors (5xx)
-    // and low-level network resets.  Everything else — content-policy rejection, bad API
-    // key (401), bad request (400), corrupt PDF, unsupported MIME — is NOT retryable
-    // because the same input will produce the same failure on every retry.
+    // and low-level network resets.  Everything else is not retryable.
     const retryable =
       /openai api error (429|5\d{2})\b/i.test(err.message) ||
       /econnreset|econnrefused|etimedout|network timeout/i.test(err.message);
@@ -5599,36 +5596,53 @@ async function _extractImageText(buffer, mimeType) {
   const base64 = buffer.toString('base64');
   const dataUrl = `data:${mimeType};base64,${base64}`;
 
-  const response = await fetch('https://api.openai.com/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: 'gpt-4o',
-      max_tokens: 800,
-      messages: [
-        {
-          role: 'user',
-          content: [
-            {
-              type: 'text',
-              text:
-                'Extract ALL text visible in this payment receipt. Return only the raw extracted text, ' +
-                'preserving line breaks where meaningful. Pay special attention to any field labelled ' +
-                '"Note", "Remarks", "Narration", "Reference", or similar that may contain a voucher ' +
-                'code beginning with "VCH" followed by numbers (e.g. "VCH-2026-27-00507" or "VCH 510").',
-            },
-            {
-              type: 'image_url',
-              image_url: { url: dataUrl, detail: 'high' },
-            },
-          ],
-        },
-      ],
-    }),
-  });
+  // 50-second hard timeout — gives GPT-4o Vision up to 50s before we throw a
+  // clear "timed out" error.  This fires before Vercel's 60s function limit so
+  // the caller gets a clean JSON 503 instead of a truncated HTML 504 page.
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 50000);
+
+  let response;
+  try {
+    response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      signal: controller.signal,
+      body: JSON.stringify({
+        model: 'gpt-4o',
+        max_tokens: 800,
+        messages: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'text',
+                text:
+                  'Extract ALL text visible in this payment receipt. Return only the raw extracted text, ' +
+                  'preserving line breaks where meaningful. Pay special attention to any field labelled ' +
+                  '"Note", "Remarks", "Narration", "Reference", or similar that may contain a voucher ' +
+                  'code beginning with "VCH" followed by numbers (e.g. "VCH-2026-27-00507" or "VCH 510").',
+              },
+              {
+                type: 'image_url',
+                image_url: { url: dataUrl, detail: 'high' },
+              },
+            ],
+          },
+        ],
+      }),
+    });
+  } catch (fetchErr) {
+    clearTimeout(timeout);
+    if (fetchErr.name === 'AbortError') {
+      throw new Error('OpenAI Vision timed out after 50 s — the image may be too large or the service is slow. Retry or select the voucher manually.');
+    }
+    throw fetchErr;
+  }
+  clearTimeout(timeout);
 
   if (!response.ok) {
     const body = await response.text();

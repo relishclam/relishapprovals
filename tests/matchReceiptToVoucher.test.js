@@ -327,21 +327,79 @@ console.log('\n── _extractPdfText error-path (corrupt buffers must throw) ')
     process.exitCode = 1;
   }
 
-  console.log(`
-── Integration test results ─────────────────────────────
-  ✅  Item 1: HDFC NEFT PDF → pdf-parse extracted 267 chars, VCH 437 found
-  ✅  Item 2: Canara Bank PDF → image-based (page-markers only, 28 chars)
-              confidence:'none' returned correctly — no false positives
-  ✅  Item 3: Real JPEG (UPI/GPay screenshot) → GPT-4o Vision extracted
-              378 chars including "Voucher VCH-2026-27-00514" (dash format)
-  ✅  Item 4: Live matchReceiptToVoucher() → confidence:'high' confirmed for
-              VCH-2026-27-00514 (relish-foods, completed, no receipt yet)
-              matchedVoucherId: 3371d42c-1d30-41f4-9090-869446648d90
-  ✅  Item 5: Bad API key → throws Error (not confidence:'none')
+  // ---------------------------------------------------------------------------
+  // 6. Live integration tests (require OPENAI_API_KEY + running server)
+  //    Run with: LIVE=1 node tests/matchReceiptToVoucher.test.js
+  // ---------------------------------------------------------------------------
+  if (process.env.LIVE !== '1') {
+    console.log('\n── Integration tests skipped (set LIVE=1 to run) ────────\n');
+    return;
+  }
 
-  ⬜  Federal Bank PDF text layer — not tested yet (likely image-based
-      like Canara; scope render-fallback as fast-follow if confirmed)
+  console.log('\n── Live integration tests ────────────────────────────────');
 
-  matchReceiptToVoucher is verified end-to-end. Safe to wire into UI.
-─────────────────────────────────────────────────────────`);
+  // 6a. OpenAI key present
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    console.error('  ❌  OPENAI_API_KEY not set — image OCR will always fail in production');
+    process.exitCode = 1;
+    return;
+  }
+  console.log('  ✅  OPENAI_API_KEY present (starts with', apiKey.slice(0, 10) + '...)');
+
+  // 6b. pdf-parse loads and extracts text from a minimal text-based PDF
+  {
+    const minPdf = [
+      '%PDF-1.4',
+      '1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj',
+      '2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj',
+      '3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>endobj',
+      '4 0 obj<</Length 44>>',
+      'stream',
+      'BT /F1 12 Tf 100 700 Td (VCH-2026-27-00123) Tj ET',
+      'endstream',
+      'endobj',
+      '5 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj',
+      'xref\n0 6\n0000000000 65535 f \n0000000009 00000 n \n0000000058 00000 n \n0000000115 00000 n \n0000000266 00000 n \n0000000360 00000 n ',
+      'trailer<</Size 6/Root 1 0 R>>',
+      'startxref\n441',
+      '%%EOF',
+    ].join('\n');
+
+    try {
+      const text = await _extractPdfText(Buffer.from(minPdf));
+      const hits = extractVchNumbers(text);
+      if (hits.length === 1 && hits[0].seq === 123) {
+        console.log('  ✅  pdf-parse: text-based PDF → extracted VCH-2026-27-00123 correctly');
+      } else {
+        console.error('  ❌  pdf-parse: extracted text did not contain VCH ref. Got:', JSON.stringify(text.slice(0, 100)));
+        process.exitCode = 1;
+      }
+    } catch (e) {
+      console.error('  ❌  pdf-parse threw on valid PDF:', e.message);
+      process.exitCode = 1;
+    }
+  }
+
+  // 6c. OpenAI Vision: send a minimal valid PNG and verify API connectivity
+  //     (blank image is expected — this test just confirms key + network + model access)
+  {
+    // Known-good 1×1 white PNG (base64)
+    const whitePng = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
+    try {
+      const text = await require('../server-supabase')._testHelpers._extractImageText(whitePng, 'image/png');
+      console.log('  ✅  OpenAI Vision API reachable — returned', text.length, 'chars for white PNG');
+    } catch (e) {
+      console.error('  ❌  OpenAI Vision call failed:', e.message);
+      if (/api key/i.test(e.message) || /401/.test(e.message)) {
+        console.error('       → OPENAI_API_KEY is invalid or not set in Vercel environment variables');
+      }
+      if (/timed out/i.test(e.message)) {
+        console.error('       → Function timeout — check Vercel maxDuration setting in vercel.json');
+      }
+      process.exitCode = 1;
+    }
+  }
+
+  console.log('\n─────────────────────────────────────────────────────────\n');
 })();

@@ -144,6 +144,90 @@ const computeVchKey = (serialNumber) => {
   return `VCH${seq}`;
 };
 
+// Download a composite QR card (QR + payee/amount details) as a PNG.
+// Used by all three Pay Now modals so users can upload to GPay → Scan from Gallery.
+async function downloadQrCard({ qrSrc, serial, payeeName, amount, upiId, label }) {
+  const W = 360;
+  const amtStr = '\u20B9' + parseFloat(amount).toLocaleString('en-IN', { minimumFractionDigits: 2 });
+
+  // Fetch QR image as a blob so the canvas is never CORS-tainted
+  let qrImg;
+  try {
+    const blob = await fetch(qrSrc).then(r => { if (!r.ok) throw new Error('fetch'); return r.blob(); });
+    qrImg = await new Promise((res, rej) => {
+      const i = new Image();
+      i.onload = () => res(i);
+      i.onerror = rej;
+      i.src = URL.createObjectURL(blob);
+    });
+  } catch {
+    // CORS or network failure — open image URL so user can long-press save
+    window.open(qrSrc, '_blank');
+    return;
+  }
+
+  const QR = 220, headerH = 58, PAD = 20;
+  const H = headerH + 58 + QR + 72;
+  const canvas = document.createElement('canvas');
+  canvas.width = W;
+  canvas.height = H;
+  const ctx = canvas.getContext('2d');
+
+  // White background
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, W, H);
+
+  // Green header bar
+  ctx.fillStyle = '#16a34a';
+  ctx.fillRect(0, 0, W, headerH);
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 16px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText((label || 'Pay Now') + ' \u2014 ' + serial, W / 2, headerH / 2);
+
+  // Payee name
+  ctx.fillStyle = '#111827';
+  ctx.font = 'bold 15px sans-serif';
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillText(payeeName, W / 2, headerH + 28);
+
+  // Amount
+  ctx.fillStyle = '#16a34a';
+  ctx.font = 'bold 24px sans-serif';
+  ctx.fillText(amtStr, W / 2, headerH + 54);
+
+  // QR image
+  const qrX = (W - QR) / 2;
+  const qrY = headerH + 64;
+  // Light border rect behind QR
+  ctx.strokeStyle = '#e5e7eb';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(qrX - 1, qrY - 1, QR + 2, QR + 2);
+  ctx.drawImage(qrImg, qrX, qrY, QR, QR);
+
+  // UPI ID
+  ctx.fillStyle = '#6b7280';
+  ctx.font = '12px monospace';
+  ctx.fillText(upiId, W / 2, qrY + QR + 22);
+
+  // GPay usage hint
+  ctx.fillStyle = '#9ca3af';
+  ctx.font = '11px sans-serif';
+  ctx.fillText('GPay \u2192 Pay \u2192 Scan QR from Gallery', W / 2, qrY + QR + 44);
+  ctx.fillText('(For payments under \u20B92,000 only)', W / 2, qrY + QR + 60);
+
+  // Outer border
+  ctx.strokeStyle = '#d1d5db';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(0.5, 0.5, W - 1, H - 1);
+
+  const a = document.createElement('a');
+  a.download = 'pay-' + serial.replace(/[\/\\]/g, '-') + '.png';
+  a.href = canvas.toDataURL('image/png');
+  a.click();
+}
+
 // Number to Words Converter for Indian Rupees
 const numberToWordsIndian = (num) => {
   if (num === undefined || num === null || isNaN(num)) return '';
@@ -293,7 +377,7 @@ const api = {
   recalculateSuspenseBalance: (suspenseId, requestedBy) => fetch(`${API_BASE}/suspense-vouchers/${suspenseId}/recalculate-balance`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ requestedBy }) }).then(r => r.json()),
   // Attachments
   matchReceiptToVoucher: (data) => fetch(`${API_BASE}/receipts/match-voucher`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
-    .then(async r => { const json = await r.json(); if (!r.ok) throw new Error(json.message || 'Match request failed'); return json; }),
+    .then(async r => { const json = await r.json(); if (!r.ok) throw new Error(json.message || json.error || 'Match request failed'); return json; }),
   // Payment batches (Migration 032)
   getPendingBatches: (companyId) => fetch(`${API_BASE}/companies/${companyId}/batches`).then(r => r.json()),
   createBatch: (data) => fetch(`${API_BASE}/batches`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
@@ -2711,65 +2795,6 @@ const VoucherList = ({ filter }) => {
   const hasSearchFilters = searchNum || searchHead || searchPayee || searchDate || searchFrom || searchTo;
 
   // ── Android UPI Bridge ──────────────────────────────────────────────────────
-  // Keep a ref pointing at current context/state values so window.onUpiResult
-  // always reads fresh values without needing to be re-registered each render.
-  const upiCtxRef = React.useRef({});
-  upiCtxRef.current = { user, vouchers, addToast, refreshVouchers,
-    setPayNowVoucher, setMarkPaidVoucher, setShowMarkPaidModal, setPaymentReference };
-
-  useEffect(() => {
-    // Register the global handler that the Android wrapper calls after the
-    // native UPI intent returns.  Runs once on mount; reads live state via ref.
-    window.onUpiResult = async function(result) {
-      // Cancel the visibilitychange fallback — onUpiResult took precedence.
-      if (window._upiVisibilityHandler) {
-        document.removeEventListener('visibilitychange', window._upiVisibilityHandler);
-        window._upiVisibilityHandler = null;
-      }
-
-      const pending = window._upiPending;
-      if (!pending) return;
-      window._upiPending = null; // clear immediately — prevent double-processing
-
-      const { user: u, vouchers: vList, addToast: toast, refreshVouchers: refresh,
-        setPayNowVoucher: spnv, setMarkPaidVoucher: smpv,
-        setShowMarkPaidModal: ssmp, setPaymentReference: spr } = upiCtxRef.current;
-
-      if (result.status === 'SUCCESS') {
-        try {
-          await api.markPaid(pending.voucherId, u.id, result.txnId || result.txnRef || '', '', null, null);
-          toast('✓ Payment confirmed — ' + pending.voucherSerial + ' marked as paid', 'success');
-          spnv(null);
-          refresh();
-        } catch (err) {
-          // Payment succeeded at the bank but the DB update failed.
-          // Open the Mark Paid panel with UTR pre-filled for manual confirmation.
-          const v = vList.find(x => x.id === pending.voucherId) || { id: pending.voucherId };
-          smpv(v);
-          spr(result.txnId || result.txnRef || '');
-          ssmp(true);
-          toast('Payment succeeded — please confirm manually', 'warning');
-        }
-      } else if (result.status === 'FAILURE') {
-        if (result.error === 'NO_UPI_APP') {
-          toast('No UPI app found on this device', 'error');
-        } else {
-          toast('✗ Payment failed or was cancelled', 'error');
-        }
-        // Leave Pay Now modal open so the user can retry.
-      } else {
-        // UNKNOWN — UPI app returned no data (GPay pending-processing case).
-        toast('Payment status unclear — please mark manually', 'warning');
-        const v = vList.find(x => x.id === pending.voucherId) || { id: pending.voucherId };
-        smpv(v);
-        ssmp(true);
-      }
-    };
-
-    return () => { delete window.onUpiResult; };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-  // ── /Android UPI Bridge ─────────────────────────────────────────────────────
-
   // Load payees and heads for edit modal
   useEffect(() => {
     api.getPayees(user.company.id).then(setPayees);
@@ -4236,7 +4261,6 @@ const VoucherList = ({ filter }) => {
       {/* Pay Now Modal */}
       {payNowVoucher && (() => {
         const v = payNowVoucher;
-        const isMobile = /Mobi/i.test(navigator.userAgent);
         const upiUrl = v.payment_mode === 'UPI' && v.payee_upi_id
           ? `upi://pay?${new URLSearchParams({ pa: v.payee_upi_id, pn: v.payee_name, am: parseFloat(v.amount).toFixed(2), cu: 'INR', tn: `Voucher ${v.serial_number}` }).toString()}`
           : null;
@@ -4269,50 +4293,17 @@ const VoucherList = ({ filter }) => {
                   </div>
                 )}
 
-                {v.payment_mode === 'UPI' && v.payee_upi_id && isMobile && (
+                {v.payment_mode === 'UPI' && v.payee_upi_id && (
                   <div style={{textAlign:'center'}}>
-                    <p style={{fontSize:'0.85rem',color:'#555',marginBottom:'1rem'}}>Tap below to open your UPI app with details pre-filled.</p>
-                    <a
-                      href={upiUrl}
-                      onClick={() => {
-                        // Step 1: store pending state so onUpiResult (or the
-                        // visibilitychange fallback) knows which voucher to act on.
-                        window._upiPending = {
-                          voucherId:       v.id,
-                          voucherSerial:   v.serial_number,
-                          amount:          v.amount,
-                          paidFromAccount: v.paid_from_account || null
-                        };
-                        // Step 3: register visibilitychange fallback in case the
-                        // Android wrapper does not call onUpiResult (rare).
-                        if (!window._upiVisibilityHandler) {
-                          document.addEventListener('visibilitychange',
-                            window._upiVisibilityHandler = function() {
-                              if (document.visibilityState === 'visible' && window._upiPending) {
-                                const p = window._upiPending;
-                                window._upiPending = null;
-                                document.removeEventListener('visibilitychange', window._upiVisibilityHandler);
-                                window._upiVisibilityHandler = null;
-                                const ctx = upiCtxRef.current;
-                                const voucher = ctx.vouchers.find(x => x.id === p.voucherId) || { id: p.voucherId };
-                                ctx.setMarkPaidVoucher(voucher);
-                                ctx.setShowMarkPaidModal(true);
-                              }
-                            }
-                          );
-                        }
-                      }}
-                      style={{display:'inline-block',background:'#16a34a',color:'white',padding:'0.75rem 2rem',borderRadius:'8px',fontWeight:700,textDecoration:'none',fontSize:'1rem'}}
-                    >Open UPI App →</a>
-                    <p style={{fontSize:'0.75rem',color:'#888',marginTop:'0.75rem'}}>UPI ID: <code>{v.payee_upi_id}</code></p>
-                  </div>
-                )}
-
-                {v.payment_mode === 'UPI' && v.payee_upi_id && !isMobile && (
-                  <div style={{textAlign:'center'}}>
-                    <p style={{fontSize:'0.85rem',color:'#555',marginBottom:'0.75rem'}}>Scan this QR code with any UPI app on your phone.</p>
+                    <p style={{fontSize:'0.85rem',color:'#555',marginBottom:'0.75rem'}}>Scan this QR code with a second device using any UPI app.</p>
                     <img src={qrSrc} alt="UPI QR Code" style={{width:220,height:220,border:'1px solid #e5e7eb',borderRadius:'8px'}} />
-                    <p style={{fontSize:'0.75rem',color:'#888',marginTop:'0.75rem'}}>UPI ID: <code>{v.payee_upi_id}</code></p>
+                    <p style={{fontSize:'0.75rem',color:'#888',marginTop:'0.5rem'}}>UPI ID: <code>{v.payee_upi_id}</code></p>
+                    <button
+                      className="btn btn-sm"
+                      style={{marginTop:'0.65rem',background:'#f0fdf4',border:'1px solid #86efac',color:'#15803d',fontWeight:600,borderRadius:'6px',padding:'6px 14px',cursor:'pointer',fontSize:'0.82rem'}}
+                      onClick={() => downloadQrCard({ qrSrc, serial: v.serial_number, payeeName: v.payee_name, amount: v.amount, upiId: v.payee_upi_id, label: 'Pay Now' })}
+                    >💾 Save QR to Phone</button>
+                    <p style={{fontSize:'0.72rem',color:'#9ca3af',marginTop:'0.35rem'}}>Upload in GPay → Pay → Scan QR (under ₹2,000 only)</p>
                   </div>
                 )}
 
@@ -8994,7 +8985,6 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
 
       {/* ── Initial Advance Pay Now Modal ───────────────────────────────────── */}
       {payNowAdvance && sv && (() => {
-        const isMobile = /Mobi/i.test(navigator.userAgent);
         const payee = sv.staff_payee;
         const upiUrl = sv.payment_mode === 'UPI' && payee?.upi_id
           ? `upi://pay?${new URLSearchParams({ pa: payee.upi_id, pn: payee.name, am: parseFloat(sv.advance_amount).toFixed(2), cu: 'INR', tn: `Advance ${sv.serial_number}` }).toString()}`
@@ -9025,18 +9015,17 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
                     ⚠️ No UPI ID recorded for this staff payee. Edit the payee to add their UPI ID.
                   </div>
                 )}
-                {sv.payment_mode === 'UPI' && payee?.upi_id && isMobile && (
+                {sv.payment_mode === 'UPI' && payee?.upi_id && (
                   <div style={{ textAlign: 'center' }}>
-                    <p style={{ fontSize: '0.85rem', color: '#555', marginBottom: '1rem' }}>Tap below to open your UPI app with details pre-filled.</p>
-                    <a href={upiUrl} style={{ display: 'inline-block', background: '#16a34a', color: 'white', padding: '0.75rem 2rem', borderRadius: '8px', fontWeight: 700, textDecoration: 'none', fontSize: '1rem' }}>Open UPI App →</a>
-                    <p style={{ fontSize: '0.75rem', color: '#888', marginTop: '0.75rem' }}>UPI ID: <code>{payee.upi_id}</code></p>
-                  </div>
-                )}
-                {sv.payment_mode === 'UPI' && payee?.upi_id && !isMobile && (
-                  <div style={{ textAlign: 'center' }}>
-                    <p style={{ fontSize: '0.85rem', color: '#555', marginBottom: '0.75rem' }}>Scan this QR code with any UPI app on your phone.</p>
+                    <p style={{ fontSize: '0.85rem', color: '#555', marginBottom: '0.75rem' }}>Scan this QR code with a second device using any UPI app.</p>
                     <img src={qrSrc} alt="UPI QR Code" style={{ width: 220, height: 220, border: '1px solid #e5e7eb', borderRadius: '8px' }} />
-                    <p style={{ fontSize: '0.75rem', color: '#888', marginTop: '0.75rem' }}>UPI ID: <code>{payee.upi_id}</code></p>
+                    <p style={{ fontSize: '0.75rem', color: '#888', marginTop: '0.5rem' }}>UPI ID: <code>{payee.upi_id}</code></p>
+                    <button
+                      className="btn btn-sm"
+                      style={{ marginTop: '0.65rem', background: '#f0fdf4', border: '1px solid #86efac', color: '#15803d', fontWeight: 600, borderRadius: '6px', padding: '6px 14px', cursor: 'pointer', fontSize: '0.82rem' }}
+                      onClick={() => downloadQrCard({ qrSrc, serial: sv.serial_number, payeeName: payee.name, amount: sv.advance_amount, upiId: payee.upi_id, label: 'Advance' })}
+                    >💾 Save QR to Phone</button>
+                    <p style={{ fontSize: '0.72rem', color: '#9ca3af', marginTop: '0.35rem' }}>Upload in GPay → Pay → Scan QR (under ₹2,000 only)</p>
                   </div>
                 )}
                 {sv.payment_mode === 'Account Transfer' && (
@@ -9124,7 +9113,6 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
       {/* ── Top-Up Pay Now Modal ─────────────────────────────────────────── */}
       {payNowTopup && (() => {
         const v = payNowTopup;
-        const isMobile = /Mobi/i.test(navigator.userAgent);
         const upiUrl = v.payment_mode === 'UPI' && v.payee_upi_id
           ? `upi://pay?${new URLSearchParams({ pa: v.payee_upi_id, pn: v.payee_name, am: parseFloat(v.amount).toFixed(2), cu: 'INR', tn: `Top-Up ${v.serial_number}` }).toString()}`
           : null;
@@ -9155,18 +9143,17 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
                     ⚠️ No UPI ID recorded for this staff payee. Edit the payee to add their UPI ID.
                   </div>
                 )}
-                {v.payment_mode === 'UPI' && v.payee_upi_id && isMobile && (
+                {v.payment_mode === 'UPI' && v.payee_upi_id && (
                   <div style={{ textAlign: 'center' }}>
-                    <p style={{ fontSize: '0.85rem', color: '#555', marginBottom: '1rem' }}>Tap below to open your UPI app with details pre-filled.</p>
-                    <a href={upiUrl} style={{ display: 'inline-block', background: '#16a34a', color: 'white', padding: '0.75rem 2rem', borderRadius: '8px', fontWeight: 700, textDecoration: 'none', fontSize: '1rem' }}>Open UPI App →</a>
-                    <p style={{ fontSize: '0.75rem', color: '#888', marginTop: '0.75rem' }}>UPI ID: <code>{v.payee_upi_id}</code></p>
-                  </div>
-                )}
-                {v.payment_mode === 'UPI' && v.payee_upi_id && !isMobile && (
-                  <div style={{ textAlign: 'center' }}>
-                    <p style={{ fontSize: '0.85rem', color: '#555', marginBottom: '0.75rem' }}>Scan this QR code with any UPI app on your phone.</p>
+                    <p style={{ fontSize: '0.85rem', color: '#555', marginBottom: '0.75rem' }}>Scan this QR code with a second device using any UPI app.</p>
                     <img src={qrSrc} alt="UPI QR Code" style={{ width: 220, height: 220, border: '1px solid #e5e7eb', borderRadius: '8px' }} />
-                    <p style={{ fontSize: '0.75rem', color: '#888', marginTop: '0.75rem' }}>UPI ID: <code>{v.payee_upi_id}</code></p>
+                    <p style={{ fontSize: '0.75rem', color: '#888', marginTop: '0.5rem' }}>UPI ID: <code>{v.payee_upi_id}</code></p>
+                    <button
+                      className="btn btn-sm"
+                      style={{ marginTop: '0.65rem', background: '#f0fdf4', border: '1px solid #86efac', color: '#15803d', fontWeight: 600, borderRadius: '6px', padding: '6px 14px', cursor: 'pointer', fontSize: '0.82rem' }}
+                      onClick={() => downloadQrCard({ qrSrc, serial: v.serial_number, payeeName: v.payee_name, amount: v.amount, upiId: v.payee_upi_id, label: 'Top-Up' })}
+                    >💾 Save QR to Phone</button>
+                    <p style={{ fontSize: '0.72rem', color: '#9ca3af', marginTop: '0.35rem' }}>Upload in GPay → Pay → Scan QR (under ₹2,000 only)</p>
                   </div>
                 )}
                 {v.payment_mode === 'Account Transfer' && (
@@ -10348,7 +10335,7 @@ const ReconcileReceipts = () => {
       });
       setRows(prev => prev.map(r => r.id === rowId ? { ...r, status: 'done', matchResult } : r));
     } catch (err) {
-      setRows(prev => prev.map(r => r.id === rowId ? { ...r, status: 'done', matchResult: { confidence: 'none', extractedReference: null, candidateVouchers: [], errorMsg: err.message } } : r));
+      setRows(prev => prev.map(r => r.id === rowId ? { ...r, status: 'done', matchResult: { error: true, confidence: 'none', extractedReference: null, candidateVouchers: [], errorMsg: err.message } } : r));
     }
   };
 
