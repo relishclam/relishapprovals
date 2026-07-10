@@ -5622,19 +5622,31 @@ async function _extractImageText(buffer, mimeType) {
         max_tokens: 800,
         messages: [
           {
+            // System message: frame this as financial OCR so the model does not
+            // refuse due to seeing a profile photo (e.g. in GPay screenshots).
+            role: 'system',
+            content:
+              'You are a financial document OCR assistant for an internal payment approval system. ' +
+              'Your only job is to extract the printed/displayed text from bank receipts, UPI payment ' +
+              'screenshots, and transaction acknowledgements. Output only the raw text — no analysis, ' +
+              'no commentary. Never refuse a text-extraction request on a financial document.',
+          },
+          {
             role: 'user',
             content: [
               {
                 type: 'text',
                 text:
-                  'Extract ALL text visible in this payment receipt. Return only the raw extracted text, ' +
-                  'preserving line breaks where meaningful. Pay special attention to any field labelled ' +
-                  '"Note", "Remarks", "Narration", "Reference", or similar that may contain a voucher ' +
-                  'code beginning with "VCH" followed by numbers (e.g. "VCH-2026-27-00507" or "VCH 510").',
+                  'Extract ALL visible text from this payment receipt or bank transaction screenshot. ' +
+                  'Return only the raw text, preserving line breaks. Pay special attention to: ' +
+                  'transaction/reference/UTR numbers, UPI IDs, amounts, bank names, and any field ' +
+                  'containing "VCH" followed by numbers (e.g. "VCH-2026-27-00448" or "VCH 510").',
               },
               {
                 type: 'image_url',
-                image_url: { url: dataUrl, detail: 'high' },
+                // Use 'low' detail — sufficient for text OCR and avoids content-policy
+                // rejections triggered by profile photos in GPay/PhonePe screenshots.
+                image_url: { url: dataUrl, detail: 'low' },
               },
             ],
           },
@@ -5658,15 +5670,19 @@ async function _extractImageText(buffer, mimeType) {
   const json = await response.json();
   const content = json.choices?.[0]?.message?.content;
 
-  // An empty or absent content field indicates an API-level failure (e.g.
-  // rate-limit finish_reason, content-policy rejection, malformed response)
-  // — NOT a receipt with no visible text.  Throw so the caller surfaces this
-  // as an error rather than silently returning confidence:'none'.
   if (content == null || content.trim() === '') {
     const finishReason = json.choices?.[0]?.finish_reason ?? 'unknown';
     throw new Error(
-      `OpenAI Vision returned no text content (finish_reason: ${finishReason}). ` +
-        'This indicates a rate-limit, content-policy rejection, or malformed response — not an empty receipt.',
+      `OpenAI Vision returned no text content (finish_reason: ${finishReason}).`,
+    );
+  }
+
+  // Detect content-policy refusal (e.g. "I'm sorry, I can't assist with that")
+  // and throw a clear error rather than silently returning a non-OCR string.
+  if (/^I'?m sorry[,.]?\s|I can'?t assist|I cannot assist|I'?m unable to/i.test(content.trim())) {
+    throw new Error(
+      `OpenAI refused to process this image (content policy). ` +
+      `Try re-uploading the receipt cropped to remove any faces or profile photos.`
     );
   }
 
