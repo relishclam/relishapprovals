@@ -5600,15 +5600,17 @@ async function _extractImageText(buffer, mimeType) {
   const base64 = buffer.toString('base64');
   const dataUrl = `data:${mimeType};base64,${base64}`;
 
-  // 50-second hard timeout — gives GPT-4o Vision up to 50s before we throw a
-  // clear "timed out" error.  This fires before Vercel's 60s function limit so
-  // the caller gets a clean JSON 503 instead of a truncated HTML 504 page.
+  // Use Node.js 18+ native fetch (globalThis.fetch) rather than the module-level
+  // node-fetch v2 variable.  node-fetch v2 + native AbortController has known
+  // compatibility issues on some runtimes (e.g. Vercel serverless).
+  const nativeFetch = globalThis.fetch || fetch;
+
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 50000);
 
   let response;
   try {
-    response = await fetch('https://api.openai.com/v1/chat/completions', {
+    response = await nativeFetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${apiKey}`,
@@ -5919,8 +5921,9 @@ app.post('/api/companies/:companyId/retrospective-payment-scan', async (req, res
       let scanError = null;
 
       try {
-        // Download the file from Supabase public storage
-        const fileRes = await fetch(att.public_url);
+        // Download from Supabase public storage using native fetch (not node-fetch v2)
+        const nativeFetch = globalThis.fetch || fetch;
+        const fileRes = await nativeFetch(att.public_url);
         if (!fileRes.ok) throw new Error(`Download failed (HTTP ${fileRes.status})`);
         const arrayBuf = await fileRes.arrayBuffer();
         const fileBuffer = Buffer.from(arrayBuf);
