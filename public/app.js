@@ -2742,6 +2742,36 @@ const VoucherList = ({ filter }) => {
   const [showPrintModal, setShowPrintModal] = useState(false);
   const [payNowVoucher, setPayNowVoucher] = useState(null);
   const [showRetroScan, setShowRetroScan] = useState(false);
+  const [verifyReceiptVoucher, setVerifyReceiptVoucher] = useState(null); // single-voucher verify
+  const [verifyReceiptResult, setVerifyReceiptResult] = useState(null);  // scan result for that voucher
+  const [verifyReceiptLoading, setVerifyReceiptLoading] = useState(false);
+
+  const handleVerifyReceipt = async (v) => {
+    setVerifyReceiptVoucher(v);
+    setVerifyReceiptResult(null);
+    setVerifyReceiptLoading(true);
+    try {
+      const res = await api.retrospectiveScan(user.company.id, { requestedBy: user.id, voucherIds: [v.id] });
+      setVerifyReceiptResult((res.results || [])[0] || { voucherId: v.id, bestConfidence: 'none', attachments: [] });
+    } catch (e) {
+      setVerifyReceiptResult({ voucherId: v.id, bestConfidence: 'none', attachments: [], error: e.message });
+    }
+    setVerifyReceiptLoading(false);
+  };
+
+  const handleConfirmVerifiedPaid = async (result) => {
+    const best = (result.attachments || []).find(a => a.confidence === 'high') || (result.attachments || []).find(a => a.confidence === 'low');
+    try {
+      await api.retrospectiveScan(user.company.id, {
+        requestedBy: user.id,
+        confirmIds: [{ voucherId: result.voucherId, attachmentUrl: best?.publicUrl || null, utr: best?.utr || null, transferType: best?.transferType || null }]
+      });
+      addToast(`${verifyReceiptVoucher?.serial_number} marked as Paid ✅`, 'success');
+      setVerifyReceiptVoucher(null);
+      setVerifyReceiptResult(null);
+      refreshVouchers();
+    } catch (e) { addToast(e.message || 'Failed', 'error'); }
+  };
   const [printDateFrom, setPrintDateFrom] = useState('');
   const [printDateTo, setPrintDateTo] = useState('');
   const [showExcelModal, setShowExcelModal] = useState(false);
@@ -3717,6 +3747,10 @@ const VoucherList = ({ filter }) => {
                 {v.status === 'completed' && v.payment_mode === 'Account Transfer' && !v.is_suspense_settlement && (user.role === 'accounts' || user.isSuperAdmin) && (<button className="btn btn-sm" style={{background:'#16a34a',color:'white',border:'none',borderRadius:'6px',padding:'0.3rem 0.65rem',fontSize:'0.8rem',cursor:'pointer',fontWeight:600}} onClick={() => setPayNowVoucher(v)}>💳 Pay Now</button>)}
                 {/* Pre-paid suspense-settlement vouchers: show closed badge instead of payment buttons */}
                 {v.is_suspense_settlement && (v.status === 'completed' || v.status === 'paid') && (<span style={{background:'#ede9fe',color:'#6d28d9',border:'1px solid #c4b5fd',borderRadius:'6px',padding:'0.25rem 0.65rem',fontSize:'0.8rem',fontWeight:700,letterSpacing:'0.02em'}}>🔄 Pre-paid</span>)}
+                {/* Verify Receipt: visible on completed/awaiting_payment rows with attachment but no payment receipt */}
+                {(v.status === 'completed' || v.status === 'awaiting_payment') && !v.is_suspense_settlement && v.attachment_count > 0 && !v.payment_receipt_url && (user.role === 'accounts' || user.isSuperAdmin) && (
+                  <button className="btn btn-sm" style={{background:'#7c3aed',color:'white',border:'none',borderRadius:'6px',padding:'0.3rem 0.65rem',fontSize:'0.8rem',cursor:'pointer',fontWeight:600}} onClick={() => handleVerifyReceipt(v)} title="Scan uploaded attachment to check for payment proof">🔍 Verify</button>
+                )}
                 {/* Awaiting Payment → Admin opens UPI app or views bank details to make payment */}
                 {v.status === 'awaiting_payment' && v.payment_mode !== 'Cash' && (user.role === 'admin' || user.isSuperAdmin) && (<button className="btn btn-sm" style={{background:'#16a34a',color:'white',border:'none',borderRadius:'6px',padding:'0.3rem 0.65rem',fontSize:'0.8rem',cursor:'pointer',fontWeight:600}} onClick={() => setPayNowVoucher(v)}>💳 Pay Now</button>)}
                 {/* Awaiting Payment: WhatsApp share (any role) */}
@@ -4270,6 +4304,62 @@ const VoucherList = ({ filter }) => {
 
       {/* Retrospective Scan Modal */}
       {showRetroScan && <RetrospectiveScanModal onClose={() => setShowRetroScan(false)} />}
+
+      {/* Single-Voucher Verify Receipt Result Modal */}
+      {verifyReceiptVoucher && (
+        <div className="modal-overlay" onClick={() => { setVerifyReceiptVoucher(null); setVerifyReceiptResult(null); }}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{maxWidth:'440px'}}>
+            <div className="modal-header" style={{background:'#7c3aed',color:'white'}}>
+              <h3 className="modal-title" style={{color:'white'}}>🔍 Verify Receipt — {verifyReceiptVoucher.serial_number}</h3>
+              <button className="modal-close" style={{color:'white'}} onClick={() => { setVerifyReceiptVoucher(null); setVerifyReceiptResult(null); }}>×</button>
+            </div>
+            <div className="modal-body">
+              {verifyReceiptLoading && (
+                <div style={{textAlign:'center',padding:'2rem'}}>{Icons.loader}<p style={{color:'#6b7280',marginTop:'0.75rem',fontSize:'0.875rem'}}>Scanning attachment via GPT-4o Vision…</p></div>
+              )}
+              {!verifyReceiptLoading && verifyReceiptResult && (() => {
+                const r = verifyReceiptResult;
+                const best = (r.attachments || []).find(a => a.confidence === 'high') || (r.attachments || []).find(a => a.confidence === 'low');
+                if (r.error) return <div style={{background:'#fef2f2',border:'1px solid #fca5a5',borderRadius:'8px',padding:'0.75rem',color:'#991b1b',fontSize:'0.875rem'}}>⚠️ Scan failed: {r.error}</div>;
+                if (r.bestConfidence === 'high') return (
+                  <div>
+                    <div style={{background:'#f0fdf4',border:'2px solid #86efac',borderRadius:'10px',padding:'1rem',marginBottom:'1rem'}}>
+                      <div style={{fontWeight:700,color:'#166534',marginBottom:'0.5rem'}}>✅ Payment receipt found — HIGH confidence</div>
+                      {best?.extractedVchRef && <div style={{fontSize:'0.875rem',marginBottom:'4px'}}>📄 Voucher ref: <code>{best.extractedVchRef}</code></div>}
+                      {best?.utr && <div style={{fontSize:'0.875rem',marginBottom:'4px'}}>🔑 UTR / Txn ID: <code style={{fontWeight:700}}>{best.utr}</code></div>}
+                      {best?.transferType && <div style={{fontSize:'0.875rem',marginBottom:'4px'}}>🏦 Transfer type: <strong>{best.transferType}</strong></div>}
+                      {best?.fileName && <div style={{fontSize:'0.875rem'}}><a href={best.publicUrl} target="_blank" rel="noreferrer" style={{color:'#2563eb'}}>📎 View: {best.fileName}</a></div>}
+                    </div>
+                    <button className="btn btn-success" style={{width:'100%'}} onClick={() => handleConfirmVerifiedPaid(r)}>✅ Mark {verifyReceiptVoucher.serial_number} as Paid</button>
+                  </div>
+                );
+                if (r.bestConfidence === 'low') return (
+                  <div>
+                    <div style={{background:'#fefce8',border:'2px solid #fde68a',borderRadius:'10px',padding:'1rem',marginBottom:'1rem'}}>
+                      <div style={{fontWeight:700,color:'#713f12',marginBottom:'0.5rem'}}>⚠️ Partial match — LOW confidence</div>
+                      {best?.extractedVchRef && <div style={{fontSize:'0.875rem',marginBottom:'4px'}}>📄 Ref found: <code>{best.extractedVchRef}</code></div>}
+                      {best?.utr && <div style={{fontSize:'0.875rem',marginBottom:'4px'}}>🔑 UTR: <code>{best.utr}</code></div>}
+                      {best?.fileName && <div style={{fontSize:'0.875rem',marginBottom:'8px'}}><a href={best.publicUrl} target="_blank" rel="noreferrer" style={{color:'#2563eb'}}>📎 Review: {best.fileName}</a></div>}
+                      <div style={{fontSize:'0.82rem',color:'#92400e'}}>Review the attachment above before confirming.</div>
+                    </div>
+                    <button className="btn btn-success" style={{width:'100%'}} onClick={() => handleConfirmVerifiedPaid(r)}>✅ Confirm — Mark as Paid</button>
+                  </div>
+                );
+                return (
+                  <div style={{background:'#f9fafb',border:'1px solid #e5e7eb',borderRadius:'8px',padding:'1rem',textAlign:'center',color:'#6b7280',fontSize:'0.875rem'}}>
+                    <div style={{fontSize:'2rem',marginBottom:'0.5rem'}}>🔎</div>
+                    <div style={{fontWeight:600,marginBottom:'0.25rem'}}>No payment proof found in this attachment.</div>
+                    <div>The file doesn't contain recognisable payment confirmation text. Upload the actual bank receipt or GPay screenshot using the Upload File button.</div>
+                  </div>
+                );
+              })()}
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => { setVerifyReceiptVoucher(null); setVerifyReceiptResult(null); }}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Pay Now Modal */}
       {payNowVoucher && (() => {

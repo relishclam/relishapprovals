@@ -5833,7 +5833,7 @@ function _analysePaymentText(text) {
 // Scans attachments on vouchers that are still in 'awaiting_payment' or 'completed'
 // looking for bank receipts that prove payment was already made.
 app.post('/api/companies/:companyId/retrospective-payment-scan', async (req, res) => {
-  const { requestedBy, confirmIds } = req.body;
+  const { requestedBy, confirmIds, voucherIds } = req.body;
   const { companyId } = req.params;
 
   if (!requestedBy) return res.status(400).json({ error: true, message: 'requestedBy is required' });
@@ -5860,7 +5860,7 @@ app.post('/api/companies/:companyId/retrospective-payment-scan', async (req, res
   }
 
   // ── SCAN MODE: OCR all attachments on unpaid vouchers ────────────────────
-  const { data: vouchers, error: vErr } = await supabase
+  let query = supabase
     .from('vouchers')
     .select(`id, serial_number, amount, payment_mode, payee_name,
              voucher_attachments(id, public_url, file_name, mime_type)`)
@@ -5868,6 +5868,11 @@ app.post('/api/companies/:companyId/retrospective-payment-scan', async (req, res
     .in('status', ['awaiting_payment', 'completed'])
     .eq('is_suspense_settlement', false)
     .is('payment_receipt_url', null);
+  // Optional: scope scan to specific voucher IDs (single-voucher row button)
+  if (voucherIds && Array.isArray(voucherIds) && voucherIds.length > 0) {
+    query = query.in('id', voucherIds);
+  }
+  const { data: vouchers, error: vErr } = await query;
   if (vErr) return res.status(500).json({ error: true, message: vErr.message });
 
   const scannable = (vouchers || []).filter(v =>
