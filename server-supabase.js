@@ -5862,7 +5862,7 @@ app.post('/api/companies/:companyId/retrospective-payment-scan', async (req, res
   // ── SCAN MODE: OCR all attachments on unpaid vouchers ────────────────────
   let vQuery = supabase
     .from('vouchers')
-    .select('id, serial_number, amount, payment_mode, payee_name')
+    .select('id, serial_number, amount, payment_mode, payee_id')
     .eq('company_id', companyId)
     .in('status', ['awaiting_payment', 'completed'])
     .eq('is_suspense_settlement', false)
@@ -5896,6 +5896,13 @@ app.post('/api/companies/:companyId/retrospective-payment-scan', async (req, res
   const withAttachments = scannable.filter(v => (attsByVoucher[v.id] || []).length > 0);
   if (withAttachments.length === 0)
     return res.json({ results: [], message: 'No unpaid vouchers with attachments found.' });
+
+  // Fetch payee names for the vouchers we will scan
+  const payeeIds = [...new Set(withAttachments.map(v => v.payee_id).filter(Boolean))];
+  const { data: payeesData } = await supabase
+    .from('payees').select('id, name').in('id', payeeIds);
+  const payeeMap = {};
+  for (const p of (payeesData || [])) payeeMap[p.id] = p.name;
 
   const vchSeq = parseDbSerialSeq;
   const results = [];
@@ -5967,7 +5974,7 @@ app.post('/api/companies/:companyId/retrospective-payment-scan', async (req, res
       serialNumber: v.serial_number,
       amount: v.amount,
       paymentMode: v.payment_mode,
-      payeeName: v.payee_name,
+      payeeName: payeeMap[v.payee_id] || '—',
       bestConfidence: best?.confidence || 'none',
       attachments: attachmentResults,
     });
