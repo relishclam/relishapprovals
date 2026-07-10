@@ -4347,38 +4347,40 @@ const VoucherList = ({ filter }) => {
                 );
                 return (
                   (() => {
-                    const firstError = (r.attachments || []).find(a => a.error)?.error;
-                    const isApiKeyError = firstError && /api.key|openai|authentication|not set/i.test(firstError);
+                    const allErrors = (r.attachments || []).filter(a => a.error);
+                    const anyScanned = (r.attachments || []).some(a => !a.error);
+                    const allFailed = allErrors.length === (r.attachments || []).length && allErrors.length > 0;
                     return (
                       <div>
-                        {firstError && (
+                        {allFailed && (
                           <div style={{background:'#fef2f2',border:'1px solid #fca5a5',borderRadius:'8px',padding:'0.875rem',marginBottom:'0.75rem',fontSize:'0.875rem',color:'#991b1b'}}>
-                            <div style={{fontWeight:700,marginBottom:'4px'}}>⚠️ OCR scan failed</div>
-                            {isApiKeyError
-                              ? <div><strong>OPENAI_API_KEY is not configured in Vercel.</strong><br/>Go to Vercel Dashboard → Your Project → Settings → Environment Variables and add <code>OPENAI_API_KEY</code>.</div>
-                              : <div>{firstError}</div>
-                            }
+                            <div style={{fontWeight:700,marginBottom:'4px'}}>⚠️ Could not OCR any attachment</div>
+                            <div>All files either failed or are image-based PDFs. Review the attachments manually and use <strong>Mark as Paid</strong> if you confirm payment was made.</div>
                           </div>
                         )}
-                        {!firstError && (
-                          <div style={{background:'#f9fafb',border:'1px solid #e5e7eb',borderRadius:'8px',padding:'1rem',textAlign:'center',color:'#6b7280',fontSize:'0.875rem'}}>
+                        {!allFailed && (
+                          <div style={{background:'#f9fafb',border:'1px solid #e5e7eb',borderRadius:'8px',padding:'1rem',textAlign:'center',color:'#6b7280',fontSize:'0.875rem',marginBottom:'0.5rem'}}>
                             <div style={{fontSize:'2rem',marginBottom:'0.5rem'}}>🔎</div>
-                            <div style={{fontWeight:600,marginBottom:'0.25rem'}}>No payment proof found in this attachment.</div>
-                            <div>The file was scanned but contains no VCH reference or payment keywords. Upload the actual bank receipt or GPay screenshot using the Upload File button.</div>
-                            {(r.attachments || [])[0]?._ocrPreview && (
-                              <div style={{marginTop:'0.75rem',textAlign:'left',background:'#f1f5f9',border:'1px solid #e2e8f0',borderRadius:'6px',padding:'0.6rem',fontSize:'0.75rem',fontFamily:'monospace',color:'#374151',whiteSpace:'pre-wrap',wordBreak:'break-word'}}>
-                                <div style={{fontWeight:700,marginBottom:'4px',fontFamily:'sans-serif',color:'#64748b'}}>OCR output (first 300 chars):</div>
-                                {(r.attachments || [])[0]._ocrPreview}
-                              </div>
-                            )}
+                            <div style={{fontWeight:600,marginBottom:'0.25rem'}}>No payment proof found in scanned attachments.</div>
+                            <div>These files do not appear to be payment receipts. Upload the actual GPay/bank screenshot using the Upload File button.</div>
                           </div>
                         )}
                         {(r.attachments || []).map((a, i) => a.fileName && (
-                          <div key={i} style={{fontSize:'0.78rem',marginTop:'0.5rem',color:'#6b7280'}}>
-                            📎 Scanned: <a href={a.publicUrl} target="_blank" rel="noreferrer" style={{color:'#2563eb'}}>{a.fileName}</a>
-                            {a.error && <span style={{color:'#dc2626'}}> — {a.error}</span>}
+                          <div key={i} style={{fontSize:'0.78rem',marginTop:'0.5rem',color:'#6b7280',display:'flex',alignItems:'flex-start',gap:'6px',flexWrap:'wrap'}}>
+                            <a href={a.publicUrl} target="_blank" rel="noreferrer" style={{color:'#2563eb'}}>📎 {a.fileName}</a>
+                            {a.error
+                              ? <span style={{color:'#dc2626'}}>— {a.error.length > 80 ? a.error.slice(0,80)+'…' : a.error}</span>
+                              : <span style={{color:'#16a34a'}}>— scanned (no payment ref found)</span>
+                            }
                           </div>
                         ))}
+                        {/* Manual override: if all attachments failed, offer a manual mark-paid */}
+                        {allFailed && (
+                          <button className="btn btn-secondary" style={{width:'100%',marginTop:'1rem',fontSize:'0.85rem'}}
+                            onClick={() => { setVerifyReceiptVoucher(null); setVerifyReceiptResult(null); setMarkPaidVoucher(verifyReceiptVoucher); setShowMarkPaidModal(true); }}>
+                            ✅ Mark as Paid manually (upload receipt in next step)
+                          </button>
+                        )}
                       </div>
                     );
                   })()

@@ -5593,6 +5593,43 @@ async function _extractPdfText(buffer) {
  * Use GPT-4o Vision to extract all visible text from an image buffer.
  * Returns the raw text string returned by the model.
  */
+/**
+ * Build the OpenAI Vision request body for a given model.
+ */
+function _buildOcrBody(dataUrl, model) {
+  return JSON.stringify({
+    model,
+    max_tokens: 800,
+    messages: [
+      {
+        role: 'system',
+        content:
+          'You are a financial document OCR assistant for an internal payment approval system. ' +
+          'Your only job is to extract the printed/displayed text from bank receipts, UPI payment ' +
+          'screenshots, and transaction acknowledgements. Output only the raw text — no analysis, ' +
+          'no commentary. Never refuse a text-extraction request on a financial document.',
+      },
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text:
+              'Extract ALL visible text from this payment receipt or bank transaction screenshot. ' +
+              'Return only the raw text, preserving line breaks. Pay special attention to: ' +
+              'transaction/reference/UTR numbers, UPI IDs, amounts, bank names, and any field ' +
+              'containing "VCH" followed by numbers (e.g. "VCH-2026-27-00448" or "VCH 510").',
+          },
+          {
+            type: 'image_url',
+            image_url: { url: dataUrl, detail: 'low' },
+          },
+        ],
+      },
+    ],
+  });
+}
+
 async function _extractImageText(buffer, mimeType) {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) throw new Error('OPENAI_API_KEY environment variable is not set');
@@ -5600,93 +5637,54 @@ async function _extractImageText(buffer, mimeType) {
   const base64 = buffer.toString('base64');
   const dataUrl = `data:${mimeType};base64,${base64}`;
 
-  // Use Node.js 18+ native fetch (globalThis.fetch) rather than the module-level
-  // node-fetch v2 variable.  node-fetch v2 + native AbortController has known
-  // compatibility issues on some runtimes (e.g. Vercel serverless).
   const nativeFetch = globalThis.fetch || fetch;
-
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 50000);
 
-  let response;
-  try {
-    response = await nativeFetch('https://api.openai.com/v1/chat/completions', {
+  const _callOpenAI = async (model) => {
+    const response = await nativeFetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
       signal: controller.signal,
-      body: JSON.stringify({
-        model: 'gpt-4o',
-        max_tokens: 800,
-        messages: [
-          {
-            // System message: frame this as financial OCR so the model does not
-            // refuse due to seeing a profile photo (e.g. in GPay screenshots).
-            role: 'system',
-            content:
-              'You are a financial document OCR assistant for an internal payment approval system. ' +
-              'Your only job is to extract the printed/displayed text from bank receipts, UPI payment ' +
-              'screenshots, and transaction acknowledgements. Output only the raw text — no analysis, ' +
-              'no commentary. Never refuse a text-extraction request on a financial document.',
-          },
-          {
-            role: 'user',
-            content: [
-              {
-                type: 'text',
-                text:
-                  'Extract ALL visible text from this payment receipt or bank transaction screenshot. ' +
-                  'Return only the raw text, preserving line breaks. Pay special attention to: ' +
-                  'transaction/reference/UTR numbers, UPI IDs, amounts, bank names, and any field ' +
-                  'containing "VCH" followed by numbers (e.g. "VCH-2026-27-00448" or "VCH 510").',
-              },
-              {
-                type: 'image_url',
-                // Use 'low' detail — sufficient for text OCR and avoids content-policy
-                // rejections triggered by profile photos in GPay/PhonePe screenshots.
-                image_url: { url: dataUrl, detail: 'low' },
-              },
-            ],
-          },
-        ],
-      }),
+      body: _buildOcrBody(dataUrl, model),
     });
+    if (!response.ok) {
+      const body = await response.text();
+      throw new Error(`OpenAI API error ${response.status}: ${body}`);
+    }
+    const json = await response.json();
+    const content = json.choices?.[0]?.message?.content;
+    if (content == null || content.trim() === '') {
+      throw new Error(`OpenAI Vision returned no text content (finish_reason: ${json.choices?.[0]?.finish_reason ?? 'unknown'}).`);
+    }
+    // Return null (not throw) if the model refuses — triggers fallback
+    if (/^I'?m sorry[,.]?\s|I can'?t assist|I cannot assist|I'?m unable to/i.test(content.trim())) {
+      return null;
+    }
+    return content;
+  };
+
+  let result;
+  try {
+    // Try gpt-4o first
+    result = await _callOpenAI('gpt-4o');
+    // If gpt-4o refused (content policy), fall back to gpt-4o-mini which is less restrictive
+    if (result === null) {
+      result = await _callOpenAI('gpt-4o-mini');
+    }
   } catch (fetchErr) {
     clearTimeout(timeout);
     if (fetchErr.name === 'AbortError') {
-      throw new Error('OpenAI Vision timed out after 50 s — the image may be too large or the service is slow. Retry or select the voucher manually.');
+      throw new Error('OpenAI Vision timed out after 50 s — retry or select the voucher manually.');
     }
     throw fetchErr;
   }
   clearTimeout(timeout);
 
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`OpenAI API error ${response.status}: ${body}`);
+  if (result === null) {
+    throw new Error('OpenAI refused to process this image (content policy on both gpt-4o and gpt-4o-mini). Crop out any faces/logos and re-upload, or mark paid manually.');
   }
-
-  const json = await response.json();
-  const content = json.choices?.[0]?.message?.content;
-
-  if (content == null || content.trim() === '') {
-    const finishReason = json.choices?.[0]?.finish_reason ?? 'unknown';
-    throw new Error(
-      `OpenAI Vision returned no text content (finish_reason: ${finishReason}).`,
-    );
-  }
-
-  // Detect content-policy refusal (e.g. "I'm sorry, I can't assist with that")
-  // and throw a clear error rather than silently returning a non-OCR string.
-  if (/^I'?m sorry[,.]?\s|I can'?t assist|I cannot assist|I'?m unable to/i.test(content.trim())) {
-    throw new Error(
-      `OpenAI refused to process this image (content policy). ` +
-      `Try re-uploading the receipt cropped to remove any faces or profile photos.`
-    );
-  }
-
-  return content;
+  return result;
 }
 
 /**
