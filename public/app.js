@@ -378,6 +378,8 @@ const api = {
   // Attachments
   matchReceiptToVoucher: (data) => fetch(`${API_BASE}/receipts/match-voucher`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
     .then(async r => { const json = await r.json(); if (!r.ok) throw new Error(json.message || json.error || 'Match request failed'); return json; }),
+  retrospectiveScan: (companyId, data) => fetch(`${API_BASE}/companies/${companyId}/retrospective-payment-scan`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
+    .then(async r => { const json = await r.json(); if (!r.ok) throw new Error(json.message || json.error || 'Scan failed'); return json; }),
   // Payment batches (Migration 032)
   getPendingBatches: (companyId) => fetch(`${API_BASE}/companies/${companyId}/batches`).then(r => r.json()),
   createBatch: (data) => fetch(`${API_BASE}/batches`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
@@ -2739,6 +2741,7 @@ const VoucherList = ({ filter }) => {
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [showPrintModal, setShowPrintModal] = useState(false);
   const [payNowVoucher, setPayNowVoucher] = useState(null);
+  const [showRetroScan, setShowRetroScan] = useState(false);
   const [printDateFrom, setPrintDateFrom] = useState('');
   const [printDateTo, setPrintDateTo] = useState('');
   const [showExcelModal, setShowExcelModal] = useState(false);
@@ -3599,6 +3602,11 @@ const VoucherList = ({ filter }) => {
                 {Icons.download} Excel
               </button>
             )}
+            {filter === 'awaiting_payment' && (user.role === 'accounts' || user.isSuperAdmin) && (
+              <button className="btn btn-secondary" style={{background:'#7c3aed',color:'white',border:'none'}} onClick={() => setShowRetroScan(true)} title="Scan existing bill attachments for payment proof">
+                🔍 Scan for Paid Receipts
+              </button>
+            )}
             <button className="btn btn-secondary" onClick={() => setShowPrintModal(true)}>
               {Icons.printer} Print Report
             </button>
@@ -4259,6 +4267,9 @@ const VoucherList = ({ filter }) => {
           </div>
         </div></div>
       )}
+
+      {/* Retrospective Scan Modal */}
+      {showRetroScan && <RetrospectiveScanModal onClose={() => setShowRetroScan(false)} />}
 
       {/* Pay Now Modal */}
       {payNowVoucher && (() => {
@@ -10303,6 +10314,163 @@ const ReceiptShareModal = ({ state, onClose }) => {
         </div>
         <div className="modal-footer">
           <button className="btn btn-secondary" onClick={onClose}>Dismiss</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RETROSPECTIVE SCAN MODAL
+// Scans existing bill attachments on awaiting_payment / completed vouchers
+// to find bank receipts uploaded before the receipt-matching system existed.
+// ─────────────────────────────────────────────────────────────────────────────
+const RetrospectiveScanModal = ({ onClose }) => {
+  const { user, addToast, refreshVouchers } = useApp();
+  const [phase, setPhase]   = React.useState('idle'); // idle | scanning | results | confirming
+  const [results, setResults] = React.useState([]);
+  const [selected, setSelected] = React.useState({}); // voucherId → true/false
+  const [confirming, setConfirming] = React.useState(false);
+
+  const runScan = async () => {
+    setPhase('scanning');
+    try {
+      const res = await api.retrospectiveScan(user.company.id, { requestedBy: user.id });
+      setResults(res.results || []);
+      // Pre-select all high-confidence matches
+      const sel = {};
+      (res.results || []).forEach(r => { if (r.bestConfidence === 'high') sel[r.voucherId] = true; });
+      setSelected(sel);
+      setPhase('results');
+    } catch (e) {
+      addToast(e.message || 'Scan failed', 'error');
+      setPhase('idle');
+    }
+  };
+
+  const handleConfirm = async () => {
+    const toConfirm = results
+      .filter(r => selected[r.voucherId])
+      .map(r => {
+        const best = r.attachments.find(a => a.confidence === 'high') || r.attachments.find(a => a.confidence === 'low');
+        return { voucherId: r.voucherId, attachmentUrl: best?.publicUrl || null, utr: best?.utr || null, transferType: best?.transferType || null };
+      });
+    if (!toConfirm.length) { addToast('Select at least one voucher', 'error'); return; }
+    setConfirming(true);
+    try {
+      const res = await api.retrospectiveScan(user.company.id, { requestedBy: user.id, confirmIds: toConfirm });
+      const ok = (res.confirmed || []).filter(r => r.success).length;
+      const fail = (res.confirmed || []).filter(r => !r.success).length;
+      addToast(`${ok} voucher(s) marked paid${fail ? ` · ${fail} failed` : ''}`, ok > 0 ? 'success' : 'error');
+      refreshVouchers();
+      onClose();
+    } catch (e) {
+      addToast(e.message || 'Failed to confirm', 'error');
+    }
+    setConfirming(false);
+  };
+
+  const confidenceBadge = (c) => {
+    if (c === 'high') return <span style={{background:'#dcfce7',color:'#166534',padding:'2px 8px',borderRadius:'10px',fontSize:'0.72rem',fontWeight:700}}>HIGH ✓</span>;
+    if (c === 'low')  return <span style={{background:'#fef9c3',color:'#713f12',padding:'2px 8px',borderRadius:'10px',fontSize:'0.72rem',fontWeight:700}}>LOW</span>;
+    return <span style={{background:'#f3f4f6',color:'#6b7280',padding:'2px 8px',borderRadius:'10px',fontSize:'0.72rem',fontWeight:700}}>NONE</span>;
+  };
+
+  const highCount = results.filter(r => r.bestConfidence === 'high').length;
+  const selectedCount = Object.values(selected).filter(Boolean).length;
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" onClick={e => e.stopPropagation()} style={{maxWidth:'680px',maxHeight:'88vh',display:'flex',flexDirection:'column'}}>
+        <div className="modal-header" style={{background:'#7c3aed',color:'white'}}>
+          <h3 className="modal-title" style={{color:'white'}}>🔍 Scan Uploaded Receipts for Payment Proof</h3>
+          <button className="modal-close" style={{color:'white'}} onClick={onClose}>×</button>
+        </div>
+
+        <div className="modal-body" style={{overflowY:'auto',flex:1}}>
+          {phase === 'idle' && (
+            <div style={{textAlign:'center',padding:'2rem 1rem'}}>
+              <div style={{fontSize:'3rem',marginBottom:'1rem'}}>🏦</div>
+              <h3 style={{fontWeight:700,marginBottom:'0.5rem'}}>Retrospective Receipt Scan</h3>
+              <p style={{color:'#6b7280',fontSize:'0.9rem',marginBottom:'1.5rem',maxWidth:'420px',margin:'0 auto 1.5rem'}}>
+                Scans bill attachments already uploaded to <strong>unpaid vouchers</strong> in this company.
+                For each attachment, OCR extracts text and checks for:
+              </p>
+              <div style={{display:'inline-block',textAlign:'left',background:'#f8fafc',border:'1px solid #e2e8f0',borderRadius:'8px',padding:'0.75rem 1.25rem',fontSize:'0.875rem',marginBottom:'1.5rem'}}>
+                <div>✅ Voucher reference (e.g. VCH 534) in the receipt text</div>
+                <div>✅ Payment keywords (IMPS / NEFT / UTR / Transfer Acknowledgement)</div>
+                <div>✅ UTR / reference number extraction for auto-fill</div>
+              </div>
+              <div style={{background:'#fffbeb',border:'1px solid #fde68a',borderRadius:'8px',padding:'0.75rem',fontSize:'0.82rem',color:'#92400e',marginBottom:'1.5rem'}}>
+                ⏳ Each attachment requires a GPT-4o Vision call — may take 30–90 seconds for large batches.
+              </div>
+              <button className="btn btn-success" style={{background:'#7c3aed',border:'none',fontSize:'1rem',padding:'0.75rem 2rem'}} onClick={runScan}>
+                🔍 Start Scan
+              </button>
+            </div>
+          )}
+
+          {phase === 'scanning' && (
+            <div style={{textAlign:'center',padding:'3rem 1rem'}}>
+              {Icons.loader}
+              <p style={{color:'#6b7280',marginTop:'1rem',fontSize:'0.9rem'}}>
+                Scanning attachments via GPT-4o Vision…<br/>
+                <span style={{fontSize:'0.8rem'}}>This may take a minute. Please wait.</span>
+              </p>
+            </div>
+          )}
+
+          {phase === 'results' && (
+            <>
+              <div style={{background:'#f0fdf4',border:'1px solid #86efac',borderRadius:'8px',padding:'0.75rem 1rem',marginBottom:'1rem',fontSize:'0.875rem',display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:'0.5rem'}}>
+                <span>Scanned <strong>{results.length}</strong> voucher(s) · <strong style={{color:'#166534'}}>{highCount} high-confidence</strong> payment receipt(s) found</span>
+                {highCount > 0 && <button className="btn btn-sm btn-secondary" onClick={() => { const s={}; results.forEach(r => { if(r.bestConfidence==='high') s[r.voucherId]=true; }); setSelected(s); }}>Select all HIGH</button>}
+              </div>
+
+              {results.length === 0 && (
+                <div style={{textAlign:'center',padding:'2rem',color:'#6b7280'}}>No unpaid vouchers with attachments found.</div>
+              )}
+
+              {results.map(r => {
+                const best = r.attachments.find(a => a.confidence === 'high') || r.attachments.find(a => a.confidence === 'low');
+                return (
+                  <div key={r.voucherId} style={{border:`2px solid ${r.bestConfidence==='high'?'#86efac':r.bestConfidence==='low'?'#fde68a':'#e5e7eb'}`,borderRadius:'10px',padding:'0.875rem',marginBottom:'0.75rem',background:r.bestConfidence==='high'?'#f0fdf4':r.bestConfidence==='low'?'#fefce8':'white'}}>
+                    <div style={{display:'flex',alignItems:'flex-start',gap:'0.75rem',flexWrap:'wrap'}}>
+                      {r.bestConfidence !== 'none' && (
+                        <input type="checkbox" checked={!!selected[r.voucherId]} onChange={e => setSelected(s => ({...s,[r.voucherId]:e.target.checked}))} style={{width:'18px',height:'18px',marginTop:'2px',cursor:'pointer',flexShrink:0}} />
+                      )}
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{display:'flex',gap:'0.5rem',alignItems:'center',flexWrap:'wrap',marginBottom:'4px'}}>
+                          <code style={{fontWeight:700,fontSize:'0.875rem'}}>{r.serialNumber}</code>
+                          {confidenceBadge(r.bestConfidence)}
+                          <span style={{fontSize:'0.82rem',color:'#6b7280'}}>{r.payeeName} · ₹{parseFloat(r.amount).toLocaleString('en-IN',{minimumFractionDigits:2})} · {r.paymentMode}</span>
+                        </div>
+                        {best && best.confidence !== 'none' && (
+                          <div style={{fontSize:'0.8rem',color:'#374151',display:'flex',gap:'1rem',flexWrap:'wrap'}}>
+                            {best.extractedVchRef && <span>📄 Ref found: <code>{best.extractedVchRef}</code></span>}
+                            {best.utr && <span>🔑 UTR: <code>{best.utr}</code></span>}
+                            {best.transferType && <span>🏦 {best.transferType}</span>}
+                            {best.fileName && <a href={best.publicUrl} target="_blank" rel="noreferrer" style={{color:'#2563eb'}}>📎 {best.fileName}</a>}
+                          </div>
+                        )}
+                        {best?.error && <div style={{fontSize:'0.78rem',color:'#dc2626',marginTop:'2px'}}>⚠️ {best.error}</div>}
+                        {r.bestConfidence === 'none' && !best?.error && <div style={{fontSize:'0.78rem',color:'#6b7280',marginTop:'2px'}}>No payment proof found in attachment(s) — review manually.</div>}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </>
+          )}
+        </div>
+
+        <div className="modal-footer">
+          <button className="btn btn-secondary" onClick={onClose}>Close</button>
+          {phase === 'results' && selectedCount > 0 && (
+            <button className="btn btn-success" onClick={handleConfirm} disabled={confirming}>
+              {confirming ? Icons.loader : '✅'} Mark {selectedCount} Voucher(s) as Paid
+            </button>
+          )}
         </div>
       </div>
     </div>

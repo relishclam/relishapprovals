@@ -5803,6 +5803,159 @@ async function matchReceiptToVoucher(fileBuffer, mimeType, companyId, fileName =
   return { matchType: 'voucher', matchedVoucherId: null, matchedBatchId: null, confidence: 'low', extractedReference: primaryVch.raw, candidateVouchers: candidates, candidateBatches: batchCandidates };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// RETROSPECTIVE PAYMENT RECEIPT SCAN
+// Scans attachments on completed/awaiting_payment vouchers to find bank
+// receipts that were uploaded before the receipt-matching system existed,
+// then marks matched vouchers as paid.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Detect payment-confirmation keywords in extracted text.
+ * Returns { isPayment, utr, transferType }
+ */
+function _analysePaymentText(text) {
+  const t = text || '';
+  const isPayment = /imps|neft|rtgs|upi|acknowledgement|money transferred|transfer successful|transaction successful|debit advice|payment confirmation|reference number|your ref/i.test(t);
+  // Extract 12-digit UTR (IMPS/NEFT) or UPI transaction IDs
+  const utrMatch = t.match(/\b(\d{12})\b/) || t.match(/utr[:\s#]*([A-Z0-9]{12,22})/i) || t.match(/ref(?:erence)?[:\s#no.]*([A-Z0-9]{8,22})/i);
+  const utr = utrMatch ? utrMatch[1] : null;
+  const ttMatch = t.match(/\b(IMPS|NEFT|RTGS|UPI)\b/i);
+  const transferType = ttMatch ? ttMatch[1].toUpperCase() : null;
+  return { isPayment, utr, transferType };
+}
+
+// POST /api/companies/:companyId/retrospective-payment-scan
+// Scans attachments on vouchers that are still in 'awaiting_payment' or 'completed'
+// looking for bank receipts that prove payment was already made.
+app.post('/api/companies/:companyId/retrospective-payment-scan', async (req, res) => {
+  const { requestedBy, confirmIds } = req.body;
+  const { companyId } = req.params;
+
+  if (!requestedBy) return res.status(400).json({ error: true, message: 'requestedBy is required' });
+  const actor = await getActorRole(requestedBy);
+  if (actor.role !== 'accounts' && actor.role !== 'admin' && !actor.is_super_admin)
+    return res.status(403).json({ error: true, message: 'Accounts or Admin role required' });
+
+  // ── CONFIRM MODE: mark a specific set of vouchers as paid ─────────────────
+  if (confirmIds && Array.isArray(confirmIds) && confirmIds.length > 0) {
+    const results = [];
+    for (const { voucherId, attachmentUrl, utr, transferType } of confirmIds) {
+      const now = new Date().toISOString();
+      const { error } = await supabase.from('vouchers').update({
+        status: 'paid',
+        paid_by: requestedBy,
+        paid_at: now,
+        payment_reference: utr || null,
+        payment_notes: `Confirmed via retrospective receipt scan${transferType ? ` (${transferType})` : ''}`,
+        payment_receipt_url: attachmentUrl || null,
+      }).eq('id', voucherId).eq('company_id', companyId);
+      results.push({ voucherId, success: !error, error: error?.message });
+    }
+    return res.json({ success: true, confirmed: results });
+  }
+
+  // ── SCAN MODE: OCR all attachments on unpaid vouchers ────────────────────
+  const { data: vouchers, error: vErr } = await supabase
+    .from('vouchers')
+    .select(`id, serial_number, amount, payment_mode, payee_name,
+             voucher_attachments(id, public_url, file_name, mime_type)`)
+    .eq('company_id', companyId)
+    .in('status', ['awaiting_payment', 'completed'])
+    .eq('is_suspense_settlement', false)
+    .is('payment_receipt_url', null);
+  if (vErr) return res.status(500).json({ error: true, message: vErr.message });
+
+  const scannable = (vouchers || []).filter(v =>
+    Array.isArray(v.voucher_attachments) && v.voucher_attachments.length > 0
+  );
+
+  if (scannable.length === 0)
+    return res.json({ results: [], message: 'No unpaid vouchers with attachments found.' });
+
+  const vchSeq = parseDbSerialSeq; // re-use existing helper
+  const results = [];
+
+  for (const v of scannable) {
+    const vSeq = vchSeq(v.serial_number);
+    const attachmentResults = [];
+
+    for (const att of v.voucher_attachments) {
+      if (!att.public_url) continue;
+      const mimeType = att.mime_type || 'image/jpeg';
+
+      let extractedText = '';
+      let scanError = null;
+
+      try {
+        // Download the file from Supabase public storage
+        const fileRes = await fetch(att.public_url);
+        if (!fileRes.ok) throw new Error(`Download failed (HTTP ${fileRes.status})`);
+        const arrayBuf = await fileRes.arrayBuffer();
+        const fileBuffer = Buffer.from(arrayBuf);
+
+        if (mimeType === 'application/pdf') {
+          try {
+            const raw = await _extractPdfText(fileBuffer);
+            extractedText = raw.replace(/--\s*\d+\s*of\s*\d+\s*--/gi, '').trim();
+          } catch { /* image-based PDF — fall through to Vision */ }
+        }
+        if (!extractedText && mimeType.startsWith('image/')) {
+          extractedText = await _extractImageText(fileBuffer, mimeType);
+        }
+        if (!extractedText && mimeType === 'application/pdf') {
+          // Image-based PDF — try Vision on the first page (not supported without renderer)
+          // Mark as manual review
+          scanError = 'Image-based PDF — cannot OCR automatically; review manually';
+        }
+      } catch (e) {
+        scanError = e.message;
+      }
+
+      const { isPayment, utr, transferType } = _analysePaymentText(extractedText);
+      const vchHits = extractedText ? extractVchNumbers(extractedText) : [];
+      const refMatchesThisVoucher = vSeq !== null && vchHits.some(h => h.seq === vSeq);
+      const confidence = !scanError && isPayment && refMatchesThisVoucher ? 'high'
+        : !scanError && (isPayment || refMatchesThisVoucher) ? 'low'
+        : 'none';
+
+      attachmentResults.push({
+        attachmentId: att.id,
+        fileName: att.file_name,
+        publicUrl: att.public_url,
+        mimeType,
+        confidence,
+        isPaymentReceipt: isPayment,
+        refMatchesThisVoucher,
+        extractedVchRef: vchHits[0]?.raw || null,
+        utr,
+        transferType,
+        error: scanError,
+      });
+    }
+
+    // Best result for this voucher = highest confidence across all its attachments
+    const best = attachmentResults.find(a => a.confidence === 'high')
+      || attachmentResults.find(a => a.confidence === 'low');
+
+    results.push({
+      voucherId: v.id,
+      serialNumber: v.serial_number,
+      amount: v.amount,
+      paymentMode: v.payment_mode,
+      payeeName: v.payee_name,
+      bestConfidence: best?.confidence || 'none',
+      attachments: attachmentResults,
+    });
+  }
+
+  // Sort: high first, then low, then none
+  const order = { high: 0, low: 1, none: 2 };
+  results.sort((a, b) => order[a.bestConfidence] - order[b.bestConfidence]);
+
+  return res.json({ results, scanned: scannable.length });
+});
+
 // Export the Express app for Vercel serverless deployment
 module.exports = app;
 module.exports.matchReceiptToVoucher = matchReceiptToVoucher;
