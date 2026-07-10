@@ -5965,6 +5965,8 @@ app.post('/api/companies/:companyId/retrospective-payment-scan', async (req, res
         utr,
         transferType,
         error: scanError,
+        // Debug: first 300 chars of OCR output so we can diagnose Vercel-specific failures
+        _ocrPreview: extractedText ? extractedText.slice(0, 300) : '(empty)',
       });
     }
 

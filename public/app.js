@@ -4365,6 +4365,12 @@ const VoucherList = ({ filter }) => {
                             <div style={{fontSize:'2rem',marginBottom:'0.5rem'}}>🔎</div>
                             <div style={{fontWeight:600,marginBottom:'0.25rem'}}>No payment proof found in this attachment.</div>
                             <div>The file was scanned but contains no VCH reference or payment keywords. Upload the actual bank receipt or GPay screenshot using the Upload File button.</div>
+                            {(r.attachments || [])[0]?._ocrPreview && (
+                              <div style={{marginTop:'0.75rem',textAlign:'left',background:'#f1f5f9',border:'1px solid #e2e8f0',borderRadius:'6px',padding:'0.6rem',fontSize:'0.75rem',fontFamily:'monospace',color:'#374151',whiteSpace:'pre-wrap',wordBreak:'break-word'}}>
+                                <div style={{fontWeight:700,marginBottom:'4px',fontFamily:'sans-serif',color:'#64748b'}}>OCR output (first 300 chars):</div>
+                                {(r.attachments || [])[0]._ocrPreview}
+                              </div>
+                            )}
                           </div>
                         )}
                         {(r.attachments || []).map((a, i) => a.fileName && (
