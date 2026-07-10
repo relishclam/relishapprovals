@@ -5860,36 +5860,51 @@ app.post('/api/companies/:companyId/retrospective-payment-scan', async (req, res
   }
 
   // ── SCAN MODE: OCR all attachments on unpaid vouchers ────────────────────
-  let query = supabase
+  let vQuery = supabase
     .from('vouchers')
-    .select(`id, serial_number, amount, payment_mode, payee_name,
-             voucher_attachments(id, public_url, file_name, mime_type)`)
+    .select('id, serial_number, amount, payment_mode, payee_name')
     .eq('company_id', companyId)
     .in('status', ['awaiting_payment', 'completed'])
     .eq('is_suspense_settlement', false)
     .is('payment_receipt_url', null);
-  // Optional: scope scan to specific voucher IDs (single-voucher row button)
   if (voucherIds && Array.isArray(voucherIds) && voucherIds.length > 0) {
-    query = query.in('id', voucherIds);
+    vQuery = vQuery.in('id', voucherIds);
   }
-  const { data: vouchers, error: vErr } = await query;
+  const { data: vouchers, error: vErr } = await vQuery;
   if (vErr) return res.status(500).json({ error: true, message: vErr.message });
 
-  const scannable = (vouchers || []).filter(v =>
-    Array.isArray(v.voucher_attachments) && v.voucher_attachments.length > 0
-  );
-
+  const scannable = (vouchers || []);
   if (scannable.length === 0)
     return res.json({ results: [], message: 'No unpaid vouchers with attachments found.' });
 
-  const vchSeq = parseDbSerialSeq; // re-use existing helper
+  // Fetch attachments for all matching vouchers in one query
+  const voucherIdList = scannable.map(v => v.id);
+  const { data: allAttachments, error: aErr } = await supabase
+    .from('voucher_attachments')
+    .select('id, voucher_id, public_url, file_name, mime_type')
+    .in('voucher_id', voucherIdList);
+  if (aErr) return res.status(500).json({ error: true, message: aErr.message });
+
+  // Group attachments by voucher_id
+  const attsByVoucher = {};
+  for (const a of (allAttachments || [])) {
+    if (!attsByVoucher[a.voucher_id]) attsByVoucher[a.voucher_id] = [];
+    attsByVoucher[a.voucher_id].push(a);
+  }
+
+  // Keep only vouchers that actually have attachments
+  const withAttachments = scannable.filter(v => (attsByVoucher[v.id] || []).length > 0);
+  if (withAttachments.length === 0)
+    return res.json({ results: [], message: 'No unpaid vouchers with attachments found.' });
+
+  const vchSeq = parseDbSerialSeq;
   const results = [];
 
-  for (const v of scannable) {
+  for (const v of withAttachments) {
     const vSeq = vchSeq(v.serial_number);
     const attachmentResults = [];
 
-    for (const att of v.voucher_attachments) {
+    for (const att of (attsByVoucher[v.id] || [])) {
       if (!att.public_url) continue;
       const mimeType = att.mime_type || 'image/jpeg';
 
