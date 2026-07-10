@@ -1954,29 +1954,33 @@ app.post('/api/vouchers/:voucherId/approve', async (req, res) => {
     // ── Suspense-settlement fast path ──────────────────────────────────────────
     // Vouchers created from suspense settlement entries are pre-paid — the cash
     // was already disbursed as the suspense advance.  After Admin approval they
-    // are immediately marked completed; no OTP or document step is triggered.
+    // are immediately marked PAID (not just completed); no OTP, document step,
+    // or separate payment queue action is needed.
     if (voucher.is_suspense_settlement) {
       const now = new Date().toISOString();
       await supabase.from('vouchers')
         .update({
-          status: 'completed',
-          approved_by: approvedBy,
-          approved_at: now,
+          status:             'paid',
+          approved_by:        approvedBy,
+          approved_at:        now,
           payee_otp_verified: true,
-          completed_at: now
+          completed_at:       now,
+          paid_by:            approvedBy,
+          paid_at:            now,
+          payment_notes:      'Pre-paid via suspense advance'
         })
         .eq('id', req.params.voucherId);
 
       // Notify the Accounts user who prepared the voucher
       await supabase.from('notifications').insert({
         user_id: voucher.prepared_by,
-        title: 'Suspense Voucher Approved & Completed',
-        message: `Voucher ${voucher.serial_number} (suspense settlement) has been approved and marked completed.`,
+        title: 'Suspense Voucher Approved & Paid',
+        message: `Voucher ${voucher.serial_number} (suspense settlement) has been approved and marked as paid (pre-paid via advance).`,
         type: 'info',
         voucher_id: req.params.voucherId
       });
 
-      return res.json({ success: true, suspenseSettlement: true, message: 'Suspense-settlement voucher approved and completed.' });
+      return res.json({ success: true, suspenseSettlement: true, message: 'Suspense-settlement voucher approved and marked paid.' });
     }
     // ──────────────────────────────────────────────────────────────────────────
 
