@@ -4346,11 +4346,36 @@ const VoucherList = ({ filter }) => {
                   </div>
                 );
                 return (
-                  <div style={{background:'#f9fafb',border:'1px solid #e5e7eb',borderRadius:'8px',padding:'1rem',textAlign:'center',color:'#6b7280',fontSize:'0.875rem'}}>
-                    <div style={{fontSize:'2rem',marginBottom:'0.5rem'}}>🔎</div>
-                    <div style={{fontWeight:600,marginBottom:'0.25rem'}}>No payment proof found in this attachment.</div>
-                    <div>The file doesn't contain recognisable payment confirmation text. Upload the actual bank receipt or GPay screenshot using the Upload File button.</div>
-                  </div>
+                  (() => {
+                    const firstError = (r.attachments || []).find(a => a.error)?.error;
+                    const isApiKeyError = firstError && /api.key|openai|authentication|not set/i.test(firstError);
+                    return (
+                      <div>
+                        {firstError && (
+                          <div style={{background:'#fef2f2',border:'1px solid #fca5a5',borderRadius:'8px',padding:'0.875rem',marginBottom:'0.75rem',fontSize:'0.875rem',color:'#991b1b'}}>
+                            <div style={{fontWeight:700,marginBottom:'4px'}}>⚠️ OCR scan failed</div>
+                            {isApiKeyError
+                              ? <div><strong>OPENAI_API_KEY is not configured in Vercel.</strong><br/>Go to Vercel Dashboard → Your Project → Settings → Environment Variables and add <code>OPENAI_API_KEY</code>.</div>
+                              : <div>{firstError}</div>
+                            }
+                          </div>
+                        )}
+                        {!firstError && (
+                          <div style={{background:'#f9fafb',border:'1px solid #e5e7eb',borderRadius:'8px',padding:'1rem',textAlign:'center',color:'#6b7280',fontSize:'0.875rem'}}>
+                            <div style={{fontSize:'2rem',marginBottom:'0.5rem'}}>🔎</div>
+                            <div style={{fontWeight:600,marginBottom:'0.25rem'}}>No payment proof found in this attachment.</div>
+                            <div>The file was scanned but contains no VCH reference or payment keywords. Upload the actual bank receipt or GPay screenshot using the Upload File button.</div>
+                          </div>
+                        )}
+                        {(r.attachments || []).map((a, i) => a.fileName && (
+                          <div key={i} style={{fontSize:'0.78rem',marginTop:'0.5rem',color:'#6b7280'}}>
+                            📎 Scanned: <a href={a.publicUrl} target="_blank" rel="noreferrer" style={{color:'#2563eb'}}>{a.fileName}</a>
+                            {a.error && <span style={{color:'#dc2626'}}> — {a.error}</span>}
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()
                 );
               })()}
             </div>
