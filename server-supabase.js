@@ -5816,12 +5816,16 @@ async function matchReceiptToVoucher(fileBuffer, mimeType, companyId, fileName =
  */
 function _analysePaymentText(text) {
   const t = text || '';
-  const isPayment = /imps|neft|rtgs|upi|acknowledgement|money transferred|transfer successful|transaction successful|debit advice|payment confirmation|reference number|your ref/i.test(t);
-  // Extract 12-digit UTR (IMPS/NEFT) or UPI transaction IDs
-  const utrMatch = t.match(/\b(\d{12})\b/) || t.match(/utr[:\s#]*([A-Z0-9]{12,22})/i) || t.match(/ref(?:erence)?[:\s#no.]*([A-Z0-9]{8,22})/i);
-  const utr = utrMatch ? utrMatch[1] : null;
+  const isPayment = /imps|neft|rtgs|upi|google\s*pay|gpay|phonepe|paytm|bhim|acknowledgement|money transferred|transfer successful|transaction successful|debit advice|payment confirmation|reference number|your ref|transaction id/i.test(t);
+  // Priority 1: 12-digit UTR (IMPS/NEFT/UPI transaction IDs)
+  const utr12 = t.match(/\b(\d{12})\b/);
+  // Priority 2: explicit UTR label
+  const utrLabel = t.match(/utr[:\s#]*([A-Z0-9]{8,22})/i) || t.match(/ref(?:erence)?[:\s#no.]*([A-Z0-9]{10,22})/i);
+  // Priority 3: Google/PhonePe transaction IDs (alphanumeric, 12-22 chars after keyword)
+  const googleTxn = t.match(/(?:google\s+transaction\s+id|transaction\s+id|txn\s*id)[:\s]+([A-Za-z0-9]{8,22})/i);
+  const utr = (utr12 && utr12[1]) || (utrLabel && utrLabel[1]) || (googleTxn && googleTxn[1]) || null;
   const ttMatch = t.match(/\b(IMPS|NEFT|RTGS|UPI)\b/i);
-  const transferType = ttMatch ? ttMatch[1].toUpperCase() : null;
+  const transferType = ttMatch ? ttMatch[1].toUpperCase() : ((/google\s*pay|gpay/i.test(t)) ? 'UPI' : null);
   return { isPayment, utr, transferType };
 }
 
