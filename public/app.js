@@ -388,6 +388,8 @@ const api = {
     .then(async r => { const json = await r.json(); if (!r.ok) throw new Error(json.error || 'Cancel batch failed'); return json; }),
   markBatchPaid: (batchId, data) => fetch(`${API_BASE}/batches/${batchId}/mark-paid`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
     .then(async r => { const json = await r.json(); if (!r.ok) throw new Error(json.error || 'Mark batch paid failed'); return json; }),
+  getBatchReceipts: (batchId) => fetch(`${API_BASE}/batches/${batchId}/receipts`).then(async r => { const json = await r.json(); if (!r.ok) throw new Error(json.error || 'Failed to load receipts'); return json; }),
+  addBatchReceipt: (batchId, data) => fetch(`${API_BASE}/batches/${batchId}/receipts`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(async r => { const json = await r.json(); if (!r.ok) throw new Error(json.error || 'Upload failed'); return json; }),
   uploadAttachment: (data) => fetch(`${API_BASE}/attachments/upload`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
   getAttachments: (params) => fetch(`${API_BASE}/attachments?${new URLSearchParams(params)}`).then(r => r.json()),
   deleteAttachment: (id, deletedBy) => fetch(`${API_BASE}/attachments/${id}`, { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ deletedBy }) }).then(r => r.json()),
@@ -2797,6 +2799,16 @@ const VoucherList = ({ filter }) => {
   const [batchReceiptMime, setBatchReceiptMime] = useState('');
   const [batchReceiptPreview, setBatchReceiptPreview] = useState('');
   const [batchPaying, setBatchPaying] = useState(false);
+  // Batch Receipts modal — view / add receipts on an already-paid batch
+  const [batchReceiptsModal, setBatchReceiptsModal] = useState(null); // { batchId, batchReference, payeeName }
+  const [batchReceiptsList, setBatchReceiptsList] = useState([]);
+  const [batchReceiptsListLoading, setBatchReceiptsListLoading] = useState(false);
+  const [addingBatchReceipt, setAddingBatchReceipt] = useState(false);
+  const [newBatchReceiptData, setNewBatchReceiptData] = useState('');
+  const [newBatchReceiptMime, setNewBatchReceiptMime] = useState('');
+  const [newBatchReceiptPreview, setNewBatchReceiptPreview] = useState('');
+  const [newBatchReceiptRef, setNewBatchReceiptRef] = useState('');
+  const [newBatchReceiptNotes, setNewBatchReceiptNotes] = useState('');
   const [showMarkPaidModal, setShowMarkPaidModal] = useState(false);
   const [markPaidVoucher, setMarkPaidVoucher] = useState(null);
   const [paymentReference, setPaymentReference] = useState('');
@@ -3760,6 +3772,15 @@ const VoucherList = ({ filter }) => {
                 {/* Awaiting Payment → Defer: remove from queue back to OTP Verified */}
                 {v.status === 'awaiting_payment' && (user.role === 'accounts' || user.role === 'admin' || user.isSuperAdmin) && (<button className="btn btn-sm" style={{background:'#6b7280',color:'white',border:'none',borderRadius:'6px',padding:'0.3rem 0.65rem',fontSize:'0.8rem',cursor:'pointer',fontWeight:600}} onClick={() => handleDequeuePayment(v)} disabled={loading}>↩ Defer</button>)}
                 {v.status === 'paid' && (<span style={{background:'#dcfce7',color:'#166534',border:'1px solid #86efac',borderRadius:'6px',padding:'0.25rem 0.65rem',fontSize:'0.8rem',fontWeight:700,letterSpacing:'0.02em'}}>✅ PAID</span>)}
+                {v.status === 'paid' && v.batch_id && (user.role === 'accounts' || user.role === 'admin' || user.isSuperAdmin) && (
+                  <button className="btn btn-sm" style={{background:'#1d4ed8',color:'white',border:'none',borderRadius:'6px',padding:'0.3rem 0.65rem',fontSize:'0.8rem',cursor:'pointer',fontWeight:600}} title="View or add transaction receipts for this combined payment" onClick={async () => {
+                    setBatchReceiptsModal({ batchId: v.batch_id, batchReference: v.batch_reference || v.batch_id, payeeName: v.payee_name });
+                    setBatchReceiptsList([]); setNewBatchReceiptData(''); setNewBatchReceiptMime(''); setNewBatchReceiptPreview(''); setNewBatchReceiptRef(''); setNewBatchReceiptNotes('');
+                    setBatchReceiptsListLoading(true);
+                    try { const r = await api.getBatchReceipts(v.batch_id); setBatchReceiptsList(r); } catch (e) { addToast(e.message, 'error'); }
+                    setBatchReceiptsListLoading(false);
+                  }}>📎 Receipts</button>
+                )}
               </div></td>
             </tr>))}
           </tbody></table></div>
@@ -3858,6 +3879,15 @@ const VoucherList = ({ filter }) => {
                       </a>
                     )}
                   </div>
+                )}
+                {selectedVoucher.batch_id && (user.role === 'accounts' || user.role === 'admin' || user.isSuperAdmin) && (
+                  <button className="btn btn-sm" style={{marginTop:'0.6rem',background:'#1d4ed8',color:'white',border:'none',borderRadius:'6px',width:'100%',padding:'0.4rem',fontWeight:600,cursor:'pointer',fontSize:'0.82rem'}} onClick={async () => {
+                    setBatchReceiptsModal({ batchId: selectedVoucher.batch_id, batchReference: selectedVoucher.batch_reference || selectedVoucher.batch_id, payeeName: selectedVoucher.payee_name });
+                    setBatchReceiptsList([]); setNewBatchReceiptData(''); setNewBatchReceiptMime(''); setNewBatchReceiptPreview(''); setNewBatchReceiptRef(''); setNewBatchReceiptNotes('');
+                    setBatchReceiptsListLoading(true);
+                    try { const r = await api.getBatchReceipts(selectedVoucher.batch_id); setBatchReceiptsList(r); } catch (e) { addToast(e.message, 'error'); }
+                    setBatchReceiptsListLoading(false);
+                  }}>📎 View / Add Batch Receipts</button>
                 )}
               </div>
             )}
@@ -4549,12 +4579,20 @@ const VoucherList = ({ filter }) => {
                 {(user.role === 'accounts' || user.isSuperAdmin) && (
                   <div style={{borderTop:'1px solid #e5e7eb',paddingTop:'0.75rem',marginTop:'0.25rem'}}>
                     <p style={{fontSize:'0.82rem',fontWeight:600,color:'#374151',marginBottom:'0.5rem'}}>Confirm payment made:</p>
+                    <div style={{fontSize:'0.76rem',color:'#6b7280',background:'#f9fafb',border:'1px solid #e5e7eb',borderRadius:'6px',padding:'0.45rem 0.65rem',marginBottom:'0.5rem',lineHeight:'1.4'}}>
+                      💡 If you made individual payments instead of one combined transfer, confirm here with any one receipt — then use <strong>📎 Receipts</strong> on the paid voucher row to attach additional receipts.
+                    </div>
                     <input className="form-input" placeholder="UTR / Transaction reference" value={batchPaidRef} onChange={e => setBatchPaidRef(e.target.value)} style={{marginBottom:'0.5rem'}} />
                     <textarea className="form-input" placeholder="Notes (optional)" value={batchPaidNotes} onChange={e => setBatchPaidNotes(e.target.value)} rows={2} style={{marginBottom:'0.5rem',resize:'none'}} />
-                    <label className="btn btn-sm btn-secondary" style={{cursor:'pointer',display:'inline-flex',alignItems:'center',gap:'4px',marginBottom:'0.25rem'}}>
-                      📎 {batchReceiptPreview ? (batchReceiptPreview === 'pdf' ? 'PDF selected' : 'Image selected') : 'Upload receipt'}
-                      <input type="file" accept="image/*,.pdf" style={{display:'none'}} onChange={handleBatchReceiptUpload} />
-                    </label>
+                    <div style={{display:'flex',alignItems:'center',gap:'0.5rem',flexWrap:'wrap'}}>
+                      <label className="btn btn-sm btn-secondary" style={{cursor:'pointer',display:'inline-flex',alignItems:'center',gap:'4px'}}>
+                        📎 {batchReceiptPreview ? (batchReceiptPreview === 'pdf' ? '📄 PDF selected' : '🖼 Image selected') : 'Upload receipt (optional)'}
+                        <input type="file" accept="image/*,.pdf" style={{display:'none'}} onChange={handleBatchReceiptUpload} />
+                      </label>
+                      {batchReceiptPreview && (
+                        <button onClick={() => { setBatchReceiptData(''); setBatchReceiptMime(''); setBatchReceiptPreview(''); }} style={{background:'none',border:'none',color:'#ef4444',cursor:'pointer',fontSize:'0.8rem',padding:'2px 6px'}}>✕ Remove</button>
+                      )}
+                    </div>
                     {batchReceiptPreview && batchReceiptPreview !== 'pdf' && <img src={batchReceiptPreview} alt="receipt" style={{display:'block',maxHeight:'80px',borderRadius:'4px',marginTop:'4px'}} />}
                   </div>
                 )}
@@ -4564,6 +4602,120 @@ const VoucherList = ({ filter }) => {
                 {(user.role === 'accounts' || user.isSuperAdmin) && (
                   <button className="btn btn-success" onClick={handleConfirmBatchPaid} disabled={batchPaying || (!batchPaidRef.trim() && !batchReceiptData)}>
                     {batchPaying ? Icons.loader : '✅'} Confirm Batch Paid
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ─── Batch Receipts Modal ─── */}
+      {/* Opens for paid batch vouchers: lists all uploaded receipts and allows adding more */}
+      {batchReceiptsModal && (() => {
+        const bm = batchReceiptsModal;
+
+        const handleNewReceiptFile = (e) => {
+          const file = e.target.files[0];
+          if (!file) return;
+          if (file.size > 5 * 1024 * 1024) { addToast('Receipt must be under 5 MB', 'error'); return; }
+          const reader = new FileReader();
+          reader.onload = (ev) => {
+            const base64 = ev.target.result.split(',')[1];
+            setNewBatchReceiptData(base64); setNewBatchReceiptMime(file.type);
+            setNewBatchReceiptPreview(file.type.startsWith('image/') ? ev.target.result : 'pdf');
+          };
+          reader.readAsDataURL(file);
+        };
+
+        const handleUploadNewReceipt = async () => {
+          if (!newBatchReceiptData) { addToast('Please select a file to upload', 'error'); return; }
+          setAddingBatchReceipt(true);
+          try {
+            await api.addBatchReceipt(bm.batchId, {
+              uploadedBy: user.id,
+              receiptData: newBatchReceiptData,
+              receiptMimeType: newBatchReceiptMime,
+              paymentReference: newBatchReceiptRef.trim() || null,
+              notes: newBatchReceiptNotes.trim() || null
+            });
+            addToast('Receipt uploaded ✅', 'success');
+            setNewBatchReceiptData(''); setNewBatchReceiptMime(''); setNewBatchReceiptPreview('');
+            setNewBatchReceiptRef(''); setNewBatchReceiptNotes('');
+            // Reload list
+            setBatchReceiptsListLoading(true);
+            try { const r = await api.getBatchReceipts(bm.batchId); setBatchReceiptsList(r); } catch {}
+            setBatchReceiptsListLoading(false);
+          } catch (err) { addToast(err.message || 'Upload failed', 'error'); }
+          setAddingBatchReceipt(false);
+        };
+
+        return (
+          <div className="modal-overlay" onClick={() => setBatchReceiptsModal(null)}>
+            <div className="modal" onClick={e => e.stopPropagation()} style={{maxWidth:'500px'}}>
+              <div className="modal-header" style={{background:'#1d4ed8',color:'white'}}>
+                <h3 className="modal-title" style={{color:'white'}}>📎 Batch Receipts — {bm.batchReference}</h3>
+                <button className="modal-close" style={{color:'white'}} onClick={() => setBatchReceiptsModal(null)}>×</button>
+              </div>
+              <div className="modal-body">
+                <div style={{background:'#eff6ff',border:'1px solid #bfdbfe',borderRadius:'8px',padding:'0.6rem 0.9rem',marginBottom:'0.9rem',fontSize:'0.85rem',color:'#1d4ed8'}}>
+                  Combined payment to <strong>{bm.payeeName}</strong>. Upload individual transaction receipts if payments were made separately.
+                </div>
+
+                {/* Existing receipts */}
+                {batchReceiptsListLoading ? (
+                  <p style={{textAlign:'center',color:'#6b7280',fontSize:'0.85rem',padding:'0.5rem'}}>Loading receipts…</p>
+                ) : batchReceiptsList.length === 0 ? (
+                  <p style={{color:'#6b7280',fontSize:'0.85rem',marginBottom:'0.75rem'}}>No receipts uploaded yet for this batch.</p>
+                ) : (
+                  <div style={{marginBottom:'0.75rem'}}>
+                    <p style={{fontWeight:600,fontSize:'0.82rem',color:'#374151',marginBottom:'0.4rem'}}>Uploaded Receipts ({batchReceiptsList.length})</p>
+                    {batchReceiptsList.map((r, idx) => (
+                      <div key={r.id} style={{background:'#f8fafc',border:'1px solid #e2e8f0',borderRadius:'8px',padding:'0.65rem 0.9rem',marginBottom:'0.5rem'}}>
+                        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'4px'}}>
+                          <span style={{fontWeight:600,fontSize:'0.82rem',color:'#1d4ed8'}}>Receipt {idx + 1}</span>
+                          <span style={{fontSize:'0.72rem',color:'#9ca3af'}}>{r.uploader?.name} · {new Date(r.uploaded_at).toLocaleDateString('en-IN')}</span>
+                        </div>
+                        {r.payment_reference && (
+                          <div style={{fontSize:'0.82rem',color:'#374151',marginBottom:'3px'}}>UTR: <strong style={{fontFamily:'monospace'}}>{r.payment_reference}</strong></div>
+                        )}
+                        {r.notes && <div style={{fontSize:'0.8rem',color:'#6b7280',marginBottom:'4px'}}>{r.notes}</div>}
+                        {r.receipt_url.match(/\.(jpg|jpeg|png|webp|gif)(\?|$)/i) ? (
+                          <a href={r.receipt_url} target="_blank" rel="noopener noreferrer">
+                            <img src={r.receipt_url} alt={`Receipt ${idx + 1}`} style={{width:'100%',maxHeight:'100px',objectFit:'contain',borderRadius:'4px',border:'1px solid #e2e8f0',cursor:'pointer',marginTop:'4px'}} />
+                          </a>
+                        ) : (
+                          <a href={r.receipt_url} target="_blank" rel="noopener noreferrer" style={{display:'inline-flex',alignItems:'center',gap:'4px',fontSize:'0.82rem',color:'#2563eb',marginTop:'4px'}}>📄 View Receipt</a>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Upload new receipt */}
+                {(user.role === 'accounts' || user.role === 'admin' || user.isSuperAdmin) && (
+                  <div style={{borderTop:'1px solid #e5e7eb',paddingTop:'0.75rem'}}>
+                    <p style={{fontWeight:600,fontSize:'0.82rem',color:'#374151',marginBottom:'0.5rem'}}>Upload New Receipt:</p>
+                    <input className="form-input" placeholder="UTR / Transaction reference (optional)" value={newBatchReceiptRef} onChange={e => setNewBatchReceiptRef(e.target.value)} style={{marginBottom:'0.4rem'}} />
+                    <textarea className="form-input" placeholder="Notes (optional)" value={newBatchReceiptNotes} onChange={e => setNewBatchReceiptNotes(e.target.value)} rows={2} style={{marginBottom:'0.4rem',resize:'none'}} />
+                    <label className="btn btn-sm btn-secondary" style={{cursor:'pointer',display:'inline-flex',alignItems:'center',gap:'4px',marginBottom:'0.25rem'}}>
+                      📎 {newBatchReceiptPreview ? (newBatchReceiptPreview === 'pdf' ? '📄 PDF selected' : '🖼 Image selected') : 'Choose file…'}
+                      <input type="file" accept="image/*,.pdf" style={{display:'none'}} onChange={handleNewReceiptFile} />
+                    </label>
+                    {newBatchReceiptPreview && newBatchReceiptPreview !== 'pdf' && (
+                      <div style={{position:'relative',display:'inline-block',marginLeft:'8px'}}>
+                        <img src={newBatchReceiptPreview} alt="preview" style={{maxHeight:'60px',borderRadius:'4px',border:'1px solid #e2e8f0',verticalAlign:'middle'}} />
+                        <button onClick={() => { setNewBatchReceiptData(''); setNewBatchReceiptMime(''); setNewBatchReceiptPreview(''); }} style={{position:'absolute',top:'-6px',right:'-6px',background:'#ef4444',color:'white',border:'none',borderRadius:'50%',width:'18px',height:'18px',cursor:'pointer',fontSize:'0.7rem',lineHeight:'18px',textAlign:'center',padding:0}}>×</button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+              <div className="modal-footer">
+                <button className="btn btn-secondary" onClick={() => setBatchReceiptsModal(null)}>Close</button>
+                {(user.role === 'accounts' || user.role === 'admin' || user.isSuperAdmin) && (
+                  <button className="btn btn-primary" onClick={handleUploadNewReceipt} disabled={addingBatchReceipt || !newBatchReceiptData}>
+                    {addingBatchReceipt ? Icons.loader : '⬆'} Upload Receipt
                   </button>
                 )}
               </div>

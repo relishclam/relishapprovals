@@ -1829,10 +1829,25 @@ app.get('/api/companies/:companyId/vouchers', async (req, res) => {
       company_name: v.company?.name,
       company_address: v.company?.address,
       company_gst: v.company?.gst,
-      attachment_count: attCounts[v.id] || 0
+      attachment_count: attCounts[v.id] || 0,
+      batch_id: v.batch_id || null
+    }));
+
+    // Attach batch_reference for vouchers paid via a batch (separate query to avoid
+    // PostgREST ambiguity with the payment_batches FK).
+    const batchIds = [...new Set(formattedVouchers.map(v => v.batch_id).filter(Boolean))];
+    let batchRefMap = {};
+    if (batchIds.length > 0) {
+      const { data: batchRows } = await supabase.from('payment_batches')
+        .select('id, batch_reference').in('id', batchIds);
+      (batchRows || []).forEach(b => { batchRefMap[b.id] = b.batch_reference; });
+    }
+    const enrichedVouchers = formattedVouchers.map(v => ({
+      ...v,
+      batch_reference: v.batch_id ? (batchRefMap[v.batch_id] || null) : null
     }));
     
-    res.json(formattedVouchers);
+    res.json(enrichedVouchers);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -5444,10 +5459,79 @@ app.post('/api/batches/:id/mark-paid', async (req, res) => {
       }
     }
 
+    // Insert into payment_batch_receipts if a receipt was uploaded (enables multi-receipt later)
+    if (receiptUrl) {
+      await supabase.from('payment_batch_receipts').insert({
+        batch_id: req.params.id,
+        receipt_url: receiptUrl,
+        payment_reference: paymentReference || null,
+        notes: paymentNotes || null,
+        uploaded_by: paidBy
+      });
+    }
+
     console.log(`   ✅ Batch ${batch.batch_reference} marked paid by ${paidBy} — ${rpcResult?.vouchers_paid} vouchers | UTR: ${paymentReference || 'N/A'}`);
     res.json({ success: true, ...rpcResult, receiptUrl });
   } catch (error) {
     console.error('mark-batch-paid error:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// List all receipts for a payment batch
+app.get('/api/batches/:id/receipts', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('payment_batch_receipts')
+      .select('id, receipt_url, payment_reference, notes, uploaded_at, uploader:users!uploaded_by(name)')
+      .eq('batch_id', req.params.id)
+      .order('uploaded_at', { ascending: true });
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data || []);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Upload an additional receipt to a payment batch (works for pending OR paid batches)
+app.post('/api/batches/:id/receipts', async (req, res) => {
+  const { uploadedBy, receiptData, receiptMimeType, paymentReference, notes } = req.body;
+  if (!uploadedBy) return res.status(400).json({ error: 'uploadedBy is required' });
+  if (!receiptData || !receiptMimeType) return res.status(400).json({ error: 'receiptData and receiptMimeType are required' });
+
+  try {
+    const actor = await getActorRole(uploadedBy);
+    if (actor.role !== 'accounts' && actor.role !== 'admin' && !actor.is_super_admin)
+      return res.status(403).json({ error: 'Only Accounts or Admin users can upload batch receipts' });
+
+    const { data: batch, error: bErr } = await supabase.from('payment_batches')
+      .select('id, batch_reference, company_id, status').eq('id', req.params.id).single();
+    if (bErr || !batch) return res.status(404).json({ error: 'Payment batch not found' });
+    if (!['pending', 'paid'].includes(batch.status))
+      return res.status(400).json({ error: `Cannot add receipts to a ${batch.status} batch` });
+
+    const ext = receiptMimeType === 'application/pdf' ? 'pdf'
+      : receiptMimeType.startsWith('image/') ? receiptMimeType.split('/')[1] : 'jpg';
+    const fileName = `${batch.company_id}/batch-receipts/${req.params.id}/receipt_${Date.now()}.${ext}`;
+    const buffer = Buffer.from(receiptData, 'base64');
+    const { error: storageErr } = await supabase.storage.from('voucher-bills')
+      .upload(fileName, buffer, { contentType: receiptMimeType, upsert: false });
+    if (storageErr) return res.status(500).json({ error: `Storage upload failed: ${storageErr.message}` });
+    const { data: urlData } = supabase.storage.from('voucher-bills').getPublicUrl(fileName);
+    const receiptUrl = urlData.publicUrl;
+
+    const { data: inserted, error: insErr } = await supabase.from('payment_batch_receipts').insert({
+      batch_id: req.params.id,
+      receipt_url: receiptUrl,
+      payment_reference: paymentReference || null,
+      notes: notes || null,
+      uploaded_by: uploadedBy
+    }).select().single();
+    if (insErr) return res.status(400).json({ error: insErr.message });
+
+    console.log(`   📎 Receipt added to batch ${batch.batch_reference} by ${uploadedBy}`);
+    res.json({ success: true, receipt: inserted });
+  } catch (error) {
+    console.error('add-batch-receipt error:', error.message);
     res.status(500).json({ error: error.message });
   }
 });
