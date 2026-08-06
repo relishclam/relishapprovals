@@ -5277,6 +5277,32 @@ app.post('/api/receipts/auto-complete', async (req, res) => {
       return res.json({ outcome: 'completed', voucherId: voucher.id, serialNumber: voucher.serial_number, utr, receiptUrl });
     }
 
+    // ── Backfill path: attach receipt and record UTR on already-paid voucher ─
+    if (decision.outcome === 'backfill') {
+      const { voucher, ocrData } = decision;
+      const receiptUrl = await _uploadPaymentReceiptToStorage(
+        voucher.id, voucher.company_id, voucher.serial_number, fileBuffer, receiptMimeType
+      );
+      // NOTE: payment_reference = UTR — maps to pramaana.vouchers.utr_number in the sync; do not rename
+      const utr = ocrData.utr_number || null;
+      const update = {};
+      if (utr) update.payment_reference = utr;
+      if (receiptUrl && !voucher.payment_receipt_url) update.payment_receipt_url = receiptUrl;
+      if (Object.keys(update).length > 0) {
+        const { error: upErr } = await supabase.from('vouchers').update(update).eq('id', voucher.id);
+        if (upErr) throw upErr;
+      }
+      if (utr && voucher.prepared_by) {
+        await supabase.from('notifications').insert({
+          user_id: voucher.prepared_by, title: '📎 Receipt & UTR Recorded',
+          message: `Receipt attached to ${voucher.serial_number}. UTR: ${utr}`,
+          type: 'completed', voucher_id: voucher.id,
+        });
+      }
+      console.log(`[auto-complete] 📎 backfill ${voucher.serial_number} | UTR: ${utr || 'N/A'}`);
+      return res.json({ outcome: 'backfilled', voucherId: voucher.id, serialNumber: voucher.serial_number, utr, receiptUrl });
+    }
+
     // ── Queued path: save file to unassigned-receipts storage ────────────────
     const ext = receiptMimeType === 'application/pdf' ? 'pdf' : (receiptMimeType.split('/')[1] || 'jpg');
     const unassignedPath = `${companyId}/unassigned-receipts/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
@@ -5893,14 +5919,23 @@ async function _autoCompleteMatch(fileBuffer, mimeType, companyId, fileName) {
   const vchMatches = extractVchNumbers(rawText);
   const primaryVch = vchMatches[0] ?? null;
 
+  // Primary pool: vouchers awaiting payment (no receipt yet, not in a batch)
   const { data: candidates, error: poolErr } = await supabase.from('vouchers')
-    .select('id, serial_number, amount, status, prepared_by, company_id, queued_at, created_at')
+    .select('id, serial_number, amount, status, prepared_by, company_id, queued_at, created_at, payment_reference')
     .eq('company_id', companyId)
     .in('status', ['awaiting_payment', 'completed'])
     .is('payment_receipt_url', null)
     .is('batch_id', null);
   if (poolErr) throw new Error(`Candidate pool query failed: ${poolErr.message}`);
   const pool = candidates || [];
+
+  // Backfill pool: already-paid vouchers where UTR was never recorded
+  const { data: backfillCandidates } = await supabase.from('vouchers')
+    .select('id, serial_number, amount, status, prepared_by, company_id, payment_reference, payment_receipt_url')
+    .eq('company_id', companyId)
+    .eq('status', 'paid')
+    .is('payment_reference', null);
+  const backfillPool = backfillCandidates || [];
 
   let ocrAmount = null;
   if (ocrData.amount !== null && ocrData.amount !== undefined) {
@@ -5911,6 +5946,8 @@ async function _autoCompleteMatch(fileBuffer, mimeType, companyId, fileName) {
   // ── PATH A: VCH reference match ───────────────────────────────────────────
   if (primaryVch) {
     const allSeqs = [...new Set(vchMatches.map(m => m.seq))];
+
+    // Check primary pool first
     const refHits = pool.filter(v => {
       const dbSeq = parseDbSerialSeq(v.serial_number);
       return dbSeq !== null && allSeqs.includes(dbSeq);
@@ -5918,17 +5955,50 @@ async function _autoCompleteMatch(fileBuffer, mimeType, companyId, fileName) {
 
     if (refHits.length === 1) {
       const matched = refHits[0];
-      // Amount guard: even ₹1 mismatch → review queue
       if (ocrAmount !== null && Math.abs(ocrAmount - parseFloat(matched.amount)) > 0.01) {
         return { outcome: 'queued', reason: `Amount mismatch: receipt ₹${ocrAmount} vs voucher ₹${parseFloat(matched.amount)} (${matched.serial_number}) — manual review required`, ocrData, pool };
       }
       return { outcome: 'complete', voucher: matched, ocrData, matchedBy: 'reference' };
     }
 
-    // Reference found but ambiguous or not in pool — fall through to amount if available
+    // Check backfill pool (paid + null UTR) by VCH reference
+    const backfillHits = backfillPool.filter(v => {
+      const dbSeq = parseDbSerialSeq(v.serial_number);
+      return dbSeq !== null && allSeqs.includes(dbSeq);
+    });
+    if (backfillHits.length === 1) {
+      const matched = backfillHits[0];
+      if (ocrAmount !== null && Math.abs(ocrAmount - parseFloat(matched.amount)) > 0.01) {
+        return { outcome: 'queued', reason: `Amount mismatch: receipt ₹${ocrAmount} vs paid voucher ₹${parseFloat(matched.amount)} (${matched.serial_number})`, ocrData, pool };
+      }
+      return { outcome: 'backfill', voucher: matched, ocrData };
+    }
+
+    // Check for UTR conflict: paid voucher with existing payment_reference that differs from OCR UTR
+    if (refHits.length === 0 && backfillHits.length === 0) {
+      const { data: conflictRows } = await supabase.from('vouchers')
+        .select('id, serial_number, payment_reference')
+        .eq('company_id', companyId)
+        .eq('status', 'paid')
+        .not('payment_reference', 'is', null);
+      const conflictHit = (conflictRows || []).find(v => {
+        const dbSeq = parseDbSerialSeq(v.serial_number);
+        return dbSeq !== null && allSeqs.includes(dbSeq);
+      });
+      if (conflictHit) {
+        const ocrUtr = ocrData.utr_number;
+        const reason = ocrUtr && conflictHit.payment_reference !== ocrUtr
+          ? `UTR conflict: voucher ${conflictHit.serial_number} has UTR ${conflictHit.payment_reference}, receipt shows ${ocrUtr}`
+          : `Voucher ${conflictHit.serial_number} is already paid (UTR: ${conflictHit.payment_reference}) — no action needed`;
+        return { outcome: 'queued', reason, ocrData, pool };
+      }
+    }
+
+    // Reference found but ambiguous or not in any pool
     if (ocrAmount === null) {
       return { outcome: 'queued', reason: `Reference ${primaryVch.raw} found but matched ${refHits.length} voucher(s) in queue — ambiguous`, ocrData, pool };
     }
+    // Fall through to amount path with available ocrAmount
   }
 
   // ── PATH B: Amount fallback ────────────────────────────────────────────────
@@ -5939,6 +6009,11 @@ async function _autoCompleteMatch(fileBuffer, mimeType, companyId, fileName) {
   const amountHits = pool.filter(v => Math.abs(parseFloat(v.amount) - ocrAmount) <= 0.01);
 
   if (amountHits.length === 0) {
+    // Check backfill pool by amount before giving up
+    const backfillAmountHits = backfillPool.filter(v => Math.abs(parseFloat(v.amount) - ocrAmount) <= 0.01);
+    if (backfillAmountHits.length === 1) {
+      return { outcome: 'backfill', voucher: backfillAmountHits[0], ocrData };
+    }
     return { outcome: 'queued', reason: `No voucher in the payment queue matches ₹${ocrAmount.toFixed(2)}`, ocrData, pool };
   }
 
@@ -5946,7 +6021,7 @@ async function _autoCompleteMatch(fileBuffer, mimeType, companyId, fileName) {
     return { outcome: 'complete', voucher: amountHits[0], ocrData, matchedBy: 'amount' };
   }
 
-  // Multiple matches — tie-break: the one queued/updated within the last 4 hours wins only if unique
+  // Tie-break: only the one queued/updated within the last 4 hours wins only if unique
   const cutoff = Date.now() - 4 * 60 * 60 * 1000;
   const recent = amountHits.filter(v => new Date(v.queued_at || v.created_at).getTime() > cutoff);
   if (recent.length === 1) {
@@ -6127,21 +6202,26 @@ async function matchReceiptToVoucher(fileBuffer, mimeType, companyId, fileName =
   const primaryCpay = cpayMatches[0] ?? null;
   const primaryVch  = vchMatches[0]  ?? null;
 
-  // ── Step 3: Query candidate vouchers AND candidate batches ────────────────
-  const { data: candidateVouchers, error: dbError } = await supabase
-    .from('vouchers')
-    .select('id, serial_number, amount, status, payment_receipt_url')
-    .eq('company_id', companyId)
-    .in('status', ['awaiting_payment', 'completed'])
-    .is('payment_receipt_url', null);
+  // ── Step 3: Query candidate vouchers AND candidate batches + backfill pool ─
+  const [{ data: candidateVouchers, error: dbError }, { data: backfillData }, { data: batchData }] = await Promise.all([
+    supabase.from('vouchers')
+      .select('id, serial_number, amount, status, payment_receipt_url')
+      .eq('company_id', companyId)
+      .in('status', ['awaiting_payment', 'completed'])
+      .is('payment_receipt_url', null),
+    supabase.from('vouchers')
+      .select('id, serial_number, amount, payment_reference')
+      .eq('company_id', companyId)
+      .eq('status', 'paid')
+      .is('payment_reference', null),
+    supabase.from('payment_batches')
+      .select('id, batch_reference, total_amount, status, payee_id, payment_mode, payees(name)')
+      .eq('company_id', companyId)
+      .eq('status', 'pending'),
+  ]);
   if (dbError) throw new Error(`Voucher query failed: ${dbError.message}`);
   const candidates = candidateVouchers ?? [];
-
-  const { data: batchData } = await supabase
-    .from('payment_batches')
-    .select('id, batch_reference, total_amount, status, payee_id, payment_mode, payees(name)')
-    .eq('company_id', companyId)
-    .eq('status', 'pending');
+  const backfills = backfillData ?? [];
   const batchCandidates = batchData ?? [];
 
   // ── Step 4: CPAY match (takes priority — batch references are unambiguous) ─
@@ -6149,15 +6229,15 @@ async function matchReceiptToVoucher(fileBuffer, mimeType, companyId, fileName =
     const batchHits = batchCandidates.filter(b => parseDbBatchSeq(b.batch_reference) === primaryCpay.seq);
     if (batchHits.length === 1) {
       console.log(`[matchReceiptToVoucher] HIGH confidence BATCH match: ${primaryCpay.raw} → ${batchHits[0].batch_reference}`);
-      return { matchType: 'batch', matchedVoucherId: null, matchedBatchId: batchHits[0].id, confidence: 'high', extractedReference: primaryCpay.raw, candidateVouchers: candidates, candidateBatches: batchCandidates };
+      return { matchType: 'batch', matchedVoucherId: null, matchedBatchId: batchHits[0].id, confidence: 'high', extractedReference: primaryCpay.raw, candidateVouchers: candidates, candidateBatches: batchCandidates, backfillVouchers: [] };
     }
     console.log(`[matchReceiptToVoucher] LOW confidence BATCH: ref=${primaryCpay.raw} matched ${batchHits.length} batch(es)`);
-    return { matchType: 'batch', matchedVoucherId: null, matchedBatchId: null, confidence: 'low', extractedReference: primaryCpay.raw, candidateVouchers: candidates, candidateBatches: batchCandidates };
+    return { matchType: 'batch', matchedVoucherId: null, matchedBatchId: null, confidence: 'low', extractedReference: primaryCpay.raw, candidateVouchers: candidates, candidateBatches: batchCandidates, backfillVouchers: [] };
   }
 
   // ── Step 5: VCH match (single or multi-voucher) ───────────────────────────
   if (!primaryVch) {
-    return { matchType: 'none', matchedVoucherId: null, matchedBatchId: null, confidence: 'none', extractedReference: null, candidateVouchers: candidates, candidateBatches: batchCandidates };
+    return { matchType: 'none', matchedVoucherId: null, matchedBatchId: null, confidence: 'none', extractedReference: null, candidateVouchers: candidates, candidateBatches: batchCandidates, backfillVouchers: [] };
   }
 
   const allSeqs = [...new Set(vchMatches.map(m => m.seq))];
@@ -6168,11 +6248,17 @@ async function matchReceiptToVoucher(fileBuffer, mimeType, companyId, fileName =
 
   if (exactHits.length === 1) {
     console.log(`[matchReceiptToVoucher] HIGH confidence match: ${primaryVch.raw} → ${exactHits[0].serial_number}`);
-    return { matchType: 'voucher', matchedVoucherId: exactHits[0].id, matchedBatchId: null, confidence: 'high', extractedReference: primaryVch.raw, candidateVouchers: candidates, candidateBatches: batchCandidates };
+    return { matchType: 'voucher', matchedVoucherId: exactHits[0].id, matchedBatchId: null, confidence: 'high', extractedReference: primaryVch.raw, candidateVouchers: candidates, candidateBatches: batchCandidates, backfillVouchers: [] };
   }
 
-  console.log(`[matchReceiptToVoucher] LOW confidence: ${allSeqs.length} seq(s) [${allSeqs.join(',')}] matched ${exactHits.length} voucher(s) in queue`);
-  return { matchType: 'voucher', matchedVoucherId: null, matchedBatchId: null, confidence: 'low', extractedReference: primaryVch.raw, candidateVouchers: candidates, candidateBatches: batchCandidates };
+  // Check backfill pool (paid + null UTR) for the same VCH sequence(s)
+  const backfillHits = backfills.filter(v => {
+    const dbSeq = parseDbSerialSeq(v.serial_number);
+    return dbSeq !== null && allSeqs.includes(dbSeq);
+  });
+
+  console.log(`[matchReceiptToVoucher] LOW confidence: ${allSeqs.length} seq(s) [${allSeqs.join(',')}] matched ${exactHits.length} voucher(s) in queue, ${backfillHits.length} backfill candidate(s)`);
+  return { matchType: 'voucher', matchedVoucherId: null, matchedBatchId: null, confidence: 'low', extractedReference: primaryVch.raw, candidateVouchers: candidates, candidateBatches: batchCandidates, backfillVouchers: backfillHits };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -6484,6 +6570,46 @@ app.post('/api/unassigned-receipts/:id/dismiss', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// POST /api/receipts/deposit-unassigned
+// Safety-net: deposits a file into unassigned_receipts without running OCR.
+// Called fire-and-forget from _runReconcile's error fallback so a shared
+// receipt is never droppable by closing the modal without assigning.
+app.post('/api/receipts/deposit-unassigned', async (req, res) => {
+  const { requestedBy, receiptData, receiptMimeType, companyId, extractedData } = req.body;
+  if (!requestedBy || !receiptData || !receiptMimeType || !companyId)
+    return res.status(400).json({ error: 'requestedBy, receiptData, receiptMimeType, companyId are required' });
+
+  const actor = await getActorRole(requestedBy);
+  if (actor.role !== 'accounts' && actor.role !== 'admin' && !actor.is_super_admin)
+    return res.status(403).json({ error: 'Accounts or Admin role required' });
+
+  let fileBuffer;
+  try { fileBuffer = Buffer.from(receiptData, 'base64'); }
+  catch { return res.status(400).json({ error: 'receiptData is not valid base64' }); }
+
+  const ext = receiptMimeType === 'application/pdf' ? 'pdf' : (receiptMimeType.split('/')[1] || 'jpg');
+  const unassignedPath = `${companyId}/unassigned-receipts/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+  let fileUrl = '';
+  const { error: storeErr } = await supabase.storage
+    .from('voucher-bills')
+    .upload(unassignedPath, fileBuffer, { contentType: receiptMimeType, upsert: false });
+  if (!storeErr) {
+    const { data: urlData } = supabase.storage.from('voucher-bills').getPublicUrl(unassignedPath);
+    fileUrl = urlData.publicUrl;
+  }
+
+  const { data: record } = await supabase.from('unassigned_receipts').insert({
+    company_id:     companyId,
+    storage_path:   unassignedPath,
+    file_url:       fileUrl,
+    mime_type:      receiptMimeType,
+    extracted_data: extractedData || null,
+    match_reason:   'Deposited via share-target fallback (auto-complete error)',
+  }).select('id').single();
+
+  res.json({ success: true, id: record?.id, fileUrl });
 });
 
 // Export the Express app for Vercel serverless deployment

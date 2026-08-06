@@ -380,6 +380,8 @@ const api = {
     .then(async r => { const json = await r.json(); if (!r.ok) throw new Error(json.message || json.error || 'Match request failed'); return json; }),
   autoCompleteReceipt: (data) => fetch(`${API_BASE}/receipts/auto-complete`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
     .then(async r => { const json = await r.json(); if (!r.ok) throw new Error(json.message || json.error || 'Auto-complete failed'); return json; }),
+  depositUnassigned: (data) => fetch(`${API_BASE}/receipts/deposit-unassigned`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
+    .then(async r => r.json()).catch(() => ({})),
   getUnassignedReceipts: (companyId, requestedBy) => fetch(`${API_BASE}/companies/${companyId}/unassigned-receipts?requestedBy=${requestedBy}`).then(r => r.json()),
   assignUnassignedReceipt: (id, data) => fetch(`${API_BASE}/unassigned-receipts/${id}/assign`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
   dismissUnassignedReceipt: (id, data) => fetch(`${API_BASE}/unassigned-receipts/${id}/dismiss`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
@@ -10514,6 +10516,17 @@ const ReceiptShareModal = ({ state, onClose }) => {
               </div>
             </div>
           )}
+          {step === 'backfilled' && (
+            <div style={{ textAlign: 'center', padding: '1.5rem 0.5rem' }}>
+              <div style={{ background: '#eff6ff', border: '2px solid #bfdbfe', borderRadius: '10px', padding: '1.5rem', marginBottom: '0.75rem' }}>
+                <div style={{ fontSize: '2.5rem', marginBottom: '0.5rem' }}>📎</div>
+                <div style={{ fontWeight: 700, color: '#1d4ed8', fontSize: '1.05rem', marginBottom: '4px' }}>Receipt Attached & UTR Recorded</div>
+                {autoResult?.serialNumber && <div style={{ fontFamily: 'monospace', fontWeight: 600, color: '#1e40af', marginBottom: '4px' }}>{autoResult.serialNumber}</div>}
+                {autoResult?.utr && <div style={{ fontSize: '0.82rem', color: '#6b7280', marginTop: '4px' }}>UTR: <code>{autoResult.utr}</code></div>}
+                <div style={{ fontSize: '0.8rem', color: '#93c5fd', marginTop: '10px' }}>Voucher was already paid · UTR now on record.</div>
+              </div>
+            </div>
+          )}
           {step === 'queued' && (
             <div style={{ textAlign: 'center', padding: '1.5rem 0.5rem' }}>
               <div style={{ background: '#fffbeb', border: '2px solid #fde68a', borderRadius: '10px', padding: '1.5rem', marginBottom: '0.75rem' }}>
@@ -10526,6 +10539,11 @@ const ReceiptShareModal = ({ state, onClose }) => {
           )}
           {step === 'result' && (
             <>
+              {state.unassignedId && (
+                <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '8px', padding: '0.6rem 0.75rem', marginBottom: '0.75rem', fontSize: '0.8rem', color: '#166534' }}>
+                  🟢 Receipt saved in review queue — safe to dismiss if you can't find the voucher here.
+                </div>
+              )}
               {errorMsg && (
                 <div style={{ background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: '8px', padding: '0.75rem', marginBottom: '1rem', fontSize: '0.875rem', color: '#991b1b' }}>
                   ⚠️ Matching unavailable — {errorMsg}. Select the voucher manually below.
@@ -11594,30 +11612,41 @@ const App = () => {
 
       // Helper: fall through to auto-complete flow (share-target path).
       // Tries auto-complete first; falls back to manual match-voucher picker on error.
+      // On fallback, deposits file to unassigned_receipts fire-and-forget so the
+      // receipt is never droppable even if the user dismisses without assigning.
+      const _depositAndFallback = (receiptPayload, extractedData) => {
+        api.depositUnassigned({
+          requestedBy: user.id,
+          receiptData: receiptPayload,
+          receiptMimeType: mimeType,
+          companyId: user.company.id,
+          extractedData: extractedData || null,
+        }).then(dep => {
+          api.matchReceiptToVoucher({ requestedBy: user.id, receiptData: receiptPayload, receiptMimeType: mimeType, companyId: user.company.id })
+            .then(matchResult => { setReceiptShare(prev => prev ? { ...prev, step: 'result', matchResult, unassignedId: dep.id } : null); })
+            .catch(err2 => { setReceiptShare(prev => prev ? { ...prev, step: 'result', matchResult: { confidence: 'none', extractedReference: null, candidateVouchers: [] }, errorMsg: err2.message, unassignedId: dep.id } : null); });
+        });
+      };
       const _runReconcile = () => {
         setReceiptShare({ step: 'matching', mimeType, base64Data: dataUrl });
+        const receiptPayload = dataUrl.replace(/^data:.*?;base64,/, '');
         api.autoCompleteReceipt({
           requestedBy: user.id,
-          receiptData: dataUrl.replace(/^data:.*?;base64,/, ''),
+          receiptData: receiptPayload,
           receiptMimeType: mimeType,
           companyId: user.company.id,
           fileName: fileName || '',
         }).then(result => {
           if (result.outcome === 'completed') {
             setReceiptShare(prev => prev ? { ...prev, step: 'autocompleted', autoResult: result } : null);
+          } else if (result.outcome === 'backfilled') {
+            setReceiptShare(prev => prev ? { ...prev, step: 'backfilled', autoResult: result } : null);
           } else if (result.outcome === 'queued') {
             setReceiptShare(prev => prev ? { ...prev, step: 'queued', queueReason: result.reason, extractedData: result.extractedData } : null);
           } else {
-            // error or unknown — fall back to manual picker
-            api.matchReceiptToVoucher({ requestedBy: user.id, receiptData: dataUrl.replace(/^data:.*?;base64,/, ''), receiptMimeType: mimeType, companyId: user.company.id })
-              .then(matchResult => { setReceiptShare(prev => prev ? { ...prev, step: 'result', matchResult } : null); })
-              .catch(err2 => { setReceiptShare(prev => prev ? { ...prev, step: 'result', matchResult: { confidence: 'none', extractedReference: null, candidateVouchers: [] }, errorMsg: err2.message } : null); });
+            _depositAndFallback(receiptPayload, result.extractedData || null);
           }
-        }).catch(err => {
-          api.matchReceiptToVoucher({ requestedBy: user.id, receiptData: dataUrl.replace(/^data:.*?;base64,/, ''), receiptMimeType: mimeType, companyId: user.company.id })
-            .then(matchResult => { setReceiptShare(prev => prev ? { ...prev, step: 'result', matchResult } : null); })
-            .catch(err2 => { setReceiptShare(prev => prev ? { ...prev, step: 'result', matchResult: { confidence: 'none', extractedReference: null, candidateVouchers: [] }, errorMsg: err2.message } : null); });
-        });
+        }).catch(() => { _depositAndFallback(receiptPayload, null); });
       };
 
       // 1. Fast path: localStorage (same device — context was set by Pay Now on this device).
