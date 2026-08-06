@@ -378,6 +378,11 @@ const api = {
   // Attachments
   matchReceiptToVoucher: (data) => fetch(`${API_BASE}/receipts/match-voucher`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
     .then(async r => { const json = await r.json(); if (!r.ok) throw new Error(json.message || json.error || 'Match request failed'); return json; }),
+  autoCompleteReceipt: (data) => fetch(`${API_BASE}/receipts/auto-complete`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
+    .then(async r => { const json = await r.json(); if (!r.ok) throw new Error(json.message || json.error || 'Auto-complete failed'); return json; }),
+  getUnassignedReceipts: (companyId, requestedBy) => fetch(`${API_BASE}/companies/${companyId}/unassigned-receipts?requestedBy=${requestedBy}`).then(r => r.json()),
+  assignUnassignedReceipt: (id, data) => fetch(`${API_BASE}/unassigned-receipts/${id}/assign`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
+  dismissUnassignedReceipt: (id, data) => fetch(`${API_BASE}/unassigned-receipts/${id}/dismiss`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
   retrospectiveScan: (companyId, data) => fetch(`${API_BASE}/companies/${companyId}/retrospective-payment-scan`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
     .then(async r => { const json = await r.json(); if (!r.ok) throw new Error(json.message || json.error || 'Scan failed'); return json; }),
   // Payment batches (Migration 032)
@@ -10458,7 +10463,7 @@ const ReceiptShareModal = ({ state, onClose }) => {
   const [attaching, setAttaching] = React.useState(false);
 
   if (!state) return null;
-  const { step, mimeType, base64Data, matchResult, errorMsg } = state;
+  const { step, mimeType, base64Data, matchResult, errorMsg, autoResult, queueReason } = state;
   const fileDataUrl = base64Data && !base64Data.startsWith('data:') ? `data:${mimeType};base64,${base64Data}` : (base64Data || '');
 
   const isHigh = !pickerMode && matchResult?.confidence === 'high' && matchResult?.matchedVoucherId && matchResult?.matchType !== 'batch';
@@ -10496,6 +10501,27 @@ const ReceiptShareModal = ({ state, onClose }) => {
             <div style={{ textAlign: 'center', padding: '2.5rem 1rem' }}>
               {Icons.loader}
               <p style={{ color: '#6b7280', marginTop: '1rem' }}>Identifying voucher from receipt…</p>
+            </div>
+          )}
+          {step === 'autocompleted' && (
+            <div style={{ textAlign: 'center', padding: '1.5rem 0.5rem' }}>
+              <div style={{ background: '#f0fdf4', border: '2px solid #86efac', borderRadius: '10px', padding: '1.5rem', marginBottom: '0.75rem' }}>
+                <div style={{ fontSize: '2.5rem', marginBottom: '0.5rem' }}>✅</div>
+                <div style={{ fontWeight: 700, color: '#166534', fontSize: '1.05rem', marginBottom: '4px' }}>Payment Recorded</div>
+                {autoResult?.serialNumber && <div style={{ fontFamily: 'monospace', fontWeight: 600, color: '#15803d', marginBottom: '4px' }}>{autoResult.serialNumber}</div>}
+                {autoResult?.utr && <div style={{ fontSize: '0.82rem', color: '#6b7280', marginTop: '4px' }}>UTR: <code>{autoResult.utr}</code></div>}
+                <div style={{ fontSize: '0.8rem', color: '#4ade80', marginTop: '10px' }}>Voucher marked as paid · Receipt saved.</div>
+              </div>
+            </div>
+          )}
+          {step === 'queued' && (
+            <div style={{ textAlign: 'center', padding: '1.5rem 0.5rem' }}>
+              <div style={{ background: '#fffbeb', border: '2px solid #fde68a', borderRadius: '10px', padding: '1.5rem', marginBottom: '0.75rem' }}>
+                <div style={{ fontSize: '2.5rem', marginBottom: '0.5rem' }}>📬</div>
+                <div style={{ fontWeight: 700, color: '#92400e', fontSize: '1.05rem', marginBottom: '4px' }}>Sent to Review Queue</div>
+                <div style={{ fontSize: '0.82rem', color: '#78350f' }}>{queueReason || "Couldn't auto-match — Accounts will assign it manually."}</div>
+                <div style={{ fontSize: '0.79rem', color: '#78716c', marginTop: '10px' }}>Receipt saved. Open <strong>Receipt Review Queue</strong> to assign it.</div>
+              </div>
             </div>
           )}
           {step === 'result' && (
@@ -10748,6 +10774,149 @@ const RetrospectiveScanModal = ({ onClose }) => {
           )}
         </div>
       </div>
+    </div>
+  );
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RECEIPT REVIEW QUEUE (Migration 036)
+// Accounts reviews receipts that the auto-complete flow couldn't match.
+// Each row shows extracted OCR data for one-tap voucher assignment.
+// ─────────────────────────────────────────────────────────────────────────────
+const UnassignedReceiptsPage = () => {
+  const { user, addToast, refreshVouchers } = useApp();
+  const [loading, setLoading] = React.useState(true);
+  const [receipts, setReceipts] = React.useState([]);
+  const [candidates, setCandidates] = React.useState([]);
+  const [expanded, setExpanded] = React.useState(null);
+  const [search, setSearch] = React.useState({});
+  const [acting, setActing] = React.useState(null); // id of row being saved
+
+  const loadData = async () => {
+    setLoading(true);
+    try {
+      const data = await api.getUnassignedReceipts(user.company.id, user.id);
+      setReceipts(data.receipts || []);
+      setCandidates(data.candidates || []);
+    } catch (e) { addToast(e.message || 'Load failed', 'error'); }
+    setLoading(false);
+  };
+
+  React.useEffect(() => { loadData(); }, []);
+
+  const handleAssign = async (receiptId, voucherId) => {
+    setActing(receiptId);
+    try {
+      const res = await api.assignUnassignedReceipt(receiptId, { assignedBy: user.id, voucherId });
+      if (res.success) { addToast(`Assigned to ${res.serialNumber} ✅`, 'success'); refreshVouchers(); loadData(); }
+      else addToast(res.error || 'Assignment failed', 'error');
+    } catch (e) { addToast(e.message || 'Assignment failed', 'error'); }
+    setActing(null);
+  };
+
+  const handleDismiss = async (receiptId) => {
+    setActing(receiptId);
+    try {
+      const res = await api.dismissUnassignedReceipt(receiptId, { dismissedBy: user.id });
+      if (res.success) { addToast('Dismissed', 'success'); loadData(); }
+      else addToast(res.error || 'Dismiss failed', 'error');
+    } catch (e) { addToast(e.message || 'Dismiss failed', 'error'); }
+    setActing(null);
+  };
+
+  const filteredCandidates = (receiptId) => {
+    const q = (search[receiptId] || '').toLowerCase();
+    if (!q) return candidates;
+    return candidates.filter(v => v.serial_number?.toLowerCase().includes(q) || String(v.amount).includes(q));
+  };
+
+  if (loading) return <div style={{ textAlign: 'center', padding: '3rem' }}>{Icons.loader}</div>;
+
+  return (
+    <div style={{ maxWidth: '780px', margin: '0 auto', padding: '1.5rem 1rem' }}>
+      <div style={{ marginBottom: '1.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '0.5rem' }}>
+        <div>
+          <h2 style={{ fontWeight: 700, fontSize: '1.25rem', marginBottom: '0.25rem' }}>📬 Receipt Review Queue</h2>
+          <p style={{ color: '#6b7280', fontSize: '0.875rem' }}>Receipts shared from the phone that couldn't be auto-matched. Assign each to its voucher to mark it paid.</p>
+        </div>
+        <button className="btn btn-secondary" style={{ fontSize: '0.85rem' }} onClick={loadData}>↻ Refresh</button>
+      </div>
+
+      {receipts.length === 0 && (
+        <div style={{ textAlign: 'center', padding: '3rem', color: '#9ca3af', background: '#f9fafb', borderRadius: '12px', border: '1px solid #e5e7eb' }}>
+          <div style={{ fontSize: '2.5rem', marginBottom: '0.5rem' }}>✅</div>
+          <div style={{ fontWeight: 600, color: '#374151' }}>Review queue is empty</div>
+          <div style={{ fontSize: '0.875rem', marginTop: '4px' }}>All shared receipts have been matched.</div>
+        </div>
+      )}
+
+      {receipts.map(r => {
+        const ocr = r.extracted_data || {};
+        const isExpanded = expanded === r.id;
+        const isActing = acting === r.id;
+        const filtered = filteredCandidates(r.id);
+        return (
+          <div key={r.id} style={{ border: '1px solid #e5e7eb', borderRadius: '10px', marginBottom: '0.875rem', background: 'white', overflow: 'hidden' }}>
+            <div style={{ padding: '0.875rem 1rem', display: 'flex', alignItems: 'flex-start', gap: '0.75rem', flexWrap: 'wrap' }}>
+              {/* Receipt preview thumbnail */}
+              <div style={{ flexShrink: 0 }}>
+                {r.mime_type.startsWith('image/') ? (
+                  <a href={r.file_url} target="_blank" rel="noreferrer">
+                    <img src={r.file_url} alt="receipt" style={{ width: 64, height: 64, objectFit: 'cover', borderRadius: '6px', border: '1px solid #e5e7eb' }} />
+                  </a>
+                ) : (
+                  <a href={r.file_url} target="_blank" rel="noreferrer" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 64, height: 64, borderRadius: '6px', border: '1px solid #e5e7eb', background: '#fef9c3', fontSize: '1.5rem', textDecoration: 'none' }}>📄</a>
+                )}
+              </div>
+
+              <div style={{ flex: 1, minWidth: 0 }}>
+                {/* OCR extracted fields */}
+                <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '4px', alignItems: 'center' }}>
+                  {ocr.amount && <span style={{ background: '#eff6ff', color: '#1d4ed8', padding: '2px 10px', borderRadius: '10px', fontWeight: 700, fontSize: '0.9rem' }}>₹{parseFloat(ocr.amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>}
+                  {ocr.utr_number && <span style={{ fontFamily: 'monospace', fontSize: '0.8rem', color: '#374151' }}>UTR: {ocr.utr_number}</span>}
+                  {ocr.bank_name && <span style={{ fontSize: '0.8rem', color: '#6b7280' }}>{ocr.bank_name}</span>}
+                </div>
+                {ocr.beneficiary_name && <div style={{ fontSize: '0.8rem', color: '#374151', marginBottom: '2px' }}>To: <strong>{ocr.beneficiary_name}</strong></div>}
+                {r.match_reason && <div style={{ fontSize: '0.78rem', color: '#ef4444', marginBottom: '4px' }}>⚠️ {r.match_reason}</div>}
+                <div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{new Date(r.created_at).toLocaleString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</div>
+              </div>
+
+              <div style={{ display: 'flex', gap: '0.5rem', flexShrink: 0 }}>
+                <button className="btn btn-sm btn-secondary" onClick={() => setExpanded(isExpanded ? null : r.id)} style={{ fontSize: '0.8rem' }}>
+                  {isExpanded ? 'Cancel' : '📎 Assign'}
+                </button>
+                <button className="btn btn-sm btn-secondary" onClick={() => handleDismiss(r.id)} disabled={isActing} style={{ fontSize: '0.8rem', color: '#6b7280' }}>
+                  {isActing ? Icons.loader : '✕'}
+                </button>
+              </div>
+            </div>
+
+            {isExpanded && (
+              <div style={{ borderTop: '1px solid #f3f4f6', padding: '0.875rem 1rem', background: '#f9fafb' }}>
+                <div style={{ fontSize: '0.85rem', fontWeight: 600, color: '#374151', marginBottom: '0.5rem' }}>Select the voucher this receipt belongs to:</div>
+                <input className="form-input" placeholder="Search by serial or amount…" value={search[r.id] || ''} onChange={e => setSearch(prev => ({ ...prev, [r.id]: e.target.value }))} style={{ marginBottom: '0.5rem' }} autoFocus />
+                {filtered.length === 0 ? (
+                  <div style={{ textAlign: 'center', padding: '1rem', color: '#9ca3af', fontSize: '0.875rem' }}>{candidates.length === 0 ? 'No vouchers in the payment queue.' : 'No matches.'}</div>
+                ) : (
+                  <div style={{ maxHeight: '240px', overflowY: 'auto', border: '1px solid #e5e7eb', borderRadius: '8px', background: 'white' }}>
+                    {filtered.map(v => (
+                      <div key={v.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.55rem 0.75rem', borderBottom: '1px solid #f3f4f6', gap: '0.5rem' }}>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontFamily: 'monospace', fontWeight: 700, fontSize: '0.85rem' }}>{v.serial_number}</div>
+                          <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>₹{parseFloat(v.amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })} · {v.status}</div>
+                        </div>
+                        <button className="btn btn-sm btn-success" onClick={() => handleAssign(r.id, v.id)} disabled={isActing} style={{ flexShrink: 0, fontSize: '0.78rem' }}>
+                          {isActing ? Icons.loader : '✅ Assign'}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 };
@@ -11423,18 +11592,31 @@ const App = () => {
         }
       };
 
-      // Helper: fall through to generic reconcile flow.
+      // Helper: fall through to auto-complete flow (share-target path).
+      // Tries auto-complete first; falls back to manual match-voucher picker on error.
       const _runReconcile = () => {
         setReceiptShare({ step: 'matching', mimeType, base64Data: dataUrl });
-        api.matchReceiptToVoucher({
+        api.autoCompleteReceipt({
           requestedBy: user.id,
           receiptData: dataUrl.replace(/^data:.*?;base64,/, ''),
           receiptMimeType: mimeType,
           companyId: user.company.id,
-        }).then(matchResult => {
-          setReceiptShare(prev => prev ? { ...prev, step: 'result', matchResult } : null);
+          fileName: fileName || '',
+        }).then(result => {
+          if (result.outcome === 'completed') {
+            setReceiptShare(prev => prev ? { ...prev, step: 'autocompleted', autoResult: result } : null);
+          } else if (result.outcome === 'queued') {
+            setReceiptShare(prev => prev ? { ...prev, step: 'queued', queueReason: result.reason, extractedData: result.extractedData } : null);
+          } else {
+            // error or unknown — fall back to manual picker
+            api.matchReceiptToVoucher({ requestedBy: user.id, receiptData: dataUrl.replace(/^data:.*?;base64,/, ''), receiptMimeType: mimeType, companyId: user.company.id })
+              .then(matchResult => { setReceiptShare(prev => prev ? { ...prev, step: 'result', matchResult } : null); })
+              .catch(err2 => { setReceiptShare(prev => prev ? { ...prev, step: 'result', matchResult: { confidence: 'none', extractedReference: null, candidateVouchers: [] }, errorMsg: err2.message } : null); });
+          }
         }).catch(err => {
-          setReceiptShare(prev => prev ? { ...prev, step: 'result', matchResult: { confidence: 'none', extractedReference: null, candidateVouchers: [] }, errorMsg: err.message } : null);
+          api.matchReceiptToVoucher({ requestedBy: user.id, receiptData: dataUrl.replace(/^data:.*?;base64,/, ''), receiptMimeType: mimeType, companyId: user.company.id })
+            .then(matchResult => { setReceiptShare(prev => prev ? { ...prev, step: 'result', matchResult } : null); })
+            .catch(err2 => { setReceiptShare(prev => prev ? { ...prev, step: 'result', matchResult: { confidence: 'none', extractedReference: null, candidateVouchers: [] }, errorMsg: err2.message } : null); });
         });
       };
 
@@ -11492,7 +11674,7 @@ const App = () => {
 
   const renderPage = () => {
     if (user.role === 'auditor') return <VoucherList filter="completed" />;
-    switch(currentPage) { case 'dashboard': return <Dashboard />; case 'create': return (user.role === 'accounts' || user.isSuperAdmin) ? <CreateVoucher /> : <Dashboard />; case 'drafts': return (user.role === 'accounts' || user.isSuperAdmin) ? <VoucherList filter="draft" /> : <Dashboard />; case 'pending': return <VoucherList filter="pending" />; case 'approved': return <VoucherList filter="approved" />; case 'completed': return <VoucherList filter="completed" />; case 'awaiting_payment': return <VoucherList filter="awaiting_payment" />; case 'paid': return <VoucherList filter="paid" />; case 'all': return <VoucherList filter="all" />; case 'users': return user.isSuperAdmin ? <UsersManagement /> : <Dashboard />; case 'payees': return (user.role === 'accounts' || user.isSuperAdmin) ? <PayeesManagement /> : <Dashboard />; case 'accounts': return (user.role === 'accounts' || user.isSuperAdmin) ? <AccountsManagement /> : <Dashboard />; case 'pay-from-accounts': return (user.role === 'accounts' || user.isSuperAdmin) ? <PaymentAccountsManagement /> : <Dashboard />; case 'suspense': return <SuspenseVoucherList onViewDetail={(id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); }} />; case 'create-suspense': return (user.role === 'accounts' || user.isSuperAdmin) ? <SuspenseVoucherForm onCreated={() => { setCurrentPage('suspense'); }} onViewDetail={(id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); }} /> : <Dashboard />; case 'suspense-detail': return suspenseDetailId ? <SuspenseVoucherDetail suspenseId={suspenseDetailId} onBack={() => setCurrentPage('suspense')} /> : <SuspenseVoucherList onViewDetail={(id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); }} />; case 'reconcile': return (user.role === 'accounts' || user.isSuperAdmin) ? <ReconcileReceipts /> : <Dashboard />; default: return <Dashboard />; } };
+    switch(currentPage) { case 'dashboard': return <Dashboard />; case 'create': return (user.role === 'accounts' || user.isSuperAdmin) ? <CreateVoucher /> : <Dashboard />; case 'drafts': return (user.role === 'accounts' || user.isSuperAdmin) ? <VoucherList filter="draft" /> : <Dashboard />; case 'pending': return <VoucherList filter="pending" />; case 'approved': return <VoucherList filter="approved" />; case 'completed': return <VoucherList filter="completed" />; case 'awaiting_payment': return <VoucherList filter="awaiting_payment" />; case 'paid': return <VoucherList filter="paid" />; case 'all': return <VoucherList filter="all" />; case 'users': return user.isSuperAdmin ? <UsersManagement /> : <Dashboard />; case 'payees': return (user.role === 'accounts' || user.isSuperAdmin) ? <PayeesManagement /> : <Dashboard />; case 'accounts': return (user.role === 'accounts' || user.isSuperAdmin) ? <AccountsManagement /> : <Dashboard />; case 'pay-from-accounts': return (user.role === 'accounts' || user.isSuperAdmin) ? <PaymentAccountsManagement /> : <Dashboard />; case 'suspense': return <SuspenseVoucherList onViewDetail={(id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); }} />; case 'create-suspense': return (user.role === 'accounts' || user.isSuperAdmin) ? <SuspenseVoucherForm onCreated={() => { setCurrentPage('suspense'); }} onViewDetail={(id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); }} /> : <Dashboard />; case 'suspense-detail': return suspenseDetailId ? <SuspenseVoucherDetail suspenseId={suspenseDetailId} onBack={() => setCurrentPage('suspense')} /> : <SuspenseVoucherList onViewDetail={(id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); }} />; case 'reconcile': return (user.role === 'accounts' || user.isSuperAdmin) ? <ReconcileReceipts /> : <Dashboard />; case 'unassigned-receipts': return (user.role === 'accounts' || user.isSuperAdmin) ? <UnassignedReceiptsPage /> : <Dashboard />; default: return <Dashboard />; } };
 
   React.useEffect(() => {
     // After React renders the new page, scroll main-content to top.
@@ -11632,6 +11814,7 @@ const App = () => {
             </div>}
             {(user.role === 'accounts' || user.isSuperAdmin) && <div className="nav-section"><div className="nav-section-title">Payments</div>
               <div className={`nav-item ${currentPage === 'reconcile' ? 'active' : ''}`} onClick={() => handleNavClick('reconcile')}>🗂️ Reconcile Receipts</div>
+              <div className={`nav-item ${currentPage === 'unassigned-receipts' ? 'active' : ''}`} onClick={() => handleNavClick('unassigned-receipts')}>📬 Receipt Review Queue</div>
             </div>}
             {user.isSuperAdmin && <div className="nav-section"><div className="nav-section-title">Admin Dashboard</div><div className={`nav-item ${currentPage === 'users' ? 'active' : ''}`} onClick={() => handleNavClick('users')}>{Icons.users} User Management</div></div>}
             </>)}
@@ -11698,6 +11881,7 @@ const App = () => {
                 </div>}
                 {(user.role === 'accounts' || user.isSuperAdmin) && <div className="nav-section"><div className="nav-section-title">Payments</div>
                   <div className={`nav-item ${currentPage === 'reconcile' ? 'active' : ''}`} onClick={() => handleNavClick('reconcile')}>🗂️ Reconcile Receipts</div>
+                  <div className={`nav-item ${currentPage === 'unassigned-receipts' ? 'active' : ''}`} onClick={() => handleNavClick('unassigned-receipts')}>📬 Receipt Review Queue</div>
                 </div>}
                 {user.isSuperAdmin && <div className="nav-section"><div className="nav-section-title">Admin Dashboard</div><div className={`nav-item ${currentPage === 'users' ? 'active' : ''}`} onClick={() => handleNavClick('users')}>{Icons.users} User Management</div></div>}
                 </>)}

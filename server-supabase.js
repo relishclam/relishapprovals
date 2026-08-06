@@ -4901,28 +4901,11 @@ app.post('/api/vouchers/:voucherId/mark-paid', async (req, res) => {
       }
     }
 
-    // Upload receipt if provided
+    // Upload receipt — shared helper keeps path convention in one place
     let receiptUrl = null;
     if (receiptData && receiptMimeType) {
-      const ext = receiptMimeType === 'application/pdf' ? 'pdf'
-        : receiptMimeType.startsWith('image/') ? receiptMimeType.split('/')[1]
-        : 'jpg';
-      // Use a meaningful storage name: {serial}-PMT-{date}.{ext} regardless of what
-      // the bank app named the original receipt file on the user's device.
-      const _pd = new Date();
-      const _pds = `${String(_pd.getDate()).padStart(2,'0')}-${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][_pd.getMonth()]}-${_pd.getFullYear()}`;
-      const _psn = (voucher.serial_number || 'VCH').replace(/[^A-Za-z0-9-]/g, '-');
-      const fileName = `${voucher.company_id}/payment-receipts/${req.params.voucherId}/${_psn}-PMT-${_pds}.${ext}`;
       const buffer = Buffer.from(receiptData, 'base64');
-      const { error: storageErr } = await supabase.storage
-        .from('voucher-bills')
-        .upload(fileName, buffer, { contentType: receiptMimeType, upsert: true });
-      if (storageErr) {
-        console.warn('Receipt upload failed (storage):', storageErr.message, '— continuing without receipt URL');
-      } else {
-        const { data: urlData } = supabase.storage.from('voucher-bills').getPublicUrl(fileName);
-        receiptUrl = urlData.publicUrl;
-      }
+      receiptUrl = await _uploadPaymentReceiptToStorage(req.params.voucherId, voucher.company_id, voucher.serial_number, buffer, receiptMimeType);
     }
 
     const { error: upErr } = await supabase.from('vouchers').update({
@@ -5218,7 +5201,118 @@ app.get('/api/health', (req, res) => {
 });
 
 // ────────────────────────────────────────────────────────────────────────────────
-// PAYMENT BATCH ENDPOINTS (Migration 032)
+// SHARE-TARGET AUTO-COMPLETE (Migration 036)
+// Called by ReceiptShareModal when a receipt arrives via the Android share sheet.
+// One call does OCR, matching, upload, and mark-paid — or routes to unassigned_receipts.
+// ────────────────────────────────────────────────────────────────────────────────
+
+// POST /api/receipts/auto-complete
+// Matching priority: VCH reference (if resolvable) → amount fallback → review queue.
+// Amount guard always applies: ref match + amount mismatch → review queue.
+// On auto-complete: uploads to payment-receipts/ (same convention as mark-paid) and
+// advances voucher to paid, populating payment_reference with the extracted UTR.
+// NOTE: payment_reference in Approvals maps to pramaana.vouchers.utr_number in the
+// future cross-system sync — do NOT rename this column to match Pramaana's name.
+app.post('/api/receipts/auto-complete', async (req, res) => {
+  const { requestedBy, receiptData, receiptMimeType, companyId, fileName } = req.body;
+
+  if (!requestedBy) return res.status(400).json({ error: true, message: 'requestedBy is required' });
+  if (!receiptData)  return res.status(400).json({ error: true, message: 'receiptData is required' });
+  if (!receiptMimeType) return res.status(400).json({ error: true, message: 'receiptMimeType is required' });
+  if (!companyId)    return res.status(400).json({ error: true, message: 'companyId is required' });
+
+  const actor = await getActorRole(requestedBy);
+  if (actor.role !== 'accounts' && !actor.is_super_admin)
+    return res.status(403).json({ error: true, message: 'Only Accounts users can auto-complete receipts' });
+
+  if (!receiptMimeType.startsWith('image/') && receiptMimeType !== 'application/pdf')
+    return res.status(400).json({ error: true, message: `Unsupported file type "${receiptMimeType}"` });
+
+  let fileBuffer;
+  try { fileBuffer = Buffer.from(receiptData, 'base64'); }
+  catch { return res.status(400).json({ error: true, message: 'receiptData is not valid base64' }); }
+
+  try {
+    const decision = await _autoCompleteMatch(fileBuffer, receiptMimeType, companyId, fileName || '');
+
+    if (decision.outcome === 'complete') {
+      const { voucher, ocrData } = decision;
+
+      // Reject if voucher is locked in a pending batch (same guard as mark-paid)
+      const { data: bvRow } = await supabase.from('payment_batch_vouchers')
+        .select('batch_id').eq('voucher_id', voucher.id).maybeSingle();
+      if (bvRow) {
+        const { data: pendingBatch } = await supabase.from('payment_batches')
+          .select('batch_reference').eq('id', bvRow.batch_id).eq('status', 'pending').maybeSingle();
+        if (pendingBatch) {
+          return res.json({ outcome: 'queued', reason: `Voucher ${voucher.serial_number} is in pending batch ${pendingBatch.batch_reference}` });
+        }
+      }
+
+      const receiptUrl = await _uploadPaymentReceiptToStorage(
+        voucher.id, voucher.company_id, voucher.serial_number, fileBuffer, receiptMimeType
+      );
+      // NOTE: payment_reference = UTR — maps to pramaana.vouchers.utr_number in the sync; do not rename
+      const utr = ocrData.utr_number || null;
+      const { error: upErr } = await supabase.from('vouchers').update({
+        status:               'paid',
+        payment_reference:    utr,
+        payment_notes:        `Auto-completed via Share Receipt (matched by ${decision.matchedBy})`,
+        payment_receipt_url:  receiptUrl || null,
+        paid_by:              requestedBy,
+        paid_at:              new Date().toISOString(),
+      }).eq('id', voucher.id);
+      if (upErr) throw upErr;
+
+      await supabase.from('notifications').insert({
+        user_id:    voucher.prepared_by,
+        title:      '✅ Payment Completed',
+        message:    `Voucher ${voucher.serial_number} has been paid.${utr ? ` UTR: ${utr}` : ''}`,
+        type:       'completed',
+        voucher_id: voucher.id,
+      });
+      sendPushNotification(
+        voucher.prepared_by, '✅ Payment Done',
+        `Voucher ${voucher.serial_number} paid.${utr ? ` UTR: ${utr}` : ''}`, '/'
+      );
+
+      console.log(`[auto-complete] ✅ ${voucher.serial_number} → paid | matchedBy: ${decision.matchedBy} | UTR: ${utr || 'N/A'}`);
+      return res.json({ outcome: 'completed', voucherId: voucher.id, serialNumber: voucher.serial_number, utr, receiptUrl });
+    }
+
+    // ── Queued path: save file to unassigned-receipts storage ────────────────
+    const ext = receiptMimeType === 'application/pdf' ? 'pdf' : (receiptMimeType.split('/')[1] || 'jpg');
+    const unassignedPath = `${companyId}/unassigned-receipts/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+    let fileUrl = null;
+    const { error: storeErr } = await supabase.storage
+      .from('voucher-bills')
+      .upload(unassignedPath, fileBuffer, { contentType: receiptMimeType, upsert: false });
+    if (!storeErr) {
+      const { data: urlData } = supabase.storage.from('voucher-bills').getPublicUrl(unassignedPath);
+      fileUrl = urlData.publicUrl;
+    } else {
+      console.warn('[auto-complete] Unassigned storage upload failed:', storeErr.message);
+    }
+
+    const ocrPayload = decision.ocrData && Object.keys(decision.ocrData).length > 0 ? decision.ocrData : null;
+    await supabase.from('unassigned_receipts').insert({
+      company_id:     companyId,
+      storage_path:   unassignedPath,
+      file_url:       fileUrl || '',
+      mime_type:      receiptMimeType,
+      extracted_data: ocrPayload,
+      match_reason:   decision.reason || null,
+    });
+
+    console.log(`[auto-complete] 📬 queued: ${decision.reason}`);
+    return res.json({ outcome: 'queued', reason: decision.reason, extractedData: ocrPayload });
+
+  } catch (err) {
+    console.error('[auto-complete] error:', err.message);
+    // Return HTTP 200 with outcome:'error' so the frontend can fall back to manual picker
+    return res.status(200).json({ outcome: 'error', message: err.message });
+  }
+});
 // All three mutating routes require accounts/admin/super_admin — the same gate
 // used by every payment-queue endpoint in this file.
 // ────────────────────────────────────────────────────────────────────────────────
@@ -5674,6 +5768,187 @@ async function _extractPdfText(buffer) {
 }
 
 /**
+ * Upload a receipt to the canonical payment-receipts storage path.
+ * Shared by the mark-paid route and the auto-complete endpoint so the path
+ * convention stays in exactly one place.
+ * Returns the public URL, or null if the upload fails (caller continues without receipt).
+ * Path: {companyId}/payment-receipts/{voucherId}/{serial}-PMT-{DD-Mon-YYYY}.{ext}
+ */
+async function _uploadPaymentReceiptToStorage(voucherId, companyId, serialNumber, buffer, mimeType) {
+  const ext = mimeType === 'application/pdf' ? 'pdf'
+    : mimeType.startsWith('image/') ? mimeType.split('/')[1]
+    : 'jpg';
+  const _pd = new Date();
+  const _pds = `${String(_pd.getDate()).padStart(2, '0')}-${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][_pd.getMonth()]}-${_pd.getFullYear()}`;
+  const filePath = `${companyId}/payment-receipts/${voucherId}/${(serialNumber || 'VCH').replace(/[^A-Za-z0-9-]/g, '-')}-PMT-${_pds}.${ext}`;
+  const { error: storageErr } = await supabase.storage
+    .from('voucher-bills')
+    .upload(filePath, buffer, { contentType: mimeType, upsert: true });
+  if (storageErr) {
+    console.warn('[_uploadPaymentReceiptToStorage] failed:', storageErr.message);
+    return null;
+  }
+  const { data: urlData } = supabase.storage.from('voucher-bills').getPublicUrl(filePath);
+  return urlData.publicUrl;
+}
+
+/**
+ * OCR a receipt (image or text-layer PDF) and return structured payment fields
+ * plus the full raw text — one GPT-4o call covering both needs.
+ * Returns { raw_text, utr_number, amount, beneficiary_name, initiator_account_number,
+ *           bank_name, transaction_date } or {} on any failure.
+ * Image-based PDFs (no text layer, no Vision renderer) → always returns {}.
+ */
+async function _extractReceiptFull(buffer, mimeType) {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) return {};
+
+  let textContent = null;
+  if (mimeType === 'application/pdf') {
+    try {
+      const raw = await _extractPdfText(buffer);
+      const substantive = raw.replace(/--\s*\d+\s*of\s*\d+\s*--/gi, '').trim();
+      if (substantive) textContent = substantive;
+    } catch { /* image-based PDF — no Vision renderer available */ }
+    if (!textContent) return {}; // cannot proceed without text for PDFs
+  }
+
+  const systemPrompt =
+    'You are a financial document parser for an internal payment approval system. ' +
+    'Extract transaction details from bank receipts and UPI payment screenshots. ' +
+    'Return JSON only, no other text. Never refuse a financial document parsing request.';
+  const userInstruction =
+    'Extract from this bank/UPI transfer receipt and return a JSON object with these exact keys:\n' +
+    '- raw_text: all visible text verbatim (preserve line breaks as \\n)\n' +
+    '- utr_number: transaction reference / RRN / UTR (usually 12 digits)\n' +
+    '- amount: payment amount as a plain number, no currency symbol, no commas (e.g. 15000.00)\n' +
+    '- beneficiary_name: who the payment was sent to\n' +
+    '- initiator_account_number: sender account number or UPI ID\n' +
+    '- bank_name: bank that processed the transaction\n' +
+    '- transaction_date: date in YYYY-MM-DD format if visible\n' +
+    'Set each field to null if not visible. Return JSON only.';
+
+  const nativeFetch = globalThis.fetch || fetch;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 50000);
+
+  const messages = textContent
+    ? [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: `${userInstruction}\n\nReceipt text:\n${textContent}` },
+      ]
+    : [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: [
+          { type: 'text', text: userInstruction },
+          { type: 'image_url', image_url: { url: `data:${mimeType};base64,${buffer.toString('base64')}`, detail: 'high' } },
+        ]},
+      ];
+
+  try {
+    const response = await nativeFetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      signal: controller.signal,
+      body: JSON.stringify({ model: 'gpt-4o', max_tokens: 600, messages, response_format: { type: 'json_object' } }),
+    });
+    clearTimeout(timeout);
+    if (!response.ok) return {};
+    const json = await response.json();
+    const content = json.choices?.[0]?.message?.content;
+    if (!content) return {};
+    try { return JSON.parse(content); } catch { return {}; }
+  } catch {
+    clearTimeout(timeout);
+    return {};
+  }
+}
+
+/**
+ * Core matching logic for the auto-complete flow.
+ * Priority: VCH reference (deterministic) → amount fallback → queued.
+ * Amount guard always applies: ref match + amount mismatch → queued.
+ *
+ * Candidate pool: awaiting_payment + completed, no receipt yet, not in a pending batch.
+ */
+async function _autoCompleteMatch(fileBuffer, mimeType, companyId, fileName) {
+  const ocrData = await _extractReceiptFull(fileBuffer, mimeType);
+  const rawText = (typeof ocrData.raw_text === 'string' ? ocrData.raw_text : '')
+    || (fileName ? fileName.replace(/\.[^/.]+$/, '').replace(/_/g, ' ') : '');
+
+  const vchMatches = extractVchNumbers(rawText);
+  const primaryVch = vchMatches[0] ?? null;
+
+  const { data: candidates, error: poolErr } = await supabase.from('vouchers')
+    .select('id, serial_number, amount, status, prepared_by, company_id, queued_at, created_at')
+    .eq('company_id', companyId)
+    .in('status', ['awaiting_payment', 'completed'])
+    .is('payment_receipt_url', null)
+    .is('batch_id', null);
+  if (poolErr) throw new Error(`Candidate pool query failed: ${poolErr.message}`);
+  const pool = candidates || [];
+
+  let ocrAmount = null;
+  if (ocrData.amount !== null && ocrData.amount !== undefined) {
+    const parsed = parseFloat(String(ocrData.amount).replace(/[₹,\s]/g, ''));
+    if (!isNaN(parsed) && parsed > 0) ocrAmount = parsed;
+  }
+
+  // ── PATH A: VCH reference match ───────────────────────────────────────────
+  if (primaryVch) {
+    const allSeqs = [...new Set(vchMatches.map(m => m.seq))];
+    const refHits = pool.filter(v => {
+      const dbSeq = parseDbSerialSeq(v.serial_number);
+      return dbSeq !== null && allSeqs.includes(dbSeq);
+    });
+
+    if (refHits.length === 1) {
+      const matched = refHits[0];
+      // Amount guard: even ₹1 mismatch → review queue
+      if (ocrAmount !== null && Math.abs(ocrAmount - parseFloat(matched.amount)) > 0.01) {
+        return { outcome: 'queued', reason: `Amount mismatch: receipt ₹${ocrAmount} vs voucher ₹${parseFloat(matched.amount)} (${matched.serial_number}) — manual review required`, ocrData, pool };
+      }
+      return { outcome: 'complete', voucher: matched, ocrData, matchedBy: 'reference' };
+    }
+
+    // Reference found but ambiguous or not in pool — fall through to amount if available
+    if (ocrAmount === null) {
+      return { outcome: 'queued', reason: `Reference ${primaryVch.raw} found but matched ${refHits.length} voucher(s) in queue — ambiguous`, ocrData, pool };
+    }
+  }
+
+  // ── PATH B: Amount fallback ────────────────────────────────────────────────
+  if (ocrAmount === null) {
+    return { outcome: 'queued', reason: 'No voucher reference or payment amount could be extracted from this receipt', ocrData, pool };
+  }
+
+  const amountHits = pool.filter(v => Math.abs(parseFloat(v.amount) - ocrAmount) <= 0.01);
+
+  if (amountHits.length === 0) {
+    return { outcome: 'queued', reason: `No voucher in the payment queue matches ₹${ocrAmount.toFixed(2)}`, ocrData, pool };
+  }
+
+  if (amountHits.length === 1) {
+    return { outcome: 'complete', voucher: amountHits[0], ocrData, matchedBy: 'amount' };
+  }
+
+  // Multiple matches — tie-break: the one queued/updated within the last 4 hours wins only if unique
+  const cutoff = Date.now() - 4 * 60 * 60 * 1000;
+  const recent = amountHits.filter(v => new Date(v.queued_at || v.created_at).getTime() > cutoff);
+  if (recent.length === 1) {
+    return { outcome: 'complete', voucher: recent[0], ocrData, matchedBy: 'amount+recency' };
+  }
+
+  return {
+    outcome: 'queued',
+    reason: `${amountHits.length} vouchers match ₹${ocrAmount.toFixed(2)}${recent.length > 1 ? ' (multiple recent)' : ''} — ambiguous`,
+    ocrData,
+    pool,
+    candidates: amountHits,
+  };
+}
+
+/**
  * Use GPT-4o Vision to extract all visible text from an image buffer.
  * Returns the raw text string returned by the model.
  */
@@ -6090,9 +6365,138 @@ app.post('/api/companies/:companyId/retrospective-payment-scan', async (req, res
   return res.json({ results, scanned: scannable.length });
 });
 
+// ────────────────────────────────────────────────────────────────────────────────
+// UNASSIGNED RECEIPTS — Review queue (Migration 036)
+// ────────────────────────────────────────────────────────────────────────────────
+
+// GET /api/companies/:companyId/unassigned-receipts
+app.get('/api/companies/:companyId/unassigned-receipts', async (req, res) => {
+  try {
+    const { requestedBy } = req.query;
+    if (!requestedBy) return res.status(400).json({ error: 'requestedBy is required' });
+    const actor = await getActorRole(requestedBy);
+    if (actor.role !== 'accounts' && actor.role !== 'admin' && !actor.is_super_admin)
+      return res.status(403).json({ error: 'Accounts or Admin role required' });
+
+    const { data: receipts, error } = await supabase
+      .from('unassigned_receipts')
+      .select('*')
+      .eq('company_id', req.params.companyId)
+      .eq('status', 'pending_review')
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+
+    // Also return candidate vouchers for the assignment picker
+    const { data: candidates } = await supabase
+      .from('vouchers')
+      .select('id, serial_number, amount, status, payment_receipt_url, payee_id')
+      .eq('company_id', req.params.companyId)
+      .in('status', ['awaiting_payment', 'completed'])
+      .is('payment_receipt_url', null)
+      .is('batch_id', null);
+
+    res.json({ receipts: receipts || [], candidates: candidates || [] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/unassigned-receipts/:id/assign
+// Assign an unassigned receipt to a voucher: re-uploads to payment-receipts path, marks voucher paid.
+app.post('/api/unassigned-receipts/:id/assign', async (req, res) => {
+  const { assignedBy, voucherId, paymentReference, paymentNotes } = req.body;
+  if (!assignedBy) return res.status(400).json({ error: 'assignedBy is required' });
+  if (!voucherId)  return res.status(400).json({ error: 'voucherId is required' });
+
+  try {
+    const actor = await getActorRole(assignedBy);
+    if (actor.role !== 'accounts' && !actor.is_super_admin)
+      return res.status(403).json({ error: 'Only Accounts users can assign receipts' });
+
+    const { data: receipt, error: rErr } = await supabase
+      .from('unassigned_receipts').select('*').eq('id', req.params.id).single();
+    if (rErr || !receipt) return res.status(404).json({ error: 'Unassigned receipt not found' });
+    if (receipt.status !== 'pending_review')
+      return res.status(400).json({ error: `Receipt is already ${receipt.status}` });
+
+    const { data: voucher, error: vErr } = await supabase
+      .from('vouchers').select('id, serial_number, amount, status, company_id, prepared_by')
+      .eq('id', voucherId).single();
+    if (vErr || !voucher) return res.status(404).json({ error: 'Voucher not found' });
+    if (!['awaiting_payment', 'completed'].includes(voucher.status))
+      return res.status(400).json({ error: `Voucher must be awaiting_payment or completed (current: ${voucher.status})` });
+
+    // Download file from unassigned-receipts path
+    const nativeFetch = globalThis.fetch || fetch;
+    const fileRes = await nativeFetch(receipt.file_url);
+    if (!fileRes.ok) throw new Error(`Could not download receipt file (HTTP ${fileRes.status})`);
+    const arrayBuf = await fileRes.arrayBuffer();
+    const fileBuffer = Buffer.from(arrayBuf);
+
+    // Re-upload to canonical payment-receipts path
+    const receiptUrl = await _uploadPaymentReceiptToStorage(
+      voucherId, voucher.company_id, voucher.serial_number, fileBuffer, receipt.mime_type
+    );
+
+    // Use manual override if provided, else fall back to OCR-extracted UTR
+    const utr = paymentReference || receipt.extracted_data?.utr_number || null;
+    // NOTE: payment_reference = UTR — maps to pramaana.vouchers.utr_number in the sync; do not rename
+    const { error: upErr } = await supabase.from('vouchers').update({
+      status:              'paid',
+      payment_reference:   utr,
+      payment_notes:       paymentNotes || `Manually assigned from receipt review queue`,
+      payment_receipt_url: receiptUrl || null,
+      paid_by:             assignedBy,
+      paid_at:             new Date().toISOString(),
+    }).eq('id', voucherId);
+    if (upErr) throw upErr;
+
+    await supabase.from('unassigned_receipts').update({
+      status:      'assigned',
+      assigned_to: voucherId,
+      assigned_by: assignedBy,
+      assigned_at: new Date().toISOString(),
+    }).eq('id', req.params.id);
+
+    await supabase.from('notifications').insert({
+      user_id:    voucher.prepared_by,
+      title:      '✅ Payment Completed',
+      message:    `Voucher ${voucher.serial_number} has been paid.${utr ? ` UTR: ${utr}` : ''}`,
+      type:       'completed',
+      voucher_id: voucherId,
+    });
+    sendPushNotification(voucher.prepared_by, '✅ Payment Done', `Voucher ${voucher.serial_number} paid.${utr ? ` UTR: ${utr}` : ''}`, '/');
+
+    console.log(`[unassigned-assign] ${receipt.id} → ${voucher.serial_number} | by ${assignedBy} | UTR: ${utr || 'N/A'}`);
+    res.json({ success: true, serialNumber: voucher.serial_number, utr });
+  } catch (err) {
+    console.error('[unassigned-assign] error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/unassigned-receipts/:id/dismiss
+app.post('/api/unassigned-receipts/:id/dismiss', async (req, res) => {
+  const { dismissedBy } = req.body;
+  if (!dismissedBy) return res.status(400).json({ error: 'dismissedBy is required' });
+  try {
+    const actor = await getActorRole(dismissedBy);
+    if (actor.role !== 'accounts' && actor.role !== 'admin' && !actor.is_super_admin)
+      return res.status(403).json({ error: 'Accounts or Admin role required' });
+
+    const { error } = await supabase.from('unassigned_receipts')
+      .update({ status: 'dismissed', assigned_by: dismissedBy, assigned_at: new Date().toISOString() })
+      .eq('id', req.params.id).eq('status', 'pending_review');
+    if (error) throw error;
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Export the Express app for Vercel serverless deployment
 module.exports = app;
-module.exports.matchReceiptToVoucher = matchReceiptToVoucher;
 module.exports._testHelpers = { extractVchNumbers, extractBatchRefs, parseDbSerialSeq, parseDbBatchSeq, alphanumOnly, _extractPdfText, _extractImageText, _parseVchCapture };
 
 // Only start server if running locally (not in Vercel)
