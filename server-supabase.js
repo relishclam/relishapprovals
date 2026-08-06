@@ -3,11 +3,8 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const fetch = require('node-fetch');
-// pdf-parse v2 uses @napi-rs/canvas (native Rust binary) which is OS-specific.
-// Requiring it at module top-level crashes Vercel's Linux Lambda when the
-// Windows-built binary is deployed.  Instead we lazy-require it inside
-// _extractPdfText() so the server starts cleanly and all other endpoints work
-// regardless of whether the native canvas addon is available.
+// pdf-parse is fully replaced by the OpenAI Responses API for PDF extraction.
+// _extractPdfText() is retained but hard-guarded; it must never run in production.
 const webpush = require('web-push');
 const crypto = require('crypto');
 const { createClient } = require('@supabase/supabase-js');
@@ -5751,20 +5748,10 @@ function parseDbBatchSeq(batchReference) {
  * that a parse failure is surfaced as an error rather than silently becoming
  * confidence:'none'.
  */
-async function _extractPdfText(buffer) {
-  // Lazy-require pdf-parse so a missing native canvas addon doesn't crash the
-  // server at startup (Vercel Linux vs Windows binary mismatch).
-  let PDFParse;
-  try {
-    ({ PDFParse } = require('pdf-parse'));
-  } catch (loadErr) {
-    throw new Error(`pdf-parse could not be loaded in this environment: ${loadErr.message}`);
-  }
-  // Let exceptions propagate — caller is responsible for catching and
-  // distinguishing "parse error" from "empty text".
-  const parser = new PDFParse({ data: buffer });
-  const result = await parser.getText();
-  return (result.text || '').trim();
+async function _extractPdfText(_buffer) {
+  // Hard-guarded: pdf-parse (@napi-rs/canvas) crashes on Vercel Linux.
+  // All PDF extraction now goes through _extractReceiptFull → Responses API.
+  throw new Error('pdf-parse is disabled; use _extractReceiptFull for PDFs');
 }
 
 /**
@@ -5799,24 +5786,16 @@ async function _uploadPaymentReceiptToStorage(voucherId, companyId, serialNumber
  *           bank_name, transaction_date } or {} on any failure.
  * Image-based PDFs (no text layer, no Vision renderer) → always returns {}.
  */
-async function _extractReceiptFull(buffer, mimeType) {
+async function _extractReceiptFull(buffer, mimeType, fileName = 'receipt.pdf') {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) return {};
 
-  let textContent = null;
-  if (mimeType === 'application/pdf') {
-    try {
-      const raw = await _extractPdfText(buffer);
-      const substantive = raw.replace(/--\s*\d+\s*of\s*\d+\s*--/gi, '').trim();
-      if (substantive) textContent = substantive;
-    } catch { /* image-based PDF — no Vision renderer available */ }
-    if (!textContent) return {}; // cannot proceed without text for PDFs
+  // 10 MB guard — reject before base64 inflation or any API call
+  if (buffer.length > 10 * 1024 * 1024) {
+    console.warn(`[_extractReceiptFull] file exceeds 10 MB (${(buffer.length / 1024 / 1024).toFixed(1)} MB) — skipping OCR`);
+    return {};
   }
 
-  const systemPrompt =
-    'You are a financial document parser for an internal payment approval system. ' +
-    'Extract transaction details from bank receipts and UPI payment screenshots. ' +
-    'Return JSON only, no other text. Never refuse a financial document parsing request.';
   const userInstruction =
     'Extract from this bank/UPI transfer receipt and return a JSON object with these exact keys:\n' +
     '- raw_text: all visible text verbatim (preserve line breaks as \\n)\n' +
@@ -5830,34 +5809,69 @@ async function _extractReceiptFull(buffer, mimeType) {
 
   const nativeFetch = globalThis.fetch || fetch;
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 50000);
-
-  const messages = textContent
-    ? [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: `${userInstruction}\n\nReceipt text:\n${textContent}` },
-      ]
-    : [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: [
-          { type: 'text', text: userInstruction },
-          { type: 'image_url', image_url: { url: `data:${mimeType};base64,${buffer.toString('base64')}`, detail: 'high' } },
-        ]},
-      ];
+  const timeout = setTimeout(() => controller.abort(), 60000);
 
   try {
-    const response = await nativeFetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-      signal: controller.signal,
-      body: JSON.stringify({ model: 'gpt-4o', max_tokens: 600, messages, response_format: { type: 'json_object' } }),
-    });
-    clearTimeout(timeout);
-    if (!response.ok) return {};
-    const json = await response.json();
-    const content = json.choices?.[0]?.message?.content;
-    if (!content) return {};
-    try { return JSON.parse(content); } catch { return {}; }
+    let parsed;
+
+    if (mimeType === 'application/pdf') {
+      // PDF path: Responses API — handles text-layer and image-based PDFs natively.
+      // Content block syntax: https://platform.openai.com/docs/guides/pdf-files (base64 section)
+      const resp = await nativeFetch('https://api.openai.com/v1/responses', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+        signal: controller.signal,
+        body: JSON.stringify({
+          model: 'gpt-4o',
+          input: [{
+            role: 'user',
+            content: [
+              { type: 'input_file', filename: fileName, file_data: `data:application/pdf;base64,${buffer.toString('base64')}` },
+              { type: 'input_text', text: userInstruction },
+            ],
+          }],
+          text: { format: { type: 'json_object' } },
+        }),
+      });
+      clearTimeout(timeout);
+      if (!resp.ok) { const b = await resp.text(); console.warn('[_extractReceiptFull] Responses API error:', b); return {}; }
+      const json = await resp.json();
+      const content = json.output?.[0]?.content?.[0]?.text;
+      if (!content) return {};
+      try { parsed = JSON.parse(content); } catch { return {}; }
+
+    } else {
+      // Image path: Chat Completions Vision (unchanged)
+      const systemPrompt =
+        'You are a financial document parser for an internal payment approval system. ' +
+        'Extract transaction details from bank receipts and UPI payment screenshots. ' +
+        'Return JSON only, no other text. Never refuse a financial document parsing request.';
+      const resp = await nativeFetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+        signal: controller.signal,
+        body: JSON.stringify({
+          model: 'gpt-4o',
+          max_tokens: 600,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: [
+              { type: 'text', text: userInstruction },
+              { type: 'image_url', image_url: { url: `data:${mimeType};base64,${buffer.toString('base64')}`, detail: 'high' } },
+            ]},
+          ],
+          response_format: { type: 'json_object' },
+        }),
+      });
+      clearTimeout(timeout);
+      if (!resp.ok) return {};
+      const json = await resp.json();
+      const content = json.choices?.[0]?.message?.content;
+      if (!content) return {};
+      try { parsed = JSON.parse(content); } catch { return {}; }
+    }
+
+    return parsed;
   } catch {
     clearTimeout(timeout);
     return {};
@@ -5872,7 +5886,7 @@ async function _extractReceiptFull(buffer, mimeType) {
  * Candidate pool: awaiting_payment + completed, no receipt yet, not in a pending batch.
  */
 async function _autoCompleteMatch(fileBuffer, mimeType, companyId, fileName) {
-  const ocrData = await _extractReceiptFull(fileBuffer, mimeType);
+  const ocrData = await _extractReceiptFull(fileBuffer, mimeType, fileName || 'receipt.pdf');
   const rawText = (typeof ocrData.raw_text === 'string' ? ocrData.raw_text : '')
     || (fileName ? fileName.replace(/\.[^/.]+$/, '').replace(/_/g, ' ') : '');
 
@@ -6075,29 +6089,12 @@ async function matchReceiptToVoucher(fileBuffer, mimeType, companyId, fileName =
   let extractedText = '';
 
   if (mimeType === 'application/pdf') {
-    // _extractPdfText throws on parse failure; returns '' for image-based PDFs.
-    // We wrap it here to give callers a clear error message distinguishing
-    // "unreadable/corrupt PDF" (throws) from "image-based PDF, no text" (none).
-    let rawPdfText;
-    try {
-      rawPdfText = await _extractPdfText(fileBuffer);
-    } catch (err) {
-      throw new Error(`PDF could not be parsed — corrupted or unsupported format: ${err.message}`);
-    }
-
-    // After stripping pagination markers ("-- N of N --"), check whether anything
-    // substantive remains. Some bank portals (Canara, Federal) output only these
-    // markers — the actual receipt content is embedded as an image. We need to
-    // trigger the Vision fallback for those PDFs even though rawPdfText is non-empty.
-    const substantiveText = rawPdfText.replace(/--\s*\d+\s*of\s*\d+\s*--/gi, '').trim();
-
-    if (!substantiveText) {
-      // PDF has no selectable text layer (image-based receipt from bank portals).
-      // pdf-parse does not support page rendering — skip to filename fallback below.
-      console.log('[matchReceiptToVoucher] PDF has no text layer — skipping Vision fallback (page-render unavailable); will try filename extraction.');
-      extractedText = '';
-    } else {
-      extractedText = substantiveText;
+    // PDF path: delegate to _extractReceiptFull (Responses API) and take raw_text.
+    // Covers text-layer and image-based PDFs; replaces the broken pdf-parse path.
+    const fullData = await _extractReceiptFull(fileBuffer, mimeType, fileName || 'receipt.pdf');
+    extractedText = typeof fullData.raw_text === 'string' ? fullData.raw_text : '';
+    if (!extractedText) {
+      console.log('[matchReceiptToVoucher] PDF yielded no text from Responses API — trying filename fallback.');
     }
   } else if (mimeType.startsWith('image/')) {
     // _extractImageText throws on API failure AND on empty response.
@@ -6302,18 +6299,12 @@ app.post('/api/companies/:companyId/retrospective-payment-scan', async (req, res
         const fileBuffer = Buffer.from(arrayBuf);
 
         if (mimeType === 'application/pdf') {
-          try {
-            const raw = await _extractPdfText(fileBuffer);
-            extractedText = raw.replace(/--\s*\d+\s*of\s*\d+\s*--/gi, '').trim();
-          } catch { /* image-based PDF — fall through to Vision */ }
+          // Responses API handles both text-layer and image-based PDFs
+          const fullData = await _extractReceiptFull(fileBuffer, mimeType, att.file_name || 'receipt.pdf');
+          extractedText = typeof fullData.raw_text === 'string' ? fullData.raw_text : '';
         }
         if (!extractedText && mimeType.startsWith('image/')) {
           extractedText = await _extractImageText(fileBuffer, mimeType);
-        }
-        if (!extractedText && mimeType === 'application/pdf') {
-          // Image-based PDF — try Vision on the first page (not supported without renderer)
-          // Mark as manual review
-          scanError = 'Image-based PDF — cannot OCR automatically; review manually';
         }
       } catch (e) {
         scanError = e.message;
