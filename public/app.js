@@ -11680,11 +11680,24 @@ const App = () => {
     if (_params.get('incoming-share') === '1') {
       // Remove the query param immediately so a refresh doesn't re-trigger
       window.history.replaceState({}, '', window.location.pathname);
+      const _appFetchTime = Date.now();
       fetch('/_share_pending')
-        .then(r => r.ok ? r.json() : null)
+        .then(r => {
+          const _appGotResponse = Date.now();
+          const _status = r.status;
+          // Post app-side timestamps to the SW debug log (best-effort)
+          fetch('/_share_debug', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ appFetchTime: _appFetchTime, appGotResponse: _appGotResponse, appResponseStatus: _status })
+          }).catch(() => {});
+          return r.ok ? r.json() : null;
+        })
         .then(data => {
           if (data && data.mimeType && data.base64Data) {
             window.onReceiptShared({ mimeType: data.mimeType, base64Data: data.base64Data, fileName: data.fileName || '' });
+          } else {
+            console.warn('[share-app] /_share_pending returned empty — read /_share_debug for SW-side trace');
           }
         })
         .catch(err => console.warn('[share-target] Failed to retrieve pending share:', err.message));

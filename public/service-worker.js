@@ -1,9 +1,9 @@
-const CACHE_NAME = 'relish-approvals-v49';
+const CACHE_NAME = 'relish-approvals-v50';
 const DYNAMIC_CACHE = 'relish-approvals-dynamic-v16';
 const urlsToCache = [
   '/',
   '/index.html',
-  '/styles.css?v=16',
+  '/styles.css?v=17',
   '/app.bundle.js?v=32',
   '/logo.png',
   '/manifest.json',
@@ -57,10 +57,14 @@ self.addEventListener('fetch', (event) => {
   // /?incoming-share=1 so the React layer can retrieve and process it.
   if (event.request.method === 'POST' && _url.pathname === '/share-target') {
     event.respondWith((async () => {
+      const dbg = { swReceived: Date.now() };
       try {
         const formData = await event.request.formData();
+        dbg.swFormDataParsed = Date.now();
         const file = formData.get('receipt');
         if (file instanceof File && file.size > 0) {
+          dbg.mimeType = file.type || 'application/octet-stream';
+          dbg.fileSize = file.size;
           const arrayBuffer = await file.arrayBuffer();
           const bytes = new Uint8Array(arrayBuffer);
           // Chunked btoa — avoids stack overflow on large files (2MB+ PDFs)
@@ -72,19 +76,30 @@ self.addEventListener('fetch', (event) => {
             );
           }
           const base64 = btoa(binary);
+          dbg.swEncoded = Date.now();
           const payload = JSON.stringify({
             mimeType: file.type || 'application/octet-stream',
             base64Data: base64,
             fileName: file.name || 'receipt'
           });
+          dbg.payloadSize = payload.length;
           const cache = await caches.open('relish-share-pending');
           await cache.put('/_share_pending', new Response(payload, {
             headers: { 'Content-Type': 'application/json' }
           }));
+          dbg.swStashed = Date.now();
+        } else {
+          dbg.error = 'no file or empty';
         }
       } catch (err) {
+        dbg.error = err.message;
         console.warn('[SW] share-target processing failed:', err.message);
       }
+      // Persist breadcrumbs — readable via GET /_share_debug
+      const debugCache = await caches.open('relish-share-debug');
+      await debugCache.put('/_share_debug', new Response(JSON.stringify(dbg), {
+        headers: { 'Content-Type': 'application/json' }
+      }));
       return Response.redirect('/?incoming-share=1', 303);
     })());
     return;
@@ -106,6 +121,39 @@ self.addEventListener('fetch', (event) => {
       });
     })());
     return;
+  }
+
+  // ── Share debug log: read (GET) or append app-side timestamps (POST) ────
+  if (_url.pathname === '/_share_debug') {
+    if (event.request.method === 'GET') {
+      event.respondWith((async () => {
+        const c = await caches.open('relish-share-debug');
+        const r = await c.match('/_share_debug');
+        return r || new Response(JSON.stringify({ error: 'no debug log' }), {
+          status: 404, headers: { 'Content-Type': 'application/json' }
+        });
+      })());
+      return;
+    }
+    if (event.request.method === 'POST') {
+      event.respondWith((async () => {
+        try {
+          const appData = await event.request.json();
+          const c = await caches.open('relish-share-debug');
+          const existing = await c.match('/_share_debug');
+          const swData = existing ? await existing.json() : {};
+          await c.put('/_share_debug', new Response(JSON.stringify({ ...swData, ...appData }), {
+            headers: { 'Content-Type': 'application/json' }
+          }));
+          return new Response(JSON.stringify({ ok: true }), { headers: { 'Content-Type': 'application/json' } });
+        } catch (e) {
+          return new Response(JSON.stringify({ error: e.message }), {
+            status: 500, headers: { 'Content-Type': 'application/json' }
+          });
+        }
+      })());
+      return;
+    }
   }
 
   // Skip non-GET requests
@@ -155,7 +203,10 @@ self.addEventListener('fetch', (event) => {
         })
         .catch(() => {
           console.log('[Service Worker] Network failed, serving app code from cache:', event.request.url);
-          return isNavigation ? caches.match('/index.html') : caches.match(event.request);
+          // caches.match can return undefined; fall back to network fetch to avoid respondWith(undefined) TypeError
+          return isNavigation
+            ? caches.match('/index.html').then(r => r || fetch('/index.html'))
+            : caches.match(event.request);
         })
     );
     return;
