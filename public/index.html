@@ -19,8 +19,14 @@
   <link rel="icon" type="image/png" sizes="32x32" href="/android-launchericon-192-192.png">
   <link rel="apple-touch-icon" href="/android-launchericon-192-192.png">
   
-  <!-- Fonts -->
-  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <!-- Preconnect: Supabase API and font origins -->
+  <link rel="preconnect" href="https://ewbguvwrejdvlhzcqlbp.supabase.co">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+
+  <!-- Fonts: non-blocking load; display=swap already in URL -->
+  <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Space+Mono:wght@400;700&display=swap" onload="this.rel='stylesheet'">
+  <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Space+Mono:wght@400;700&display=swap"></noscript>
   
   <!-- React -->
   <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
@@ -138,6 +144,6 @@
     }, 15000);
   </script>
 
-  <script src="/app.bundle.js?v=31"></script>
+  <script src="/app.bundle.js?v=32"></script>
 </body>
 </html>

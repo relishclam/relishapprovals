@@ -11426,10 +11426,13 @@ const App = () => {
     } 
   }, [user, playNotificationSound, showBrowserNotification, addToast]);
 
-  // Request permission on login
+  // Request permission on login — deferred to idle so it never blocks first paint
   useEffect(() => {
-    if (user) {
-      requestPushPermission();
+    if (!user) return;
+    if ('requestIdleCallback' in window) {
+      requestIdleCallback(() => requestPushPermission(), { timeout: 5000 });
+    } else {
+      setTimeout(requestPushPermission, 2000);
     }
   }, [user, requestPushPermission]);
 
