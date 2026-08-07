@@ -1,16 +1,17 @@
-const CACHE_NAME = 'relish-approvals-v47';
+const CACHE_NAME = 'relish-approvals-v48';
 const DYNAMIC_CACHE = 'relish-approvals-dynamic-v16';
 const urlsToCache = [
+  '/',
+  '/index.html',
   '/styles.css?v=16',
-  '/app.js?v=30',
+  '/app.bundle.js?v=31',
   '/logo.png',
   '/manifest.json',
   '/android-launchericon-192-192.png',
   '/android-launchericon-512-512.png',
   'https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Space+Mono:wght@400;700&display=swap',
   'https://unpkg.com/react@18/umd/react.production.min.js',
-  'https://unpkg.com/react-dom@18/umd/react-dom.production.min.js',
-  'https://unpkg.com/@babel/standalone@7.23.9/babel.min.js'
+  'https://unpkg.com/react-dom@18/umd/react-dom.production.min.js'
 ];
 
 // Install event - cache resources
@@ -138,7 +139,7 @@ self.addEventListener('fetch', (event) => {
 
   // App code files & navigation: Network-first strategy (always serve latest code)
   const url = new URL(event.request.url);
-  const isAppCode = url.pathname === '/app.js' || url.pathname === '/styles.css' || url.pathname === '/service-worker.js';
+  const isAppCode = url.pathname === '/app.bundle.js' || url.pathname === '/styles.css' || url.pathname === '/service-worker.js';
   const isNavigation = event.request.mode === 'navigate';
   if (isAppCode || isNavigation) {
     event.respondWith(
@@ -154,7 +155,7 @@ self.addEventListener('fetch', (event) => {
         })
         .catch(() => {
           console.log('[Service Worker] Network failed, serving app code from cache:', event.request.url);
-          return caches.match(event.request);
+          return isNavigation ? caches.match('/index.html') : caches.match(event.request);
         })
     );
     return;

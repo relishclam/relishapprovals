@@ -5,7 +5,11 @@
   "main": "server-supabase.js",
   "scripts": {
     "start": "node server-supabase.js",
-    "dev": "node server-supabase.js"
+    "dev": "node server-supabase.js",
+    "build": "esbuild public/app.js --loader:.js=jsx --outfile=public/app.bundle.js --minify --sourcemap --target=es2018"
+  },
+  "devDependencies": {
+    "esbuild": "^0.21.0"
   },
   "dependencies": {
     "@simplewebauthn/server": "^13.3.2",

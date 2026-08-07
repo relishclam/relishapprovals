@@ -9,8 +9,9 @@
       }
     },
     {
-      "src": "public/**",
-      "use": "@vercel/static"
+      "src": "package.json",
+      "use": "@vercel/static-build",
+      "config": { "distDir": "public" }
     }
   ],
   "routes": [
@@ -20,15 +21,15 @@
     },
     {
       "src": "/(.*\\.(js|css|png|jpg|jpeg|gif|svg|ico|json|html))",
-      "dest": "/public/$1"
+      "dest": "/$1"
     },
     {
       "src": "/capture/(.*)",
-      "dest": "/public/capture.html"
+      "dest": "/capture.html"
     },
     {
       "src": "/(.*)",
-      "dest": "/public/index.html"
+      "dest": "/index.html"
     }
   ]
 }
