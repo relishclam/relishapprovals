@@ -4560,6 +4560,33 @@ const VoucherList = ({ filter }) => {
                   {b.vouchers?.length > 0 && <div style={{marginTop:'6px',fontSize:'0.78rem',color:'#3730a3'}}>{b.vouchers.map(v => v.serial_number).join(' · ')}</div>}
                 </div>
 
+                {/* UPI QR — same helper as individual Pay Now; tn=batchReference so the bank narration
+                    may embed the CPAY ref (future Tier-0 matching). Guard: only when mode is UPI AND
+                    payee has a UPI ID; the combine flow already enforces same-payee+UPI-only via
+                    batchConstraint (line ~3757), but we check both fields explicitly here regardless. */}
+                {b.payment_mode === 'UPI' && !b.payee_upi_id && (
+                  <div style={{padding:'1rem',background:'#fef9c3',borderRadius:'8px',border:'1px solid #fde047',textAlign:'center',fontSize:'0.88rem',color:'#713f12',marginBottom:'0.75rem'}}>
+                    ⚠️ No UPI ID recorded for this payee. Edit the payee to add their UPI ID.
+                  </div>
+                )}
+                {b.payment_mode === 'UPI' && b.payee_upi_id && (() => {
+                  const _upiUrl = `upi://pay?${new URLSearchParams({ pa: b.payee_upi_id, pn: b.payee_name, am: parseFloat(b.totalAmount).toFixed(2), cu: 'INR', tn: b.batchReference }).toString()}`;
+                  const _qrSrc = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(_upiUrl)}&bgcolor=ffffff&color=1a1a1a&margin=10`;
+                  return (
+                    <div style={{textAlign:'center',marginBottom:'0.75rem'}}>
+                      <p style={{fontSize:'0.85rem',color:'#555',marginBottom:'0.75rem'}}>Scan with any UPI app on a second device.</p>
+                      <img src={_qrSrc} alt="UPI QR Code" style={{width:220,height:220,border:'1px solid #e5e7eb',borderRadius:'8px'}} />
+                      <p style={{fontSize:'0.75rem',color:'#888',marginTop:'0.5rem'}}>UPI ID: <code>{b.payee_upi_id}</code></p>
+                      <button
+                        className="btn btn-sm"
+                        style={{marginTop:'0.65rem',background:'#eff6ff',border:'1px solid #bfdbfe',color:'#1d4ed8',fontWeight:600,borderRadius:'6px',padding:'6px 14px',cursor:'pointer',fontSize:'0.82rem'}}
+                        onClick={() => downloadQrCard({ qrSrc: _qrSrc, serial: b.batchReference, payeeName: b.payee_name, amount: b.totalAmount, upiId: b.payee_upi_id, label: 'Batch Pay' })}
+                      >💾 Save QR to Phone</button>
+                      <p style={{fontSize:'0.72rem',color:'#9ca3af',marginTop:'0.35rem'}}>Upload in GPay → Pay → Scan QR (under ₹2,000 only)</p>
+                    </div>
+                  );
+                })()}
+
                 {b.payment_mode === 'Account Transfer' && (
                   <div>
                     <p style={{fontSize:'0.85rem',color:'#555',marginBottom:'0.75rem'}}>Use these details in your banking app (NEFT / IMPS / RTGS).</p>
