@@ -5273,8 +5273,8 @@ app.post('/api/receipts/auto-complete', async (req, res) => {
         `Voucher ${voucher.serial_number} paid.${utr ? ` UTR: ${utr}` : ''}`, '/'
       );
 
-      console.log(`[auto-complete] ✅ ${voucher.serial_number} → paid | matchedBy: ${decision.matchedBy} | UTR: ${utr || 'N/A'}`);
-      return res.json({ outcome: 'completed', voucherId: voucher.id, serialNumber: voucher.serial_number, utr, receiptUrl });
+      console.log(`[auto-complete] ✅ ${voucher.serial_number} → paid | matchedBy: ${decision.matchedBy} | UTR: ${utr || 'N/A'} | receipt: ${receiptUrl ? 'uploaded' : 'FAILED'}`);
+      return res.json({ outcome: 'completed', voucherId: voucher.id, serialNumber: voucher.serial_number, utr, receiptUrl, receiptUploadFailed: !receiptUrl });
     }
 
     // ── Backfill path: attach receipt and record UTR on already-paid voucher ─
@@ -5292,6 +5292,15 @@ app.post('/api/receipts/auto-complete', async (req, res) => {
         const { error: upErr } = await supabase.from('vouchers').update(update).eq('id', voucher.id);
         if (upErr) throw upErr;
       }
+      // Explicit flags so the client shows exactly what was written, not a generic "success"
+      const utrWritten = !!(update.payment_reference);
+      const receiptWritten = !!(update.payment_receipt_url);
+      const receiptUploadFailed = !receiptUrl; // upload helper returned null
+      const nothingWritten = Object.keys(update).length === 0;
+      if (nothingWritten) {
+        console.warn(`[auto-complete] backfill ${voucher.serial_number} — nothing to write (no UTR, no new receipt URL)`);
+        return res.json({ outcome: 'backfilled', voucherId: voucher.id, serialNumber: voucher.serial_number, utr, receiptUrl, utrWritten: false, receiptWritten: false, receiptUploadFailed, nothingWritten: true });
+      }
       if (utr && voucher.prepared_by) {
         await supabase.from('notifications').insert({
           user_id: voucher.prepared_by, title: '📎 Receipt & UTR Recorded',
@@ -5299,8 +5308,8 @@ app.post('/api/receipts/auto-complete', async (req, res) => {
           type: 'completed', voucher_id: voucher.id,
         });
       }
-      console.log(`[auto-complete] 📎 backfill ${voucher.serial_number} | UTR: ${utr || 'N/A'}`);
-      return res.json({ outcome: 'backfilled', voucherId: voucher.id, serialNumber: voucher.serial_number, utr, receiptUrl });
+      console.log(`[auto-complete] 📎 backfill ${voucher.serial_number} | UTR: ${utr || 'N/A'} | receipt: ${receiptUrl ? 'uploaded' : 'FAILED'}`);
+      return res.json({ outcome: 'backfilled', voucherId: voucher.id, serialNumber: voucher.serial_number, utr, receiptUrl, utrWritten, receiptWritten, receiptUploadFailed });
     }
 
     // ── Queued path: save file to unassigned-receipts storage ────────────────

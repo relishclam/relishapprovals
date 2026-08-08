@@ -10534,24 +10534,41 @@ const ReceiptShareModal = ({ state, onClose }) => {
           )}
           {step === 'autocompleted' && (
             <div style={{ textAlign: 'center', padding: '1.5rem 0.5rem' }}>
-              <div style={{ background: '#f0fdf4', border: '2px solid #86efac', borderRadius: '10px', padding: '1.5rem', marginBottom: '0.75rem' }}>
+              <div style={{ background: autoResult?.receiptUploadFailed ? '#fefce8' : '#f0fdf4', border: `2px solid ${autoResult?.receiptUploadFailed ? '#fde68a' : '#86efac'}`, borderRadius: '10px', padding: '1.5rem', marginBottom: '0.75rem' }}>
                 <div style={{ fontSize: '2.5rem', marginBottom: '0.5rem' }}>✅</div>
-                <div style={{ fontWeight: 700, color: '#166534', fontSize: '1.05rem', marginBottom: '4px' }}>Payment Recorded</div>
+                <div style={{ fontWeight: 700, color: autoResult?.receiptUploadFailed ? '#92400e' : '#166534', fontSize: '1.05rem', marginBottom: '4px' }}>Payment Recorded</div>
                 {autoResult?.serialNumber && <div style={{ fontFamily: 'monospace', fontWeight: 600, color: '#15803d', marginBottom: '4px' }}>{autoResult.serialNumber}</div>}
                 {autoResult?.utr && <div style={{ fontSize: '0.82rem', color: '#6b7280', marginTop: '4px' }}>UTR: <code>{autoResult.utr}</code></div>}
-                <div style={{ fontSize: '0.8rem', color: '#4ade80', marginTop: '10px' }}>Voucher marked as paid · Receipt saved.</div>
+                {autoResult?.receiptUploadFailed
+                  ? <div style={{ fontSize: '0.8rem', color: '#b45309', marginTop: '10px' }}>⚠️ Receipt upload failed — voucher status updated but receipt file was not saved. Share again to attach the file.</div>
+                  : <div style={{ fontSize: '0.8rem', color: '#4ade80', marginTop: '10px' }}>Voucher marked as paid · Receipt saved.</div>
+                }
               </div>
             </div>
           )}
           {step === 'backfilled' && (
             <div style={{ textAlign: 'center', padding: '1.5rem 0.5rem' }}>
-              <div style={{ background: '#eff6ff', border: '2px solid #bfdbfe', borderRadius: '10px', padding: '1.5rem', marginBottom: '0.75rem' }}>
-                <div style={{ fontSize: '2.5rem', marginBottom: '0.5rem' }}>📎</div>
-                <div style={{ fontWeight: 700, color: '#1d4ed8', fontSize: '1.05rem', marginBottom: '4px' }}>Receipt Attached & UTR Recorded</div>
-                {autoResult?.serialNumber && <div style={{ fontFamily: 'monospace', fontWeight: 600, color: '#1e40af', marginBottom: '4px' }}>{autoResult.serialNumber}</div>}
-                {autoResult?.utr && <div style={{ fontSize: '0.82rem', color: '#6b7280', marginTop: '4px' }}>UTR: <code>{autoResult.utr}</code></div>}
-                <div style={{ fontSize: '0.8rem', color: '#93c5fd', marginTop: '10px' }}>Voucher was already paid · UTR now on record.</div>
-              </div>
+              {(() => {
+                const r = autoResult || {};
+                // Compose accurate title from what was actually written
+                const title = r.nothingWritten ? 'Nothing to Record'
+                  : r.utrWritten && r.receiptWritten ? 'Receipt Attached & UTR Recorded'
+                  : r.utrWritten ? 'UTR Recorded'
+                  : r.receiptWritten ? 'Receipt Attached'
+                  : 'Receipt Attached & UTR Recorded'; // legacy — flags absent from older deploys
+                const hasWarning = r.nothingWritten || r.receiptUploadFailed;
+                return (
+                  <div style={{ background: r.nothingWritten ? '#fef2f2' : hasWarning ? '#fefce8' : '#eff6ff', border: `2px solid ${r.nothingWritten ? '#fca5a5' : hasWarning ? '#fde68a' : '#bfdbfe'}`, borderRadius: '10px', padding: '1.5rem', marginBottom: '0.75rem' }}>
+                    <div style={{ fontSize: '2.5rem', marginBottom: '0.5rem' }}>{r.nothingWritten ? '⚠️' : '📎'}</div>
+                    <div style={{ fontWeight: 700, color: r.nothingWritten ? '#991b1b' : hasWarning ? '#92400e' : '#1d4ed8', fontSize: '1.05rem', marginBottom: '4px' }}>{title}</div>
+                    {r.serialNumber && <div style={{ fontFamily: 'monospace', fontWeight: 600, color: '#1e40af', marginBottom: '4px' }}>{r.serialNumber}</div>}
+                    {r.utr && <div style={{ fontSize: '0.82rem', color: '#6b7280', marginTop: '4px' }}>UTR: <code>{r.utr}</code></div>}
+                    {r.nothingWritten && <div style={{ fontSize: '0.8rem', color: '#dc2626', marginTop: '10px' }}>No UTR extracted and receipt already on file — nothing was changed.</div>}
+                    {!r.nothingWritten && r.receiptUploadFailed && <div style={{ fontSize: '0.8rem', color: '#b45309', marginTop: '6px' }}>⚠️ Receipt file upload failed — UTR saved but receipt not stored. Share again to attach the file.</div>}
+                    {!r.nothingWritten && !r.receiptUploadFailed && <div style={{ fontSize: '0.8rem', color: '#93c5fd', marginTop: '10px' }}>Voucher was already paid · {r.utrWritten ? 'UTR' : 'Receipt'} now on record.</div>}
+                  </div>
+                );
+              })()}
             </div>
           )}
           {step === 'queued' && (
