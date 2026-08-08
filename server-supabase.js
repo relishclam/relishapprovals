@@ -6506,7 +6506,7 @@ app.post('/api/unassigned-receipts/:id/assign', async (req, res) => {
       return res.status(400).json({ error: `Receipt is already ${receipt.status}` });
 
     const { data: voucher, error: vErr } = await supabase
-      .from('vouchers').select('id, serial_number, amount, status, company_id, prepared_by')
+      .from('vouchers').select('id, serial_number, amount, status, company_id, prepared_by, payment_reference')
       .eq('id', voucherId).single();
     if (vErr || !voucher) return res.status(404).json({ error: 'Voucher not found' });
     if (!['awaiting_payment', 'completed'].includes(voucher.status))
@@ -6524,12 +6524,32 @@ app.post('/api/unassigned-receipts/:id/assign', async (req, res) => {
       voucherId, voucher.company_id, voucher.serial_number, fileBuffer, receipt.mime_type
     );
 
-    // Use manual override if provided, else fall back to OCR-extracted UTR
-    const utr = paymentReference || receipt.extracted_data?.utr_number || null;
+    // Resolve UTR: manual override → OCR cache → fresh extraction (only if voucher has no UTR yet)
     // NOTE: payment_reference = UTR — maps to pramaana.vouchers.utr_number in the sync; do not rename
+    let utr = paymentReference || receipt.extracted_data?.utr_number || null;
+    let utrSource = utr ? (paymentReference ? 'manual' : 'ocr_cached') : null;
+
+    if (!utr && !voucher.payment_reference) {
+      // Fresh OCR extraction — same path as the backfill honest-toast fix
+      const extracted = await _extractReceiptFull(fileBuffer, receipt.mime_type, `receipt-${receipt.id}`);
+      const freshUtr = extracted?.utr_number || null;
+      if (freshUtr) {
+        utr = freshUtr;
+        utrSource = 'ocr_extracted';
+        console.log(`[unassigned-assign] fresh OCR extracted UTR ${utr} for ${voucher.serial_number}`);
+      } else {
+        utrSource = 'not_found';
+      }
+    } else if (voucher.payment_reference) {
+      // Voucher already has a UTR — do not overwrite, but still attach receipt
+      utr = utr || voucher.payment_reference;
+      utrSource = 'existing';
+    }
+
+    const utrToWrite = !voucher.payment_reference ? utr : undefined; // never overwrite an existing UTR
     const { error: upErr } = await supabase.from('vouchers').update({
       status:              'paid',
-      payment_reference:   utr,
+      ...(utrToWrite !== undefined && { payment_reference: utrToWrite }),
       payment_notes:       paymentNotes || `Manually assigned from receipt review queue`,
       payment_receipt_url: receiptUrl || null,
       paid_by:             assignedBy,
@@ -6544,17 +6564,23 @@ app.post('/api/unassigned-receipts/:id/assign', async (req, res) => {
       assigned_at: new Date().toISOString(),
     }).eq('id', req.params.id);
 
+    const utrRecorded = !!utrToWrite;
+    const notifTitle  = utrRecorded ? '✅ Payment Completed — UTR Recorded' : '✅ Payment Completed';
+    const notifMsg    = utrRecorded
+      ? `Voucher ${voucher.serial_number} has been paid. UTR: ${utr}`
+      : `Voucher ${voucher.serial_number} has been paid. Receipt attached — UTR not found in receipt.`;
     await supabase.from('notifications').insert({
       user_id:    voucher.prepared_by,
-      title:      '✅ Payment Completed',
-      message:    `Voucher ${voucher.serial_number} has been paid.${utr ? ` UTR: ${utr}` : ''}`,
+      title:      notifTitle,
+      message:    notifMsg,
       type:       'completed',
       voucher_id: voucherId,
     });
-    sendPushNotification(voucher.prepared_by, '✅ Payment Done', `Voucher ${voucher.serial_number} paid.${utr ? ` UTR: ${utr}` : ''}`, '/');
+    sendPushNotification(voucher.prepared_by, notifTitle, notifMsg, '/');
 
-    console.log(`[unassigned-assign] ${receipt.id} → ${voucher.serial_number} | by ${assignedBy} | UTR: ${utr || 'N/A'}`);
-    res.json({ success: true, serialNumber: voucher.serial_number, utr });
+    const outcome = utrRecorded ? 'receipt_attached_utr_recorded' : 'receipt_attached_utr_not_found';
+    console.log(`[unassigned-assign] ${receipt.id} → ${voucher.serial_number} | by ${assignedBy} | UTR: ${utr || 'N/A'} | source: ${utrSource} | outcome: ${outcome}`);
+    res.json({ success: true, serialNumber: voucher.serial_number, utr, utrSource, outcome });
   } catch (err) {
     console.error('[unassigned-assign] error:', err.message);
     res.status(500).json({ error: err.message });

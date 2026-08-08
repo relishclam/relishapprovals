@@ -10870,7 +10870,13 @@ const UnassignedReceiptsPage = () => {
     setActing(receiptId);
     try {
       const res = await api.assignUnassignedReceipt(receiptId, { assignedBy: user.id, voucherId });
-      if (res.success) { addToast(`Assigned to ${res.serialNumber} ✅`, 'success'); refreshVouchers(); loadData(); }
+      if (res.success) {
+        const msg = res.outcome === 'receipt_attached_utr_recorded'
+          ? `Receipt Attached & UTR Recorded — ${res.serialNumber} (${res.utr})`
+          : `Receipt Attached — UTR not found in receipt (${res.serialNumber})`;
+        addToast(msg, 'success');
+        refreshVouchers(); loadData();
+      }
       else addToast(res.error || 'Assignment failed', 'error');
     } catch (e) { addToast(e.message || 'Assignment failed', 'error'); }
     setActing(null);
