@@ -32,6 +32,11 @@ Thumbs.db
 public/app.bundle.js
 public/app.bundle.js.map
 
+# Test data outputs — OCR pass results, dry-run tables, correction logs, CSV extracts
+tests/*.json
+tests/*.csv
+tests/*.txt
+
 # Vercel
 .vercel
 
