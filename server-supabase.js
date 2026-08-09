@@ -1562,7 +1562,8 @@ const copyTransferReceiptsToVoucher = async (suspenseId, voucherId) => {
   const { data: receipts } = await supabase.from('voucher_attachments')
     .select('company_id,file_name,storage_path,public_url,mime_type,file_size_bytes,uploaded_by,uploaded_at,suspense_id,attachment_category')
     .eq('suspense_id', suspenseId)
-    .eq('attachment_category', 'transfer_receipt')  // only disbursement proofs, never expense bills
+    .eq('attachment_category', 'transfer_receipt')
+    .is('voucher_id', null)  // only original suspense-level records, never copies of copies
 
   if (!receipts?.length) return;
 
