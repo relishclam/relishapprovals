@@ -2240,12 +2240,16 @@ app.post('/api/vouchers/:voucherId/complete', async (req, res) => {
       `${voucher.payee.mobile}:${req.params.voucherId}:${Date.now()}:verified`
     ).toString('base64');
     
+    // Cash vouchers: OTP is the payee's confirmation of receipt — mark paid immediately.
+    const isCash = voucher.payment_mode === 'Cash';
+    const now = new Date().toISOString();
     await supabase.from('vouchers')
       .update({
-        status: 'completed',
+        status:             isCash ? 'paid' : 'completed',
         payee_otp_verified: true,
-        payee_signature: signature,
-        completed_at: new Date().toISOString()
+        payee_signature:    signature,
+        completed_at:       now,
+        ...(isCash ? { paid_at: now, paid_by: voucher.approved_by, payment_notes: 'Cash — paid on OTP verification' } : {})
       })
       .eq('id', req.params.voucherId);
     
@@ -2253,22 +2257,24 @@ app.post('/api/vouchers/:voucherId/complete', async (req, res) => {
     if (voucher.approved_by) {
       await supabase.from('notifications').insert({
         user_id: voucher.approved_by,
-        title: 'Voucher Completed - Ready for Payment',
-        message: `Voucher ${voucher.serial_number} is complete. Payment may be initiated.`,
+        title: isCash ? 'Cash Voucher Paid' : 'Voucher Completed - Ready for Payment',
+        message: isCash
+          ? `Voucher ${voucher.serial_number} is complete. Cash payment confirmed by payee OTP.`
+          : `Voucher ${voucher.serial_number} is complete. Payment may be initiated.`,
         type: 'completed',
         voucher_id: req.params.voucherId
       });
-      
-      // Send push notification to approver
       sendPushNotification(
         voucher.approved_by,
-        '💰 Voucher Ready for Payment',
-        `Voucher ${voucher.serial_number} is complete and ready for payment.`,
+        isCash ? '✅ Cash Voucher Paid' : '💰 Voucher Ready for Payment',
+        isCash
+          ? `${voucher.serial_number} — cash confirmed by payee OTP.`
+          : `Voucher ${voucher.serial_number} is complete and ready for payment.`,
         '/'
       );
     }
     
-    res.json({ success: true, signature, message: 'Voucher completed. Payment may be initiated.' });
+    res.json({ success: true, signature, cashPaid: isCash, message: isCash ? 'Cash voucher marked paid.' : 'Voucher completed. Payment may be initiated.' });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
