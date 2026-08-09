@@ -5396,11 +5396,11 @@ app.post('/api/receipts/auto-complete', async (req, res) => {
       if (Object.keys(update).length > 0) {
         const { error: upErr } = await supabase.from('vouchers').update(update).eq('id', voucher.id);
         if (upErr) throw upErr;
-        // C2: auto-resolve queue rows for this UTR
-        if (utrWritten && utr) _autoResolveQueueForUtr(voucher.company_id, utr, voucher.serial_number).catch(() => {});
       }
       // Explicit flags so the client shows exactly what was written, not a generic "success"
       const utrWritten = !!(update.payment_reference);
+      // C2: auto-resolve queue rows carrying this UTR (fix: utrWritten must be defined first)
+      if (utr) _autoResolveQueueForUtr(voucher.company_id, utr, voucher.serial_number).catch(() => {});
       const receiptWritten = !!(update.payment_receipt_url);
       const receiptUploadFailed = !receiptUrl; // upload helper returned null
       const nothingWritten = Object.keys(update).length === 0;
@@ -6926,15 +6926,17 @@ app.post('/api/unassigned-receipts/:id/assign', async (req, res) => {
     }).eq('id', voucherId);
     if (upErr) throw upErr;
 
-    // C2: auto-resolve other pending queue rows carrying the same UTR
-    if (utrToWrite) _autoResolveQueueForUtr(voucher.company_id, utrToWrite, voucher.serial_number).catch(() => {});
-
+    // Mark this row assigned first so it is excluded from the auto-resolve sweep below.
     await supabase.from('unassigned_receipts').update({
       status:      'assigned',
       assigned_to: voucherId,
       assigned_by: assignedBy,
       assigned_at: new Date().toISOString(),
     }).eq('id', req.params.id);
+
+    // C2: auto-resolve every other pending_review row carrying the same UTR.
+    // Use utr (identified UTR) not utrToWrite — fires even when voucher already had a UTR.
+    if (utr) _autoResolveQueueForUtr(voucher.company_id, utr, voucher.serial_number).catch(() => {});
 
     const utrRecorded = !!utrToWrite;
     const notifTitle  = utrRecorded ? '✅ Payment Completed — UTR Recorded' : '✅ Payment Completed';
@@ -7007,15 +7009,24 @@ app.post('/api/receipts/deposit-unassigned', async (req, res) => {
     fileUrl = urlData.publicUrl;
   }
 
+  // C1: run OCR to get UTR for deduplication when caller did not provide it.
+  let resolvedExtracted = extractedData || null;
+  let fallbackUtr = resolvedExtracted?.utr_number || null;
+  if (!fallbackUtr) {
+    const ocr = await _extractReceiptFull(fileBuffer, receiptMimeType, `deposit-${companyId}`).catch(() => null);
+    if (ocr?.utr_number) {
+      fallbackUtr = ocr.utr_number;
+      resolvedExtracted = { ...(resolvedExtracted || {}), ...ocr };
+      console.log(`[deposit-unassigned] OCR found UTR ${fallbackUtr} — will dedupe by UTR`);
+    }
+  }
   const { data: record } = await (async () => {
-    // C1: refresh existing row if same UTR already queued
-    const fallbackUtr = extractedData?.utr_number || null;
     const payload = {
       company_id:     companyId,
       storage_path:   unassignedPath,
       file_url:       fileUrl,
       mime_type:      receiptMimeType,
-      extracted_data: extractedData || null,
+      extracted_data: resolvedExtracted,
       match_reason:   'Deposited via share-target fallback (auto-complete error)',
     };
     const rowId = await _queueUpsert(companyId, fallbackUtr, payload);
