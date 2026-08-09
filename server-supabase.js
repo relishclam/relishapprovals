@@ -5286,7 +5286,7 @@ app.get('/api/health', (req, res) => {
 // NOTE: payment_reference in Approvals maps to pramaana.vouchers.utr_number in the
 // future cross-system sync — do NOT rename this column to match Pramaana's name.
 app.post('/api/receipts/auto-complete', async (req, res) => {
-  const { requestedBy, receiptData, receiptMimeType, companyId, fileName } = req.body;
+  const { requestedBy, receiptData, receiptMimeType, companyId, fileName, allCompanyIds } = req.body;
 
   if (!requestedBy) return res.status(400).json({ error: true, message: 'requestedBy is required' });
   if (!receiptData)  return res.status(400).json({ error: true, message: 'receiptData is required' });
@@ -5305,7 +5305,20 @@ app.post('/api/receipts/auto-complete', async (req, res) => {
   catch { return res.status(400).json({ error: true, message: 'receiptData is not valid base64' }); }
 
   try {
-    const decision = await _autoCompleteMatch(fileBuffer, receiptMimeType, companyId, fileName || '');
+    let decision = await _autoCompleteMatch(fileBuffer, receiptMimeType, companyId, fileName || '');
+    let detectedCompanyId = null;
+
+    // If queued on primary company, try other companies the user has access to
+    if (decision.outcome === 'queued' && Array.isArray(allCompanyIds) && allCompanyIds.length > 0) {
+      for (const altId of allCompanyIds.filter(id => id && id !== companyId)) {
+        const altDecision = await _autoCompleteMatch(fileBuffer, receiptMimeType, altId, fileName || '');
+        if (altDecision.outcome !== 'queued') {
+          decision = altDecision;
+          detectedCompanyId = altId;
+          break;
+        }
+      }
+    }
 
     // ── B1: Batch match — write UTR to all members + mark batch paid ─────────
     if (decision.outcome === 'batch') {
@@ -5331,7 +5344,7 @@ app.post('/api/receipts/auto-complete', async (req, res) => {
       // B2: generate CPAY acknowledgment HTML receipt
       _generateAndStoreCpayReceipt(batch.id).catch(e => console.warn('[CPAY-receipt] auto-complete generation failed:', e.message));
       console.log(`[auto-complete] ✅ batch ${batch.batch_reference} → paid | UTR: ${utr || 'N/A'} | matchedBy: ${decision.matchedBy}`);
-      return res.json({ outcome: 'batch_completed', batchId: batch.id, batchReference: batch.batch_reference, totalAmount: batch.total_amount, utr, receiptUrl, matchedBy: decision.matchedBy });
+      return res.json({ outcome: 'batch_completed', batchId: batch.id, batchReference: batch.batch_reference, totalAmount: batch.total_amount, utr, receiptUrl, matchedBy: decision.matchedBy, detectedCompanyId });
     }
 
     if (decision.outcome === 'complete') {
@@ -5379,7 +5392,7 @@ app.post('/api/receipts/auto-complete', async (req, res) => {
       );
 
       console.log(`[auto-complete] ✅ ${voucher.serial_number} → paid | matchedBy: ${decision.matchedBy} | UTR: ${utr || 'N/A'} | receipt: ${receiptUrl ? 'uploaded' : 'FAILED'}`);
-      return res.json({ outcome: 'completed', voucherId: voucher.id, serialNumber: voucher.serial_number, utr, receiptUrl, receiptUploadFailed: !receiptUrl });
+      return res.json({ outcome: 'completed', voucherId: voucher.id, serialNumber: voucher.serial_number, utr, receiptUrl, receiptUploadFailed: !receiptUrl, detectedCompanyId });
     }
 
     // ── Backfill path: attach receipt and record UTR on already-paid voucher ─
@@ -5406,7 +5419,7 @@ app.post('/api/receipts/auto-complete', async (req, res) => {
       const nothingWritten = Object.keys(update).length === 0;
       if (nothingWritten) {
         console.warn(`[auto-complete] backfill ${voucher.serial_number} — nothing to write (no UTR, no new receipt URL)`);
-        return res.json({ outcome: 'backfilled', voucherId: voucher.id, serialNumber: voucher.serial_number, utr, receiptUrl, utrWritten: false, receiptWritten: false, receiptUploadFailed, nothingWritten: true });
+        return res.json({ outcome: 'backfilled', voucherId: voucher.id, serialNumber: voucher.serial_number, utr, receiptUrl, utrWritten: false, receiptWritten: false, receiptUploadFailed, nothingWritten: true, detectedCompanyId });
       }
       if (utr && voucher.prepared_by) {
         await supabase.from('notifications').insert({
@@ -5416,7 +5429,7 @@ app.post('/api/receipts/auto-complete', async (req, res) => {
         });
       }
       console.log(`[auto-complete] 📎 backfill ${voucher.serial_number} | UTR: ${utr || 'N/A'} | receipt: ${receiptUrl ? 'uploaded' : 'FAILED'}`);
-      return res.json({ outcome: 'backfilled', voucherId: voucher.id, serialNumber: voucher.serial_number, utr, receiptUrl, utrWritten, receiptWritten, receiptUploadFailed });
+      return res.json({ outcome: 'backfilled', voucherId: voucher.id, serialNumber: voucher.serial_number, utr, receiptUrl, utrWritten, receiptWritten, receiptUploadFailed, detectedCompanyId });
     }
 
     // ── Queued path: save file to unassigned-receipts storage ────────────────

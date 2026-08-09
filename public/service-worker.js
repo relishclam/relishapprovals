@@ -1,4 +1,4 @@
-const CACHE_NAME = 'relish-approvals-v53';
+const CACHE_NAME = 'relish-approvals-v54';
 const DYNAMIC_CACHE = 'relish-approvals-dynamic-v16';
 const urlsToCache = [
   '/',
@@ -57,7 +57,8 @@ self.addEventListener('fetch', (event) => {
   // /?incoming-share=1 so the React layer can retrieve and process it.
   if (event.request.method === 'POST' && _url.pathname === '/share-target') {
     event.respondWith((async () => {
-      const dbg = { swReceived: Date.now() };
+      const _swStart = Date.now();
+      const dbg = { id: _swStart, swReceived: _swStart };
       try {
         const formData = await event.request.formData();
         dbg.swFormDataParsed = Date.now();
@@ -95,9 +96,13 @@ self.addEventListener('fetch', (event) => {
         dbg.error = err.message;
         console.warn('[SW] share-target processing failed:', err.message);
       }
-      // Persist breadcrumbs — readable via GET /_share_debug
+      // Persist breadcrumbs — array, newest first, max 10; readable via GET /_share_debug
       const debugCache = await caches.open('relish-share-debug');
-      await debugCache.put('/_share_debug', new Response(JSON.stringify(dbg), {
+      const _prevDbg = await debugCache.match('/_share_debug');
+      let _dbgArr = [];
+      if (_prevDbg) { try { _dbgArr = await _prevDbg.json(); if (!Array.isArray(_dbgArr)) _dbgArr = [_dbgArr]; } catch {} }
+      _dbgArr = [dbg, ..._dbgArr].slice(0, 10);
+      await debugCache.put('/_share_debug', new Response(JSON.stringify(_dbgArr), {
         headers: { 'Content-Type': 'application/json' }
       }));
       return Response.redirect('/?incoming-share=1', 303);
@@ -141,8 +146,22 @@ self.addEventListener('fetch', (event) => {
           const appData = await event.request.json();
           const c = await caches.open('relish-share-debug');
           const existing = await c.match('/_share_debug');
-          const swData = existing ? await existing.json() : {};
-          await c.put('/_share_debug', new Response(JSON.stringify({ ...swData, ...appData }), {
+          let arr = [];
+          if (existing) { try { arr = await existing.json(); if (!Array.isArray(arr)) arr = [arr]; } catch {} }
+          // Match by exact id, else nearest swStashed to appFetchTime
+          let idx = 0;
+          if (appData.id != null) {
+            const exact = arr.findIndex(e => e.id === appData.id);
+            if (exact !== -1) idx = exact;
+          } else if (appData.appFetchTime != null && arr.length > 0) {
+            let minDiff = Infinity;
+            arr.forEach((e, i) => {
+              const ref = e.swStashed || e.swReceived;
+              if (ref) { const d = Math.abs(ref - appData.appFetchTime); if (d < minDiff) { minDiff = d; idx = i; } }
+            });
+          }
+          if (arr[idx]) arr[idx] = { ...arr[idx], ...appData };
+          await c.put('/_share_debug', new Response(JSON.stringify(arr), {
             headers: { 'Content-Type': 'application/json' }
           }));
           return new Response(JSON.stringify({ ok: true }), { headers: { 'Content-Type': 'application/json' } });

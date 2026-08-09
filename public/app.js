@@ -11056,16 +11056,27 @@ const ReconcileReceipts = () => {
 
   const processRow = async (rowId, mimeType, fileDataUrl, fileName) => {
     setRows(prev => prev.map(r => r.id === rowId ? { ...r, status: 'matching' } : r));
+    const receiptData = fileDataUrl.replace(/^data:.*?;base64,/, '');
     try {
       const matchResult = await api.matchReceiptToVoucher({
         requestedBy: user.id,
-        receiptData: fileDataUrl.replace(/^data:.*?;base64,/, ''),
+        receiptData,
         receiptMimeType: mimeType,
         companyId: user.company.id,
         fileName: fileName || '',
       });
+      // No confident match — deposit to unassigned_receipts so it reaches the Review Queue
+      if (!matchResult.matchedVoucherId && !matchResult.matchedBatchId) {
+        api.depositUnassigned({ requestedBy: user.id, receiptData, receiptMimeType: mimeType, companyId: user.company.id, extractedData: null })
+          .then(dep => { if (dep?.id) setRows(prev => prev.map(r => r.id === rowId ? { ...r, unassignedId: dep.id } : r)); })
+          .catch(() => {});
+      }
       setRows(prev => prev.map(r => r.id === rowId ? { ...r, status: 'done', matchResult } : r));
     } catch (err) {
+      // On error, still deposit so the receipt isn't lost
+      api.depositUnassigned({ requestedBy: user.id, receiptData, receiptMimeType: mimeType, companyId: user.company.id, extractedData: null })
+        .then(dep => { if (dep?.id) setRows(prev => prev.map(r => r.id === rowId ? { ...r, unassignedId: dep.id } : r)); })
+        .catch(() => {});
       setRows(prev => prev.map(r => r.id === rowId ? { ...r, status: 'done', matchResult: { error: true, confidence: 'none', extractedReference: null, candidateVouchers: [], errorMsg: err.message } } : r));
     }
   };
@@ -11163,6 +11174,7 @@ const ReconcileReceipts = () => {
                         {matchedV && <span style={{ fontSize: '0.78rem', color: '#166534', fontWeight: 600 }}>→ {matchedV.serial_number} · ₹{parseFloat(matchedV.amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>}
                         {isImagePdf && <span style={{ fontSize: '0.78rem', color: '#92400e' }}>⚠️ No text in PDF — try selecting the voucher manually below</span>}
                         {hasError && <span style={{ fontSize: '0.78rem', color: '#dc2626' }}>⚠️ {mr.message || mr.errorMsg || 'Processing failed — try re-uploading'}</span>}
+                        {row.unassignedId && !row.attached && <span style={{ fontSize: '0.78rem', color: '#92400e' }}>📬 Sent to Review Queue</span>}
                       </div>
                     )}
                     {row.attached && <div style={{ fontSize: '0.78rem', color: '#166534', fontWeight: 600, marginTop: '4px' }}>✅ Attached to {row.attached.serial}</div>}
@@ -11557,6 +11569,8 @@ const App = () => {
     });
   }, []); // run once on mount
 
+  // TODO: polling efficiency ladder — (1) pause on document.hidden, (2) lightweight
+  //   GET /api/companies/:id/updated-at change-signal before full fetch, (3) Supabase Realtime.
   useEffect(() => { if (user) { refreshVouchers(); refreshNotifications(); const interval = setInterval(() => { refreshVouchers(); refreshNotifications(); }, 30000); return () => clearInterval(interval); } }, [user, refreshVouchers, refreshNotifications]);
 
   const handleLogin = async (userData, staffSettlementToken, fromWebAuthn = false) => {
@@ -11738,7 +11752,19 @@ const App = () => {
           receiptMimeType: mimeType,
           companyId: user.company.id,
           fileName: fileName || '',
-        }).then(result => {
+          allCompanyIds: (user.companies || []).map(c => c.id).filter(id => id && id !== user.company.id),
+        }).then(async result => {
+          // Auto-switch company if match was found in a different company
+          if (result.detectedCompanyId && result.detectedCompanyId !== user.company.id) {
+            try {
+              const switchRes = await api.switchCompany(user.id, result.detectedCompanyId);
+              if (switchRes.success) {
+                try { localStorage.setItem('relish_session', JSON.stringify(switchRes.user)); } catch {}
+                setUser(switchRes.user);
+                setVouchers([]);
+              }
+            } catch {}
+          }
           if (result.outcome === 'completed') {
             setReceiptShare(prev => prev ? { ...prev, step: 'autocompleted', autoResult: result } : null);
           } else if (result.outcome === 'backfilled') {
