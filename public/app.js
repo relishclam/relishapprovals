@@ -396,6 +396,8 @@ const api = {
   markBatchPaid: (batchId, data) => fetch(`${API_BASE}/batches/${batchId}/mark-paid`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
     .then(async r => { const json = await r.json(); if (!r.ok) throw new Error(json.error || 'Mark batch paid failed'); return json; }),
   getBatchReceipts: (batchId) => fetch(`${API_BASE}/batches/${batchId}/receipts`).then(async r => { const json = await r.json(); if (!r.ok) throw new Error(json.error || 'Failed to load receipts'); return json; }),
+  getBatch: (batchId) => fetch(`${API_BASE}/batches/${batchId}`).then(async r => { const json = await r.json(); if (!r.ok) throw new Error(json.error || 'Failed to load batch'); return json; }),
+  getBatchRegister: (companyId) => fetch(`${API_BASE}/companies/${companyId}/batch-register`).then(async r => { const json = await r.json(); if (!r.ok) throw new Error(json.error || 'Failed to load batch register'); return json; }),
   addBatchReceipt: (batchId, data) => fetch(`${API_BASE}/batches/${batchId}/receipts`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(async r => { const json = await r.json(); if (!r.ok) throw new Error(json.error || 'Upload failed'); return json; }),
   uploadAttachment: (data) => fetch(`${API_BASE}/attachments/upload`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
   getAttachments: (params) => fetch(`${API_BASE}/attachments?${new URLSearchParams(params)}`).then(r => r.json()),
@@ -2806,6 +2808,8 @@ const VoucherList = ({ filter }) => {
   const [batchReceiptMime, setBatchReceiptMime] = useState('');
   const [batchReceiptPreview, setBatchReceiptPreview] = useState('');
   const [batchPaying, setBatchPaying] = useState(false);
+  // B2: batch provenance for the Payment Record "Settled via / Members" rows
+  const [selectedBatchDetails, setSelectedBatchDetails] = useState(null); // { batch_reference, total_amount, members[] }
   // Batch Receipts modal — view / add receipts on an already-paid batch
   const [batchReceiptsModal, setBatchReceiptsModal] = useState(null); // { batchId, batchReference, payeeName }
   const [batchReceiptsList, setBatchReceiptsList] = useState([]);
@@ -2957,6 +2961,11 @@ const VoucherList = ({ filter }) => {
     if (full?.error) { addToast(full.error || 'Failed to load voucher', 'error'); return; }
     setSelectedVoucher(full);
     setShowModal(true);
+    // B2: fetch batch provenance for the "Settled via / Members" rows
+    setSelectedBatchDetails(null);
+    if (full.batch_id && full.status === 'paid') {
+      api.getBatch(full.batch_id).then(setSelectedBatchDetails).catch(() => {});
+    }
   };
 
   const handleEditDraft = (voucher) => {
@@ -3113,11 +3122,12 @@ const VoucherList = ({ filter }) => {
       return words.trim() + ' Only';
     };
     
-    // Helper to render attachment links and payment receipt for print
+    // Helper to render attachment links and payment record for print
     const renderAttachments = (v) => {
       const atts = v.attachments || [];
       const hasPaymentReceipt = !!v.payment_receipt_url;
-      if (atts.length === 0 && !hasPaymentReceipt) return '';
+      const hasPaidInfo = v.status === 'paid' && (v.payment_reference || v.batch_reference || v.payment_notes);
+      if (atts.length === 0 && !hasPaymentReceipt && !hasPaidInfo) return '';
 
       let html = '<div style="margin-top:18px;border-top:2px dashed #e5e7eb;padding-top:14px">';
 
@@ -3135,9 +3145,22 @@ const VoucherList = ({ filter }) => {
         html += '</tbody></table>';
       }
 
-      if (hasPaymentReceipt) {
-        html += `<div style="margin-top:${atts.length > 0 ? '10px' : '0'};font-weight:700;font-size:10px;color:#166534;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.06em">&#9989; Payment Receipt</div>`;
-        html += `<div style="font-size:9px;word-break:break-all;padding:5px 8px;background:#f0fdf4;border:1px solid #86efac;border-radius:4px"><a href="${v.payment_receipt_url}" style="color:#16a34a;text-decoration:none">${v.payment_receipt_url}</a></div>`;
+      if (hasPaidInfo || hasPaymentReceipt) {
+        html += `<div style="margin-top:${atts.length > 0 ? '12px' : '0'};font-weight:700;font-size:10px;color:#166534;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.06em">&#9989; Payment Record</div>`;
+        html += '<table style="width:100%;border-collapse:collapse;font-size:10px;margin-bottom:4px">';
+        if (v.payment_reference) {
+          html += `<tr><td style="padding:4px 8px;color:#374151;font-weight:600;width:140px;border-bottom:1px solid #dcfce7">UTR / Reference</td><td style="padding:4px 8px;font-family:monospace;font-weight:700;color:#166534;border-bottom:1px solid #dcfce7">${v.payment_reference}</td></tr>`;
+        }
+        if (v.batch_reference) {
+          html += `<tr><td style="padding:4px 8px;color:#374151;font-weight:600;border-bottom:1px solid #dcfce7">Paid via Batch</td><td style="padding:4px 8px;font-family:monospace;font-weight:700;color:#1d4ed8;border-bottom:1px solid #dcfce7">${v.batch_reference}</td></tr>`;
+        }
+        if (v.payment_notes) {
+          html += `<tr><td style="padding:4px 8px;color:#374151;font-weight:600;border-bottom:1px solid #dcfce7">Notes</td><td style="padding:4px 8px;color:#374151;border-bottom:1px solid #dcfce7">${v.payment_notes}</td></tr>`;
+        }
+        if (hasPaymentReceipt) {
+          html += `<tr><td style="padding:4px 8px;color:#374151;font-weight:600">Receipt</td><td style="padding:4px 8px;word-break:break-all"><a href="${v.payment_receipt_url}" style="color:#16a34a;text-decoration:none;font-size:9px">${v.payment_receipt_url}</a></td></tr>`;
+        }
+        html += '</table>';
       }
 
       html += '</div>';
@@ -3323,6 +3346,11 @@ const VoucherList = ({ filter }) => {
         <div class="meta-row" style="background:#fffbeb;border-radius:4px;padding:2px 4px">
           <div class="meta-label" style="color:#92400e">Suspense Ref:</div>
           <div class="meta-value" style="font-weight:700;color:#92400e">${v.suspense_serial}</div>
+        </div>` : ''}
+        ${v.batch_reference ? `
+        <div class="meta-row" style="background:#f0fdf4;border-radius:4px;padding:2px 4px">
+          <div class="meta-label" style="color:#166534">Paid via Batch:</div>
+          <div class="meta-value" style="font-weight:700;color:#166534">${v.batch_reference}</div>
         </div>` : ''}
         <div class="meta-row">
           <div class="meta-label">Head of Account:</div>
@@ -3870,6 +3898,29 @@ const VoucherList = ({ filter }) => {
                     <span style={{color:'#166534'}}>UTR / Ref</span>
                     <strong style={{fontFamily:'monospace'}}>{selectedVoucher.payment_reference}</strong>
                   </div>
+                )}
+                {/* B2: batch provenance — CPAY reference shown immediately from voucher; members loaded async */}
+                {selectedVoucher.batch_reference && (
+                  <div style={{display:'flex',justifyContent:'space-between',fontSize:'0.85rem',marginBottom:'0.2rem',color:'#1d4ed8'}}>
+                    <span>Paid via Batch</span>
+                    <strong style={{fontFamily:'monospace'}}>{selectedVoucher.batch_reference}</strong>
+                  </div>
+                )}
+                {selectedBatchDetails && (
+                  <React.Fragment>
+                    <div style={{display:'flex',justifyContent:'space-between',fontSize:'0.85rem',marginBottom:'0.2rem',color:'#166534'}}>
+                      <span>Settled via</span>
+                      <span style={{fontFamily:'monospace',fontWeight:600}}>{selectedBatchDetails.batch_reference} (₹{parseFloat(selectedBatchDetails.total_amount).toLocaleString('en-IN',{minimumFractionDigits:2})} total)</span>
+                    </div>
+                    {selectedBatchDetails.members && selectedBatchDetails.members.length > 0 && (
+                      <div style={{fontSize:'0.8rem',color:'#166534',marginBottom:'0.3rem'}}>
+                        <span style={{marginRight:'4px'}}>Members:</span>
+                        {selectedBatchDetails.members.map((m,i) => (
+                          <span key={m.voucher_id||i} style={{fontFamily:'monospace'}}>{m.serial_number} ₹{parseFloat(m.amount||0).toLocaleString('en-IN',{minimumFractionDigits:2})}{i < selectedBatchDetails.members.length-1 ? ' · ' : ''}</span>
+                        ))}
+                      </div>
+                    )}
+                  </React.Fragment>
                 )}
                 {selectedVoucher.payment_notes && (
                   <div style={{fontSize:'0.85rem',color:'#166534',marginBottom:'0.5rem'}}>{selectedVoucher.payment_notes}</div>

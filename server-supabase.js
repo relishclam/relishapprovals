@@ -1832,17 +1832,18 @@ app.get('/api/companies/:companyId/vouchers', async (req, res) => {
 
     // Attach batch_reference for vouchers paid via a batch (separate query to avoid
     // PostgREST ambiguity with the payment_batches FK).
-    const batchIds = [...new Set(formattedVouchers.map(v => v.batch_id).filter(Boolean))];
-    let batchRefMap = {};
+    const batchIds = [...new Set(formattedVouchers.map(v => v.batch_id).filter(Boolean))]
+    let batchRefMap = {}
     if (batchIds.length > 0) {
       const { data: batchRows } = await supabase.from('payment_batches')
-        .select('id, batch_reference').in('id', batchIds);
-      (batchRows || []).forEach(b => { batchRefMap[b.id] = b.batch_reference; });
+        .select('id, batch_reference, total_amount').in('id', batchIds)
+      ;(batchRows || []).forEach(b => { batchRefMap[b.id] = { reference: b.batch_reference, total: b.total_amount } })
     }
     const enrichedVouchers = formattedVouchers.map(v => ({
       ...v,
-      batch_reference: v.batch_id ? (batchRefMap[v.batch_id] || null) : null
-    }));
+      batch_reference:    v.batch_id ? (batchRefMap[v.batch_id]?.reference    || null) : null,
+      batch_total_amount: v.batch_id ? (batchRefMap[v.batch_id]?.total         || null) : null,
+    }))
     
     res.json(enrichedVouchers);
   } catch (error) {
@@ -1905,6 +1906,13 @@ app.get('/api/vouchers/:voucherId', async (req, res) => {
       .eq('voucher_id', req.params.voucherId)
       .order('uploaded_at', { ascending: true });
 
+    let batchReference = null;
+    if (voucher.batch_id) {
+      const { data: batchRow } = await supabase.from('payment_batches')
+        .select('batch_reference').eq('id', voucher.batch_id).maybeSingle();
+      batchReference = batchRow?.batch_reference || null;
+    }
+
     res.json({
       ...voucher,
       payee_name: voucher.payee?.name,
@@ -1923,6 +1931,7 @@ app.get('/api/vouchers/:voucherId', async (req, res) => {
       company_gst: voucher.company?.gst,
       suspense_serial: suspenseSerial,
       suspense_voucher_id: suspenseVoucherId,
+      batch_reference: batchReference,
       attachments: attachments || []
     });
   } catch (error) {
@@ -4855,9 +4864,11 @@ app.post('/api/vouchers/:voucherId/mark-awaiting-payment', async (req, res) => {
 
 // Mark voucher as paid: awaiting_payment|completed → paid (Accounts/SuperAdmin)
 app.post('/api/vouchers/:voucherId/mark-paid', async (req, res) => {
-  const { paidBy, paymentReference, paymentNotes, receiptData, receiptMimeType } = req.body;
+  const { paidBy, paymentReference, paymentNotes, receiptData, receiptMimeType, paymentMode } = req.body;
   if (!paidBy) return res.status(400).json({ error: 'paidBy is required' });
-  if (!paymentReference && !receiptData)
+  const isCash = paymentMode === 'Cash';
+  // Cash payments need no UTR or receipt — captured by signed chit (optional photo)
+  if (!isCash && !paymentReference && !receiptData)
     return res.status(400).json({ error: 'Please enter a UTR reference or upload a receipt — at least one is required' });
 
   try {
@@ -4908,6 +4919,7 @@ app.post('/api/vouchers/:voucherId/mark-paid', async (req, res) => {
     const { error: upErr } = await supabase.from('vouchers').update({
       status: 'paid',
       payment_reference: paymentReference || null,
+      payment_mode: paymentMode || undefined,
       payment_notes: paymentNotes || null,
       payment_receipt_url: receiptUrl,
       paid_by: paidBy,
@@ -4939,7 +4951,55 @@ app.post('/api/vouchers/:voucherId/mark-paid', async (req, res) => {
   }
 });
 
-// Dequeue voucher: awaiting_payment → completed (defer payment)
+// Mark a paid voucher as payment-failed: reverts to awaiting_payment (Approver / SuperAdmin only).
+// Clears payment fields; writes a timestamped audit note so the failure is never silently lost.
+app.post('/api/vouchers/:voucherId/mark-payment-failed', async (req, res) => {
+  const { failedBy, failureNote } = req.body;
+  if (!failedBy) return res.status(400).json({ error: 'failedBy is required' });
+
+  try {
+    const actor = await getActorRole(failedBy);
+    if (actor.role !== 'approver' && !actor.is_super_admin)
+      return res.status(403).json({ error: 'Only Approvers can mark a payment as failed' });
+
+    const { data: voucher, error: vErr } = await supabase.from('vouchers')
+      .select('*, revertedBy:users!vouchers_paid_by_fkey(name)')
+      .eq('id', req.params.voucherId).single();
+    if (vErr || !voucher) return res.status(404).json({ error: 'Voucher not found' });
+    if (voucher.status !== 'paid')
+      return res.status(400).json({ error: `Only paid vouchers can be reverted (current: ${voucher.status})` });
+
+    const timestamp = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' });
+    const auditNote = `Payment of ₹${parseFloat(voucher.amount).toFixed(2)} via ${voucher.payment_mode || 'UPI'} failed/returned on ${timestamp}, reverted by ${actor.name || failedBy}. ${failureNote ? `Note: ${failureNote}` : ''}`.trim();
+
+    const { error: upErr } = await supabase.from('vouchers').update({
+      status:              'awaiting_payment',
+      payment_reference:   null,
+      payment_receipt_url: null,
+      paid_by:             null,
+      paid_at:             null,
+      // Preserve payment_notes as audit trail: prepend the failure note
+      payment_notes: voucher.payment_notes
+        ? `${auditNote}\n\n[Previous note]: ${voucher.payment_notes}`
+        : auditNote,
+    }).eq('id', req.params.voucherId);
+    if (upErr) throw upErr;
+
+    await supabase.from('notifications').insert({
+      user_id: voucher.prepared_by,
+      title:   '⚠️ Payment Failed — Action Required',
+      message: `Payment for voucher ${voucher.serial_number} was returned. It has been reverted to Awaiting Payment.`,
+      type:    'pending',
+      voucher_id: req.params.voucherId,
+    });
+
+    console.log(`   ⚠️  Voucher ${voucher.serial_number} payment reverted by ${failedBy} — ${auditNote}`);
+    res.json({ success: true, message: 'Payment marked as failed. Voucher reverted to awaiting_payment.' });
+  } catch (error) {
+    console.error('mark-payment-failed error:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
 app.post('/api/vouchers/:voucherId/dequeue-payment', async (req, res) => {
   const { dequeuedBy } = req.body;
   if (!dequeuedBy) return res.status(400).json({ error: 'dequeuedBy is required' });
@@ -5232,6 +5292,33 @@ app.post('/api/receipts/auto-complete', async (req, res) => {
   try {
     const decision = await _autoCompleteMatch(fileBuffer, receiptMimeType, companyId, fileName || '');
 
+    // ── B1: Batch match — write UTR to all members + mark batch paid ─────────
+    if (decision.outcome === 'batch') {
+      const { batch, ocrData } = decision;
+      const utr = ocrData?.utr_number || null;
+      const receiptUrl = await _uploadPaymentReceiptToStorage(
+        batch.id, companyId, batch.batch_reference, fileBuffer, receiptMimeType
+      ).catch(() => null);
+
+      const { error: rpcErr } = await supabase.rpc('batch_mark_paid', {
+        p_batch_id:          batch.id,
+        p_paid_by:           requestedBy,
+        p_payment_reference: utr,
+        p_payment_notes:     decision.matchedBy === 'amount'
+          ? `batch_completed via amount match (Share Receipt auto-complete — no CPAY ref in receipt)`
+          : `Auto-completed via Share Receipt (matched by ${decision.matchedBy})`,
+        p_receipt_url:       receiptUrl,
+      });
+      if (rpcErr) {
+        console.error('[auto-complete] batch RPC failed:', rpcErr.message);
+        return res.json({ outcome: 'queued', reason: `Batch match found (${batch.batch_reference}) but mark-paid RPC failed: ${rpcErr.message}` });
+      }
+      // B2: generate CPAY acknowledgment HTML receipt
+      _generateAndStoreCpayReceipt(batch.id).catch(e => console.warn('[CPAY-receipt] auto-complete generation failed:', e.message));
+      console.log(`[auto-complete] ✅ batch ${batch.batch_reference} → paid | UTR: ${utr || 'N/A'} | matchedBy: ${decision.matchedBy}`);
+      return res.json({ outcome: 'batch_completed', batchId: batch.id, batchReference: batch.batch_reference, totalAmount: batch.total_amount, utr, receiptUrl, matchedBy: decision.matchedBy });
+    }
+
     if (decision.outcome === 'complete') {
       const { voucher, ocrData } = decision;
 
@@ -5260,6 +5347,9 @@ app.post('/api/receipts/auto-complete', async (req, res) => {
         paid_at:              new Date().toISOString(),
       }).eq('id', voucher.id);
       if (upErr) throw upErr;
+
+      // C2: auto-resolve any queue rows carrying this UTR
+      if (utr) _autoResolveQueueForUtr(voucher.company_id, utr, voucher.serial_number).catch(() => {});
 
       await supabase.from('notifications').insert({
         user_id:    voucher.prepared_by,
@@ -5291,6 +5381,8 @@ app.post('/api/receipts/auto-complete', async (req, res) => {
       if (Object.keys(update).length > 0) {
         const { error: upErr } = await supabase.from('vouchers').update(update).eq('id', voucher.id);
         if (upErr) throw upErr;
+        // C2: auto-resolve queue rows for this UTR
+        if (utrWritten && utr) _autoResolveQueueForUtr(voucher.company_id, utr, voucher.serial_number).catch(() => {});
       }
       // Explicit flags so the client shows exactly what was written, not a generic "success"
       const utrWritten = !!(update.payment_reference);
@@ -5327,7 +5419,9 @@ app.post('/api/receipts/auto-complete', async (req, res) => {
     }
 
     const ocrPayload = decision.ocrData && Object.keys(decision.ocrData).length > 0 ? decision.ocrData : null;
-    await supabase.from('unassigned_receipts').insert({
+    const queueUtr = ocrPayload?.utr_number || null;
+    // C1: dedupe by UTR+company — refresh existing row rather than duplicating
+    await _queueUpsert(companyId, queueUtr, {
       company_id:     companyId,
       storage_path:   unassignedPath,
       file_url:       fileUrl || '',
@@ -5597,9 +5691,89 @@ app.post('/api/batches/:id/mark-paid', async (req, res) => {
     }
 
     console.log(`   ✅ Batch ${batch.batch_reference} marked paid by ${paidBy} — ${rpcResult?.vouchers_paid} vouchers | UTR: ${paymentReference || 'N/A'}`);
+    // B2: generate CPAY acknowledgment HTML receipt and store it
+    _generateAndStoreCpayReceipt(req.params.id).catch(e => console.warn('[CPAY-receipt] generation failed:', e.message));
     res.json({ success: true, ...rpcResult, receiptUrl });
   } catch (error) {
     console.error('mark-batch-paid error:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// B2: Get batch details + member vouchers (for auditor "Settled via" view on individual vouchers)
+app.get('/api/batches/:id', async (req, res) => {
+  try {
+    const { data: batch, error: bErr } = await supabase.from('payment_batches')
+      .select('id, batch_reference, total_amount, status, payment_reference, payment_receipt_url, paid_at, payees(name)')
+      .eq('id', req.params.id).single();
+    if (bErr || !batch) return res.status(404).json({ error: 'Batch not found' });
+
+    const { data: members } = await supabase.from('payment_batch_vouchers')
+      .select('voucher_id, vouchers(serial_number, amount, payee_id, payees(name))')
+      .eq('batch_id', req.params.id);
+
+    res.json({
+      ...batch,
+      payee_name: batch.payees?.name || null,
+      members: (members || []).map(m => ({
+        voucher_id:     m.voucher_id,
+        serial_number:  m.vouchers?.serial_number || null,
+        amount:         m.vouchers?.amount || null,
+        payee_name:     m.vouchers?.payees?.name || null,
+      })),
+    });
+  } catch (error) {
+    console.error('get-batch error:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// B2: Regenerate (or generate for the first time) the CPAY acknowledgment HTML receipt
+app.post('/api/batches/:id/generate-receipt', async (req, res) => {
+  const { requestedBy } = req.body;
+  if (!requestedBy) return res.status(400).json({ error: 'requestedBy is required' });
+  try {
+    const actor = await getActorRole(requestedBy);
+    if (actor.role !== 'accounts' && actor.role !== 'admin' && !actor.is_super_admin)
+      return res.status(403).json({ error: 'Only Accounts or Admin users can generate batch receipts' });
+    const url = await _generateAndStoreCpayReceipt(req.params.id);
+    if (!url) return res.status(500).json({ error: 'Receipt generation failed — check storage permissions' });
+    res.json({ success: true, receiptUrl: url });
+  } catch (error) {
+    console.error('generate-batch-receipt error:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// B3: Batch Payment Register — all batches for a company with members + amounts
+app.get('/api/companies/:companyId/batch-register', async (req, res) => {
+  try {
+    const { companyId } = req.params;
+    const { data: batches, error: bErr } = await supabase.from('payment_batches')
+      .select('id, batch_reference, total_amount, status, payment_reference, payment_receipt_url, paid_at, created_at, payees(name)')
+      .eq('company_id', companyId)
+      .order('created_at', { ascending: false });
+    if (bErr) throw bErr;
+
+    const batchIds = (batches || []).map(b => b.id);
+    let memberMap = {};
+    if (batchIds.length > 0) {
+      const { data: allMembers } = await supabase.from('payment_batch_vouchers')
+        .select('batch_id, voucher_id, vouchers(serial_number, amount)')
+        .in('batch_id', batchIds);
+      (allMembers || []).forEach(m => {
+        if (!memberMap[m.batch_id]) memberMap[m.batch_id] = [];
+        memberMap[m.batch_id].push({ serial_number: m.vouchers?.serial_number, amount: m.vouchers?.amount });
+      });
+    }
+
+    res.json((batches || []).map(b => ({
+      ...b,
+      payee_name: b.payees?.name || null,
+      members:    memberMap[b.id] || [],
+    })));
+  } catch (error) {
+    console.error('batch-register error:', error.message);
     res.status(500).json({ error: error.message });
   }
 });
@@ -5796,6 +5970,146 @@ async function _extractPdfText(_buffer) {
  * Returns the public URL, or null if the upload fails (caller continues without receipt).
  * Path: {companyId}/payment-receipts/{voucherId}/{serial}-PMT-{DD-Mon-YYYY}.{ext}
  */
+// ── Task C helpers ─────────────────────────────────────────────────────────
+// C1: Upsert unassigned_receipts — refresh an existing pending row for the same
+//     UTR + company instead of accumulating duplicates.
+async function _queueUpsert(companyId, utr, payload) {
+  if (utr) {
+    const { data: existing } = await supabase.from('unassigned_receipts')
+      .select('id').eq('company_id', companyId).eq('status', 'pending_review')
+      .filter('extracted_data->>utr_number', 'eq', utr).limit(1).maybeSingle();
+    if (existing?.id) {
+      await supabase.from('unassigned_receipts').update(payload).eq('id', existing.id);
+      console.log(`[queue] refreshed existing row ${existing.id} for UTR ${utr}`);
+      return existing.id;
+    }
+  }
+  const { data: row } = await supabase.from('unassigned_receipts').insert(payload).select('id').single();
+  return row?.id;
+}
+
+// C2: Auto-resolve all pending_review queue rows that carry a given UTR.
+// Called immediately after any path that writes a UTR to a voucher.
+async function _autoResolveQueueForUtr(companyId, utr, serialNumber) {
+  if (!utr || !companyId) return;
+  const { data: rows } = await supabase.from('unassigned_receipts')
+    .select('id').eq('company_id', companyId).eq('status', 'pending_review')
+    .filter('extracted_data->>utr_number', 'eq', utr);
+  if (!rows?.length) return;
+  const ids = rows.map(r => r.id);
+  await supabase.from('unassigned_receipts')
+    .update({ status: 'assigned', match_reason: `Auto-resolved: UTR ${utr} matched to ${serialNumber || 'voucher'}` })
+    .in('id', ids);
+  console.log(`[queue] auto-resolved ${ids.length} row(s) for UTR ${utr}`);
+}
+
+// B2: Build the CPAY acknowledgment HTML string (shared by GET endpoint and storage helper).
+async function _buildCpayHtml(batchId) {
+  const { data: batch, error: bErr } = await supabase.from('payment_batches')
+    .select('id, batch_reference, total_amount, company_id, payment_reference, paid_at, payees(name), companies(name)')
+    .eq('id', batchId).single();
+  if (bErr || !batch) return null;
+
+  const { data: memberRows } = await supabase.from('payment_batch_vouchers')
+    .select('vouchers(serial_number, amount, narration)')
+    .eq('batch_id', batchId);
+  const members = (memberRows || []).map(m => m.vouchers).filter(Boolean);
+
+  const paidDate = batch.paid_at
+    ? new Date(batch.paid_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' })
+    : '—';
+  const total = parseFloat(batch.total_amount).toLocaleString('en-IN', { minimumFractionDigits: 2 });
+  const companyName = batch.companies?.name || batch.company_id;
+  const payeeName = batch.payees?.name || '—';
+
+  const rows = members.map(m =>
+    `<tr><td style="font-family:monospace;padding:6px 12px;border-bottom:1px solid #e5e7eb">${m.serial_number || '—'}</td>`
+    + `<td style="padding:6px 12px;border-bottom:1px solid #e5e7eb;color:#374151;max-width:260px">${m.narration || ''}</td>`
+    + `<td style="padding:6px 12px;border-bottom:1px solid #e5e7eb;text-align:right;font-weight:600">₹${parseFloat(m.amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td></tr>`
+  ).join('');
+
+  return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${batch.batch_reference} — Batch Payment</title>
+<style>
+  body{font-family:'Segoe UI',Arial,sans-serif;margin:0;padding:24px;color:#111;background:#fff}
+  .header{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #1d4ed8;padding-bottom:12px;margin-bottom:20px}
+  .title{font-size:1.4rem;font-weight:700;color:#1d4ed8}
+  .subtitle{font-size:0.85rem;color:#6b7280;margin-top:4px}
+  .badge{display:inline-block;background:#dcfce7;color:#166534;border:1px solid #86efac;border-radius:20px;padding:3px 10px;font-size:0.8rem;font-weight:600}
+  .meta{display:grid;grid-template-columns:1fr 1fr;gap:8px 32px;margin-bottom:20px;font-size:0.9rem}
+  .meta-label{color:#6b7280;font-size:0.78rem;text-transform:uppercase;letter-spacing:.04em}
+  .meta-value{font-weight:600;margin-top:1px}
+  table{width:100%;border-collapse:collapse;font-size:0.88rem}
+  thead tr{background:#f1f5f9}
+  thead th{padding:8px 12px;text-align:left;font-size:0.75rem;text-transform:uppercase;letter-spacing:.05em;color:#6b7280;font-weight:600}
+  tfoot tr{background:#f0fdf4}
+  tfoot td{padding:8px 12px;font-weight:700;color:#166534}
+  .footer{margin-top:24px;font-size:0.75rem;color:#9ca3af;text-align:center;border-top:1px solid #e5e7eb;padding-top:10px}
+  @media print{body{padding:0}@page{margin:20mm}}
+</style></head><body>
+<div class="header">
+  <div>
+    <div class="title">${batch.batch_reference}</div>
+    <div class="subtitle">${companyName} · Batch Payment</div>
+  </div>
+  <div><span class="badge">✅ Paid</span></div>
+</div>
+<div class="meta">
+  <div><div class="meta-label">Payee</div><div class="meta-value">${payeeName}</div></div>
+  <div><div class="meta-label">Date Paid</div><div class="meta-value">${paidDate}</div></div>
+  <div><div class="meta-label">UTR / Reference</div><div class="meta-value" style="font-family:monospace">${batch.payment_reference || '—'}</div></div>
+  <div><div class="meta-label">Total Amount</div><div class="meta-value" style="font-size:1.1rem;color:#166534">₹${total}</div></div>
+</div>
+<p style="font-weight:600;font-size:0.85rem;color:#374151;margin-bottom:8px">Covers ${members.length} voucher${members.length !== 1 ? 's' : ''}:</p>
+<table>
+  <thead><tr><th>Voucher</th><th>Description</th><th style="text-align:right">Amount</th></tr></thead>
+  <tbody>${rows}</tbody>
+  <tfoot><tr><td colspan="2" style="text-align:right">Total</td><td style="text-align:right">₹${total}</td></tr></tfoot>
+</table>
+<div class="footer">Generated by Relish Approvals · ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}</div>
+</body></html>`;
+}
+
+// B2: Serve CPAY acknowledgment HTML directly — avoids Supabase Storage HTML blocking.
+app.get('/api/batches/:id/receipt', async (req, res) => {
+  try {
+    const html = await _buildCpayHtml(req.params.id);
+    if (!html) return res.status(404).send('Batch not found');
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.send(html);
+  } catch (error) {
+    console.error('cpay-receipt serve error:', error.message);
+    res.status(500).send('Error generating receipt');
+  }
+});
+
+// B2: Generate a self-contained CPAY acknowledgment HTML and store its API URL.
+// Returns the receipt URL, or null on failure.
+async function _generateAndStoreCpayReceipt(batchId) {
+  // Verify batch exists (needed for payment_reference in the upsert below).
+  const { data: batch, error: bErr } = await supabase.from('payment_batches')
+    .select('id, batch_reference, payment_reference').eq('id', batchId).single();
+  if (bErr || !batch) return null;
+
+  // Serve receipt via the /api/batches/:id/receipt endpoint (avoids Supabase Storage HTML blocking).
+  const appBase = (process.env.APP_BASE_URL || '').replace(/\/$/, '');
+  const receiptUrl = `${appBase}/api/batches/${batchId}/receipt`;
+
+  // Write URL back to the batch row so GET /api/batches/:id returns it
+  await supabase.from('payment_batches')
+    .update({ payment_receipt_url: receiptUrl }).eq('id', batchId);
+  await supabase.from('payment_batch_receipts').upsert({
+    batch_id: batchId, receipt_url: receiptUrl,
+    payment_reference: batch.payment_reference || null,
+    notes: 'Auto-generated CPAY acknowledgment',
+    uploaded_by: null,
+  }, { onConflict: 'batch_id,receipt_url', ignoreDuplicates: true });
+
+  console.log(`[CPAY-receipt] generated for ${batch.batch_reference} → ${receiptUrl}`);
+  return receiptUrl;
+}
+
 async function _uploadPaymentReceiptToStorage(voucherId, companyId, serialNumber, buffer, mimeType) {
   const ext = mimeType === 'application/pdf' ? 'pdf'
     : mimeType.startsWith('image/') ? mimeType.split('/')[1]
@@ -5834,7 +6148,7 @@ async function _extractReceiptFull(buffer, mimeType, fileName = 'receipt.pdf') {
   const userInstruction =
     'Extract from this bank/UPI transfer receipt and return a JSON object with these exact keys:\n' +
     '- raw_text: all visible text verbatim (preserve line breaks as \\n)\n' +
-    '- utr_number: transaction reference / RRN / UTR (usually 12 digits)\n' +
+    '- utr_number: payment reference number. Look under ANY of these labels — UTR, UPI Transaction ID, Transaction ID, RRN Number, Reference Number, IMPS Ref No — or embedded in statement text as "Re NNNNNNNNN". Return the first valid reference found (9–16 alphanumeric characters). Return null if not found.\n' +
     '- amount: payment amount as a plain number, no currency symbol, no commas (e.g. 15000.00)\n' +
     '- beneficiary_name: who the payment was sent to\n' +
     '- initiator_account_number: sender account number or UPI ID\n' +
@@ -5925,31 +6239,71 @@ async function _autoCompleteMatch(fileBuffer, mimeType, companyId, fileName) {
   const rawText = (typeof ocrData.raw_text === 'string' ? ocrData.raw_text : '')
     || (fileName ? fileName.replace(/\.[^/.]+$/, '').replace(/_/g, ' ') : '');
 
-  const vchMatches = extractVchNumbers(rawText);
-  const primaryVch = vchMatches[0] ?? null;
+  const vchMatches  = extractVchNumbers(rawText);
+  const cpayMatches = extractBatchRefs(rawText);    // B1: also scan for CPAY refs
+  const primaryVch  = vchMatches[0]  ?? null;
+  const primaryCpay = cpayMatches[0] ?? null;
 
-  // Primary pool: vouchers awaiting payment (no receipt yet, not in a batch)
+  // Primary pool: vouchers awaiting payment (no receipt yet, not in a batch, not cash)
+  // Cash vouchers are excluded — they carry no UTR and cannot match against a bank receipt.
   const { data: candidates, error: poolErr } = await supabase.from('vouchers')
-    .select('id, serial_number, amount, status, prepared_by, company_id, queued_at, created_at, payment_reference')
+    .select('id, serial_number, amount, status, prepared_by, company_id, queued_at, created_at, payment_reference, payment_mode')
     .eq('company_id', companyId)
     .in('status', ['awaiting_payment', 'completed'])
     .is('payment_receipt_url', null)
-    .is('batch_id', null);
+    .is('batch_id', null)
+    .neq('payment_mode', 'Cash');
   if (poolErr) throw new Error(`Candidate pool query failed: ${poolErr.message}`);
-  const pool = candidates || [];
+  const pool = (candidates || []).filter(v => v.payment_mode !== 'Cash');
 
-  // Backfill pool: already-paid vouchers where UTR was never recorded
+  // Backfill pool: already-paid vouchers where UTR was never recorded (excluding cash)
   const { data: backfillCandidates } = await supabase.from('vouchers')
-    .select('id, serial_number, amount, status, prepared_by, company_id, payment_reference, payment_receipt_url')
+    .select('id, serial_number, amount, status, prepared_by, company_id, payment_reference, payment_receipt_url, payment_mode')
     .eq('company_id', companyId)
     .eq('status', 'paid')
-    .is('payment_reference', null);
-  const backfillPool = backfillCandidates || [];
+    .is('payment_reference', null)
+    .neq('payment_mode', 'Cash');
+  const backfillPool = (backfillCandidates || []).filter(v => v.payment_mode !== 'Cash');
+
+  // B1: open batch pool — pending batches for this company
+  const { data: openBatches } = await supabase.from('payment_batches')
+    .select('id, batch_reference, total_amount, payee_id')
+    .eq('company_id', companyId)
+    .eq('status', 'pending');
+  const batchPool = openBatches || [];
 
   let ocrAmount = null;
   if (ocrData.amount !== null && ocrData.amount !== undefined) {
     const parsed = parseFloat(String(ocrData.amount).replace(/[₹,\s]/g, ''));
     if (!isNaN(parsed) && parsed > 0) ocrAmount = parsed;
+  }
+
+  // ── PATH 0: CPAY batch reference match (B1) ──────────────────────────────
+  // CPAY refs are unambiguous; batch match takes priority over individual VCH matching.
+  if (primaryCpay) {
+    const batchHit = batchPool.find(b => parseDbBatchSeq(b.batch_reference) === primaryCpay.seq);
+    if (batchHit) {
+      if (ocrAmount !== null && Math.abs(ocrAmount - parseFloat(batchHit.total_amount)) > 1) {
+        return { outcome: 'queued', reason: `CPAY ${primaryCpay.raw} found but amount mismatch: receipt ₹${ocrAmount} vs batch ₹${batchHit.total_amount} — manual review required`, ocrData, pool };
+      }
+      return { outcome: 'batch', batch: batchHit, ocrData, matchedBy: 'cpay_ref' };
+    }
+    // CPAY ref present but no matching open batch — may be already paid; fall through
+    console.log(`[auto-complete] CPAY ref ${primaryCpay.raw} found but no matching open batch — falling through`);
+  }
+
+  // ── PATH 0b: Amount-only batch match (no CPAY ref; B1 fallback) ──────────
+  // If ocrAmount uniquely matches one open batch total (±₹1), treat as batch match.
+  // This covers payments made outside the app where the receipt has no CPAY ref.
+  if (!primaryCpay && ocrAmount !== null && batchPool.length > 0) {
+    const amountBatchHits = batchPool.filter(b => Math.abs(ocrAmount - parseFloat(b.total_amount)) <= 1);
+    if (amountBatchHits.length === 1) {
+      return { outcome: 'batch', batch: amountBatchHits[0], ocrData, matchedBy: 'amount' };
+    }
+    // Multiple batches match the same amount — too ambiguous for auto-write; queue.
+    if (amountBatchHits.length > 1) {
+      return { outcome: 'queued', reason: `Amount ₹${ocrAmount} matches ${amountBatchHits.length} open batches — ambiguous, manual review required`, ocrData, pool };
+    }
   }
 
   // ── PATH A: VCH reference match ───────────────────────────────────────────
@@ -6557,6 +6911,9 @@ app.post('/api/unassigned-receipts/:id/assign', async (req, res) => {
     }).eq('id', voucherId);
     if (upErr) throw upErr;
 
+    // C2: auto-resolve other pending queue rows carrying the same UTR
+    if (utrToWrite) _autoResolveQueueForUtr(voucher.company_id, utrToWrite, voucher.serial_number).catch(() => {});
+
     await supabase.from('unassigned_receipts').update({
       status:      'assigned',
       assigned_to: voucherId,
@@ -6635,14 +6992,20 @@ app.post('/api/receipts/deposit-unassigned', async (req, res) => {
     fileUrl = urlData.publicUrl;
   }
 
-  const { data: record } = await supabase.from('unassigned_receipts').insert({
-    company_id:     companyId,
-    storage_path:   unassignedPath,
-    file_url:       fileUrl,
-    mime_type:      receiptMimeType,
-    extracted_data: extractedData || null,
-    match_reason:   'Deposited via share-target fallback (auto-complete error)',
-  }).select('id').single();
+  const { data: record } = await (async () => {
+    // C1: refresh existing row if same UTR already queued
+    const fallbackUtr = extractedData?.utr_number || null;
+    const payload = {
+      company_id:     companyId,
+      storage_path:   unassignedPath,
+      file_url:       fileUrl,
+      mime_type:      receiptMimeType,
+      extracted_data: extractedData || null,
+      match_reason:   'Deposited via share-target fallback (auto-complete error)',
+    };
+    const rowId = await _queueUpsert(companyId, fallbackUtr, payload);
+    return { data: rowId ? { id: rowId } : null };
+  })();
 
   res.json({ success: true, id: record?.id, fileUrl });
 });

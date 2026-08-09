@@ -1,4 +1,4 @@
-const CACHE_NAME = 'relish-approvals-v52';
+const CACHE_NAME = 'relish-approvals-v53';
 const DYNAMIC_CACHE = 'relish-approvals-dynamic-v16';
 const urlsToCache = [
   '/',
