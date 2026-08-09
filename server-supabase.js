@@ -1906,11 +1906,24 @@ app.get('/api/vouchers/:voucherId', async (req, res) => {
       .eq('voucher_id', req.params.voucherId)
       .order('uploaded_at', { ascending: true });
 
-    let batchReference = null;
-    if (voucher.batch_id) {
-      const { data: batchRow } = await supabase.from('payment_batches')
-        .select('batch_reference').eq('id', voucher.batch_id).maybeSingle();
-      batchReference = batchRow?.batch_reference || null;
+    // Use payment_batch_vouchers — works for pre- and post-migration-035 payments.
+    const { data: batchMembership } = await supabase
+      .from('payment_batch_vouchers')
+      .select('batch_id, payment_batches(batch_reference)')
+      .eq('voucher_id', req.params.voucherId)
+      .maybeSingle();
+    const resolvedBatchId = batchMembership?.batch_id || voucher.batch_id || null;
+    const batchReference = batchMembership?.payment_batches?.batch_reference || null;
+
+    // Fetch all co-members for the audit trail (CPAY batch voucher list).
+    let batchMembers = [];
+    if (resolvedBatchId) {
+      const { data: memberRows } = await supabase
+        .from('payment_batch_vouchers')
+        .select('vouchers(serial_number, amount)')
+        .eq('batch_id', resolvedBatchId);
+      batchMembers = (memberRows || []).map(m => m.vouchers).filter(Boolean)
+        .sort((a, b) => (a.serial_number || '').localeCompare(b.serial_number || ''));
     }
 
     res.json({
@@ -1931,7 +1944,9 @@ app.get('/api/vouchers/:voucherId', async (req, res) => {
       company_gst: voucher.company?.gst,
       suspense_serial: suspenseSerial,
       suspense_voucher_id: suspenseVoucherId,
+      batch_id: resolvedBatchId,
       batch_reference: batchReference,
+      batch_members: batchMembers,
       attachments: attachments || []
     });
   } catch (error) {

@@ -3153,6 +3153,10 @@ const VoucherList = ({ filter }) => {
         }
         if (v.batch_reference) {
           html += `<tr><td style="padding:4px 8px;color:#374151;font-weight:600;border-bottom:1px solid #dcfce7">Paid via Batch</td><td style="padding:4px 8px;font-family:monospace;font-weight:700;color:#1d4ed8;border-bottom:1px solid #dcfce7">${v.batch_reference}</td></tr>`;
+          if (v.batch_members && v.batch_members.length > 0) {
+            const coversList = v.batch_members.map(m => `${m.serial_number} \u20b9${parseFloat(m.amount||0).toLocaleString('en-IN',{minimumFractionDigits:2})}`).join(' \u00b7 ');
+            html += `<tr><td style="padding:4px 8px;color:#374151;font-weight:600;vertical-align:top;border-bottom:1px solid #dcfce7">Batch Covers</td><td style="padding:4px 8px;font-family:monospace;font-size:8.5px;color:#1e3a5f;border-bottom:1px solid #dcfce7">${coversList}</td></tr>`;
+          }
         }
         if (v.payment_notes) {
           html += `<tr><td style="padding:4px 8px;color:#374151;font-weight:600;border-bottom:1px solid #dcfce7">Notes</td><td style="padding:4px 8px;color:#374151;border-bottom:1px solid #dcfce7">${v.payment_notes}</td></tr>`;
@@ -3899,24 +3903,18 @@ const VoucherList = ({ filter }) => {
                     <strong style={{fontFamily:'monospace'}}>{selectedVoucher.payment_reference}</strong>
                   </div>
                 )}
-                {/* B2: batch provenance — CPAY reference shown immediately from voucher; members loaded async */}
+                {/* B2: CPAY batch audit trail — reference + all member vouchers, from voucher data directly */}
                 {selectedVoucher.batch_reference && (
-                  <div style={{display:'flex',justifyContent:'space-between',fontSize:'0.85rem',marginBottom:'0.2rem',color:'#1d4ed8'}}>
-                    <span>Paid via Batch</span>
-                    <strong style={{fontFamily:'monospace'}}>{selectedVoucher.batch_reference}</strong>
-                  </div>
-                )}
-                {selectedBatchDetails && (
                   <React.Fragment>
-                    <div style={{display:'flex',justifyContent:'space-between',fontSize:'0.85rem',marginBottom:'0.2rem',color:'#166534'}}>
-                      <span>Settled via</span>
-                      <span style={{fontFamily:'monospace',fontWeight:600}}>{selectedBatchDetails.batch_reference} (₹{parseFloat(selectedBatchDetails.total_amount).toLocaleString('en-IN',{minimumFractionDigits:2})} total)</span>
+                    <div style={{borderTop:'1px solid #bbf7d0',paddingTop:'0.4rem',marginTop:'0.2rem',display:'flex',justifyContent:'space-between',alignItems:'baseline',fontSize:'0.85rem',fontWeight:700,color:'#1d4ed8',marginBottom:'0.15rem'}}>
+                      <span>Paid via Batch</span>
+                      <span style={{fontFamily:'monospace'}}>{selectedVoucher.batch_reference}{selectedBatchDetails?.total_amount ? ` — ₹${parseFloat(selectedBatchDetails.total_amount).toLocaleString('en-IN',{minimumFractionDigits:2})} total` : ''}</span>
                     </div>
-                    {selectedBatchDetails.members && selectedBatchDetails.members.length > 0 && (
-                      <div style={{fontSize:'0.8rem',color:'#166534',marginBottom:'0.3rem'}}>
-                        <span style={{marginRight:'4px'}}>Members:</span>
-                        {selectedBatchDetails.members.map((m,i) => (
-                          <span key={m.voucher_id||i} style={{fontFamily:'monospace'}}>{m.serial_number} ₹{parseFloat(m.amount||0).toLocaleString('en-IN',{minimumFractionDigits:2})}{i < selectedBatchDetails.members.length-1 ? ' · ' : ''}</span>
+                    {(selectedVoucher.batch_members||[]).length > 0 && (
+                      <div style={{fontSize:'0.78rem',color:'#374151',marginBottom:'0.3rem',lineHeight:'1.6'}}>
+                        <span style={{color:'#6b7280',marginRight:'4px'}}>Covers {(selectedVoucher.batch_members||[]).length} voucher{(selectedVoucher.batch_members||[]).length!==1?'s':''}:</span>
+                        {(selectedVoucher.batch_members||[]).map((m,i,arr) => (
+                          <span key={i} style={{fontFamily:'monospace',fontWeight:600}}>{m.serial_number} ₹{parseFloat(m.amount||0).toLocaleString('en-IN',{minimumFractionDigits:2})}{i<arr.length-1?' · ':''}</span>
                         ))}
                       </div>
                     )}
