@@ -2840,15 +2840,16 @@ const VoucherList = ({ filter }) => {
   const [useNarrationTable, setUseNarrationTable] = useState(false);
   const [showEditDeductions, setShowEditDeductions] = useState(false);
 
-  // Search state — Completed Vouchers tab
+  // Search state — All Vouchers + Completed Vouchers tabs
   const [searchNum, setSearchNum] = useState('');
   const [searchHead, setSearchHead] = useState('');
   const [searchPayee, setSearchPayee] = useState('');
+  const [searchStatus, setSearchStatus] = useState('');
   const [searchDateMode, setSearchDateMode] = useState('range'); // 'exact' | 'range'
   const [searchDate, setSearchDate] = useState('');
   const [searchFrom, setSearchFrom] = useState('');
   const [searchTo, setSearchTo] = useState('');
-  const hasSearchFilters = searchNum || searchHead || searchPayee || searchDate || searchFrom || searchTo;
+  const hasSearchFilters = searchNum || searchHead || searchPayee || searchStatus || searchDate || searchFrom || searchTo;
 
   // ── Android UPI Bridge ──────────────────────────────────────────────────────
   // Load payees and heads for edit modal
@@ -2940,11 +2941,12 @@ const VoucherList = ({ filter }) => {
     return true; 
   });
 
-  const filtered = filter !== 'completed' ? baseFiltered : baseFiltered.filter(v => {
+  const filtered = (filter !== 'completed' && filter !== 'all') ? baseFiltered : baseFiltered.filter(v => {
     const lc = s => (s || '').toLowerCase();
     if (searchNum && !lc(v.serial_number).includes(lc(searchNum))) return false;
     if (searchHead && !lc(v.head_of_account).includes(lc(searchHead))) return false;
     if (searchPayee && !lc(v.payee_name).includes(lc(searchPayee))) return false;
+    if (searchStatus && v.status !== searchStatus) return false;
     const vDate = new Date(v.created_at);
     if (searchDateMode === 'exact' && searchDate) {
       const d = new Date(searchDate + 'T00:00:00'); const next = new Date(d); next.setDate(next.getDate() + 1);
@@ -3700,15 +3702,15 @@ const VoucherList = ({ filter }) => {
         <HoaCorrectionPanel />
       )}
 
-      {/* ── SEARCH PANEL (Completed Vouchers only) ── */}
-      {filter === 'completed' && (
+      {/* ── SEARCH PANEL (All Vouchers + Completed tabs) ── */}
+      {(filter === 'all' || filter === 'completed') && (
         <div className="card" style={{ marginBottom: '1rem' }}>
           <div className="card-body" style={{ padding: '1rem 1.25rem' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
               <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>🔍 Search Vouchers</span>
               {hasSearchFilters && (
                 <button className="btn btn-sm btn-secondary" style={{ marginLeft: 'auto', fontSize: '0.78rem' }}
-                  onClick={() => { setSearchNum(''); setSearchHead(''); setSearchPayee(''); setSearchDate(''); setSearchFrom(''); setSearchTo(''); }}>
+                  onClick={() => { setSearchNum(''); setSearchHead(''); setSearchPayee(''); setSearchStatus(''); setSearchDate(''); setSearchFrom(''); setSearchTo(''); }}>
                   ✕ Clear All Filters
                 </button>
               )}
@@ -3734,6 +3736,21 @@ const VoucherList = ({ filter }) => {
                 <input type="text" className="form-input" placeholder="Partial name..."
                   value={searchPayee} onChange={e => setSearchPayee(e.target.value)} />
               </div>
+              {filter === 'all' && (
+                <div className="form-group">
+                  <label className="form-label">Status</label>
+                  <select className="form-select" value={searchStatus} onChange={e => setSearchStatus(e.target.value)}>
+                    <option value="">All</option>
+                    <option value="pending">Pending Approval</option>
+                    <option value="awaiting_payee_otp">Awaiting OTP</option>
+                    <option value="completed">OTP Verified</option>
+                    <option value="awaiting_payment">Awaiting Payment</option>
+                    <option value="paid">Paid</option>
+                    <option value="rejected">Rejected</option>
+                    <option value="draft">Draft</option>
+                  </select>
+                </div>
+              )}
             </div>
             <div style={{ display: 'flex', alignItems: 'flex-end', gap: '1rem', flexWrap: 'wrap' }}>
               <div className="form-group" style={{ marginBottom: 0 }}>
