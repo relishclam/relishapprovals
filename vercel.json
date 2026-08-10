@@ -1,11 +1,15 @@
 {
   "version": 2,
+  "regions": ["bom1"],
+  "crons": [
+    { "path": "/api/_warm", "schedule": "*/4 * * * *" }
+  ],
   "builds": [
     {
       "src": "server-supabase.js",
       "use": "@vercel/node",
       "config": {
-        "maxDuration": 60
+        "maxDuration": 120
       }
     },
     {

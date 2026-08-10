@@ -7056,6 +7056,10 @@ app.post('/api/receipts/deposit-unassigned', async (req, res) => {
   res.json({ success: true, id: record?.id, fileUrl });
 });
 
+// Cron warmup — keeps the serverless function instance alive between share events.
+// Called every 4 minutes by vercel.json cron; also hit by the client polling loop.
+app.get('/api/_warm', (req, res) => res.json({ ok: true, t: Date.now() }));
+
 // Export the Express app for Vercel serverless deployment
 module.exports = app;
 module.exports._testHelpers = { extractVchNumbers, extractBatchRefs, parseDbSerialSeq, parseDbBatchSeq, alphanumOnly, _extractPdfText, _extractImageText, _parseVchCapture };

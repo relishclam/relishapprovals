@@ -11588,7 +11588,7 @@ const App = () => {
 
   // TODO: polling efficiency ladder — (1) pause on document.hidden, (2) lightweight
   //   GET /api/companies/:id/updated-at change-signal before full fetch, (3) Supabase Realtime.
-  useEffect(() => { if (user) { refreshVouchers(); refreshNotifications(); const interval = setInterval(() => { refreshVouchers(); refreshNotifications(); }, 30000); return () => clearInterval(interval); } }, [user, refreshVouchers, refreshNotifications]);
+  useEffect(() => { if (user) { refreshVouchers(); refreshNotifications(); const interval = setInterval(() => { refreshVouchers(); refreshNotifications(); fetch('/api/_warm').catch(()=>{}); }, 30000); return () => clearInterval(interval); } }, [user, refreshVouchers, refreshNotifications]);
 
   const handleLogin = async (userData, staffSettlementToken, fromWebAuthn = false) => {
     // Staff users go directly to their settlement page — no app access
