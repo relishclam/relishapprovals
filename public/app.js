@@ -11786,6 +11786,8 @@ const App = () => {
             setReceiptShare(prev => prev ? { ...prev, step: 'autocompleted', autoResult: result } : null);
           } else if (result.outcome === 'backfilled') {
             setReceiptShare(prev => prev ? { ...prev, step: 'backfilled', autoResult: result } : null);
+          } else if (result.outcome === 'batch_completed' || result.outcome === 'batch_backfilled') {
+            setReceiptShare(prev => prev ? { ...prev, step: 'autocompleted', autoResult: { ...result, serialNumber: result.batchReference, isBatch: true } } : null);
           } else if (result.outcome === 'queued') {
             setReceiptShare(prev => prev ? { ...prev, step: 'queued', queueReason: result.reason, extractedData: result.extractedData } : null);
           } else {

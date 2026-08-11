@@ -5354,6 +5354,41 @@ app.post('/api/receipts/auto-complete', async (req, res) => {
       return res.json({ outcome: 'batch_completed', batchId: batch.id, batchReference: batch.batch_reference, totalAmount: batch.total_amount, utr, receiptUrl, matchedBy: decision.matchedBy, detectedCompanyId });
     }
 
+    // ── B1-backfill: Batch already paid but missing UTR / receipt ────────────
+    // Write UTR + receipt to batch row and propagate UTR to all member vouchers.
+    if (decision.outcome === 'batch_backfill') {
+      const { batch, ocrData } = decision;
+      const utr = ocrData?.utr_number || null;
+      const receiptUrl = await _uploadPaymentReceiptToStorage(
+        batch.id, companyId, batch.batch_reference, fileBuffer, receiptMimeType
+      ).catch(() => null);
+
+      // Update the batch row
+      const batchUpdate = {};
+      if (utr) batchUpdate.payment_reference = utr;
+      if (receiptUrl) batchUpdate.payment_receipt_url = receiptUrl;
+      if (Object.keys(batchUpdate).length > 0) {
+        await supabase.from('payment_batches').update(batchUpdate).eq('id', batch.id);
+      }
+
+      // Propagate UTR to all member vouchers that are missing it
+      if (utr) {
+        const { data: bvRows } = await supabase.from('payment_batch_vouchers')
+          .select('voucher_id').eq('batch_id', batch.id);
+        const memberIds = (bvRows || []).map(r => r.voucher_id);
+        if (memberIds.length > 0) {
+          await supabase.from('vouchers')
+            .update({ payment_reference: utr })
+            .in('id', memberIds)
+            .is('payment_reference', null);
+        }
+      }
+
+      _generateAndStoreCpayReceipt(batch.id).catch(e => console.warn('[CPAY-receipt] backfill generation failed:', e.message));
+      console.log(`[auto-complete] ✅ batch_backfill ${batch.batch_reference} | UTR: ${utr || 'N/A'} | matchedBy: ${decision.matchedBy}`);
+      return res.json({ outcome: 'batch_backfilled', batchId: batch.id, batchReference: batch.batch_reference, totalAmount: batch.total_amount, utr, receiptUrl, matchedBy: decision.matchedBy, detectedCompanyId });
+    }
+
     if (decision.outcome === 'complete') {
       const { voucher, ocrData } = decision;
 
@@ -6307,6 +6342,14 @@ async function _autoCompleteMatch(fileBuffer, mimeType, companyId, fileName) {
     .eq('status', 'pending');
   const batchPool = openBatches || [];
 
+  // B1-backfill: paid batches missing UTR OR missing receipt file (receipt-only attach case)
+  const { data: paidBatchesMissingUTR } = await supabase.from('payment_batches')
+    .select('id, batch_reference, total_amount, payee_id, payment_reference, payment_receipt_url')
+    .eq('company_id', companyId)
+    .eq('status', 'paid')
+    .or('payment_reference.is.null,payment_receipt_url.is.null');
+  const batchBackfillPool = paidBatchesMissingUTR || [];
+
   let ocrAmount = null;
   if (ocrData.amount !== null && ocrData.amount !== undefined) {
     const parsed = parseFloat(String(ocrData.amount).replace(/[₹,\s]/g, ''));
@@ -6323,8 +6366,13 @@ async function _autoCompleteMatch(fileBuffer, mimeType, companyId, fileName) {
       }
       return { outcome: 'batch', batch: batchHit, ocrData, matchedBy: 'cpay_ref' };
     }
-    // CPAY ref present but no matching open batch — may be already paid; fall through
-    console.log(`[auto-complete] CPAY ref ${primaryCpay.raw} found but no matching open batch — falling through`);
+    // Not in pending pool — check paid batches missing UTR (backfill)
+    const backfillBatchHit = batchBackfillPool.find(b => parseDbBatchSeq(b.batch_reference) === primaryCpay.seq);
+    if (backfillBatchHit) {
+      console.log(`[auto-complete] CPAY ${primaryCpay.raw} matched paid batch missing UTR — backfilling`);
+      return { outcome: 'batch_backfill', batch: backfillBatchHit, ocrData, matchedBy: 'cpay_ref' };
+    }
+    console.log(`[auto-complete] CPAY ref ${primaryCpay.raw} found but no matching open or backfill batch — falling through`);
   }
 
   // ── PATH 0b: Amount-only batch match (no CPAY ref; B1 fallback) ──────────
@@ -6335,9 +6383,28 @@ async function _autoCompleteMatch(fileBuffer, mimeType, companyId, fileName) {
     if (amountBatchHits.length === 1) {
       return { outcome: 'batch', batch: amountBatchHits[0], ocrData, matchedBy: 'amount' };
     }
-    // Multiple batches match the same amount — too ambiguous for auto-write; queue.
     if (amountBatchHits.length > 1) {
       return { outcome: 'queued', reason: `Amount ₹${ocrAmount} matches ${amountBatchHits.length} open batches — ambiguous, manual review required`, ocrData, pool };
+    }
+  }
+  // PATH 0b-backfill: amount matches a paid batch missing UTR
+  if (!primaryCpay && ocrAmount !== null && batchBackfillPool.length > 0) {
+    const amountBackfillHits = batchBackfillPool.filter(b => Math.abs(ocrAmount - parseFloat(b.total_amount)) <= 1);
+    if (amountBackfillHits.length === 1) {
+      console.log(`[auto-complete] Amount ₹${ocrAmount} matched paid batch ${amountBackfillHits[0].batch_reference} missing UTR — backfilling`);
+      return { outcome: 'batch_backfill', batch: amountBackfillHits[0], ocrData, matchedBy: 'amount' };
+    }
+  }
+
+  // ── PATH 0c: UTR-direct batch match — receipt already has a UTR, find batch by UTR ─
+  // Handles: batch paid & UTR written, but receipt file never attached.
+  // batchBackfillPool includes batches where payment_receipt_url IS NULL (even if UTR set).
+  const ocrUtr = ocrData.utr_number ? String(ocrData.utr_number).trim().replace(/\s+/g, '') : null;
+  if (ocrUtr && batchBackfillPool.length > 0) {
+    const utrBatchHit = batchBackfillPool.find(b => b.payment_reference === ocrUtr);
+    if (utrBatchHit) {
+      console.log(`[auto-complete] UTR ${ocrUtr} directly matched paid batch ${utrBatchHit.batch_reference} missing receipt — attaching`);
+      return { outcome: 'batch_backfill', batch: utrBatchHit, ocrData, matchedBy: 'utr_direct' };
     }
   }
 
