@@ -11771,6 +11771,7 @@ const App = () => {
           fileName: fileName || '',
           allCompanyIds: (user.companies || []).map(c => c.id).filter(id => id && id !== user.company.id),
         }).then(async result => {
+          if (_contextFound) return; // server context arrived first — context modal is showing
           // Auto-switch company if match was found in a different company
           if (result.detectedCompanyId && result.detectedCompanyId !== user.company.id) {
             try {
@@ -11793,7 +11794,7 @@ const App = () => {
           } else {
             _depositAndFallback(receiptPayload, result.extractedData || null);
           }
-        }).catch(() => { _depositAndFallback(receiptPayload, null); });
+        }).catch(() => { if (!_contextFound) _depositAndFallback(receiptPayload, null); });
       };
 
       // 1. Fast path: localStorage (same device — context was set by Pay Now on this device).
@@ -11810,11 +11811,24 @@ const App = () => {
         }
       } catch {}
 
-      // 2. Slow path: server-side context (cross-device — Pay Now was open on another
-      //    device: desktop, tablet, or a different phone). consume-once GET clears it.
+      // 2. No localStorage context — fire scan IMMEDIATELY so OCR starts without waiting
+      //    for a server round-trip.  The scan shows "Identifying voucher…" right away.
+      let _contextFound = false;
+      _runReconcile();
+
+      // 3. In parallel, check for a server-side context (cross-device — Pay Now was open on
+      //    another device: desktop, tablet, or a different phone). consume-once GET clears it.
+      //    If a context is found it takes priority: cancel the scan UI and route instead.
       api.consumePendingShareContext(user.id)
-        .then(({ context }) => { if (context) { _routeCtx(context); } else { _runReconcile(); } })
-        .catch(() => { _runReconcile(); });
+        .then(({ context }) => {
+          if (context) {
+            _contextFound = true;   // stop autoCompleteReceipt result from applying
+            setReceiptShare(null);  // close scan modal
+            _routeCtx(context);
+          }
+          // No context → scan already running, nothing to do.
+        })
+        .catch(() => {}); // on error, scan continues uninterrupted
     };
 
     // Detect incoming Web Share Target redirect: service worker redirects here
@@ -11858,7 +11872,32 @@ const App = () => {
       window.onReceiptShared({ mimeType: _p.mimeType, base64Data: _p.base64Data, fileName: _p.fileName || '' });
     }
 
-    return () => { window.onReceiptShared = null; };
+    // Listen for SHARE_AVAILABLE messages from the service worker.
+    // When the app is already running (just backgrounded), the SW can postMessage
+    // instead of waiting for the full /?incoming-share=1 reload to finish.
+    // This means the scan starts the moment the user picks the app from the share sheet.
+    const _swMessageHandler = async (event) => {
+      if (event.data?.type !== 'SHARE_AVAILABLE') return;
+      if (!window.onReceiptShared) return;
+      try {
+        const r = await fetch('/_share_pending');
+        if (!r.ok) return;
+        const d = await r.json();
+        if (d && d.mimeType && d.base64Data) {
+          window.onReceiptShared({ mimeType: d.mimeType, base64Data: d.base64Data, fileName: d.fileName || '' });
+        }
+      } catch {}
+    };
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.addEventListener('message', _swMessageHandler);
+    }
+
+    return () => {
+      window.onReceiptShared = null;
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.removeEventListener('message', _swMessageHandler);
+      }
+    };
   }, [user]);
 
   const renderPage = () => {

@@ -5301,8 +5301,8 @@ app.post('/api/receipts/auto-complete', async (req, res) => {
   if (!companyId)    return res.status(400).json({ error: true, message: 'companyId is required' });
 
   const actor = await getActorRole(requestedBy);
-  if (actor.role !== 'accounts' && !actor.is_super_admin)
-    return res.status(403).json({ error: true, message: 'Only Accounts users can auto-complete receipts' });
+  if (actor.role !== 'accounts' && actor.role !== 'admin' && !actor.is_super_admin)
+    return res.status(403).json({ error: true, message: 'Only Accounts or Admin users can auto-complete receipts' });
 
   if (!receiptMimeType.startsWith('image/') && receiptMimeType !== 'application/pdf')
     return res.status(400).json({ error: true, message: `Unsupported file type "${receiptMimeType}"` });

@@ -108,6 +108,14 @@ self.addEventListener('fetch', (event) => {
       await debugCache.put('/_share_debug', new Response(JSON.stringify(_dbgArr), {
         headers: { 'Content-Type': 'application/json' }
       }));
+      // Notify any already-running app clients immediately so they can start the
+      // OCR scan without waiting for the /?incoming-share=1 redirect to reload the page.
+      // The /_share_pending cache entry is consume-once, so if the running client
+      // processes it first the redirected/reloaded page will find it empty and skip.
+      try {
+        const _clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: false });
+        _clients.forEach(c => c.postMessage({ type: 'SHARE_AVAILABLE' }));
+      } catch (_e) {}
       return Response.redirect('/?incoming-share=1', 303);
     })());
     return;
