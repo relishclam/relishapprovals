@@ -2912,7 +2912,10 @@ const VoucherList = ({ filter }) => {
     const _ctx = { type: 'voucher', entityId: payNowVoucher.id, suspenseId: null };
     try { localStorage.setItem('relish_share_context', JSON.stringify({ ..._ctx, expires: Date.now() + 15 * 60 * 1000 })); } catch {}
     api.setPendingShareContext(user.id, _ctx).catch(() => {}); // cross-device server copy
-    return () => { try { const _r = localStorage.getItem('relish_share_context'); if (_r) { const _c = JSON.parse(_r); if (_c?.type === 'voucher' && _c?.entityId === payNowVoucher?.id) localStorage.removeItem('relish_share_context'); } } catch {} };
+    return () => {
+      try { const _r = localStorage.getItem('relish_share_context'); if (_r) { const _c = JSON.parse(_r); if (_c?.type === 'voucher' && _c?.entityId === payNowVoucher?.id) localStorage.removeItem('relish_share_context'); } } catch {}
+      api.clearPendingShareContext(user.id).catch(() => {}); // prevent stale context triggering MarkPaidModal on next share
+    };
   }, [payNowVoucher?.id]);
 
   // Consume a receipt routed to a specific voucher's Pay Now confirmation modal.
@@ -2921,6 +2924,8 @@ const VoucherList = ({ filter }) => {
     if (!vouchers || !vouchers.length) return;
     const _target = vouchers.find(v => v.id === pendingShareForConfirmation.entityId);
     if (!_target) return;
+    // Auto-complete may have already marked it paid; skip modal and let success screen show
+    if (_target.status === 'paid') { consumePendingShare(); return; }
     const _psc = pendingShareForConfirmation;
     const _b64 = _psc.receipt.dataUrl.replace(/^data:.*?;base64,/, '');
     setPaymentReceiptData(_b64);
@@ -8564,7 +8569,10 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
     const _ctx = { type: 'advance', entityId: sv.id, suspenseId: sv.id };
     try { localStorage.setItem('relish_share_context', JSON.stringify({ ..._ctx, expires: Date.now() + 15 * 60 * 1000 })); } catch {}
     api.setPendingShareContext(user.id, _ctx).catch(() => {}); // cross-device server copy
-    return () => { try { const _r = localStorage.getItem('relish_share_context'); if (_r) { const _c = JSON.parse(_r); if (_c?.type === 'advance' && _c?.entityId === sv?.id) localStorage.removeItem('relish_share_context'); } } catch {} };
+    return () => {
+      try { const _r = localStorage.getItem('relish_share_context'); if (_r) { const _c = JSON.parse(_r); if (_c?.type === 'advance' && _c?.entityId === sv?.id) localStorage.removeItem('relish_share_context'); } } catch {}
+      api.clearPendingShareContext(user.id).catch(() => {});
+    };
   }, [payNowAdvance]);
 
   React.useEffect(() => {
@@ -8572,7 +8580,10 @@ const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
     const _ctx = { type: 'topup', entityId: payNowTopup._topupId, suspenseId: suspenseId };
     try { localStorage.setItem('relish_share_context', JSON.stringify({ ..._ctx, expires: Date.now() + 15 * 60 * 1000 })); } catch {}
     api.setPendingShareContext(user.id, _ctx).catch(() => {}); // cross-device server copy
-    return () => { try { const _r = localStorage.getItem('relish_share_context'); if (_r) { const _c = JSON.parse(_r); if (_c?.type === 'topup' && _c?.entityId === payNowTopup?._topupId) localStorage.removeItem('relish_share_context'); } } catch {} };
+    return () => {
+      try { const _r = localStorage.getItem('relish_share_context'); if (_r) { const _c = JSON.parse(_r); if (_c?.type === 'topup' && _c?.entityId === payNowTopup?._topupId) localStorage.removeItem('relish_share_context'); } } catch {}
+      api.clearPendingShareContext(user.id).catch(() => {});
+    };
   }, [payNowTopup?._topupId]);
 
   // Consume a shared receipt routed to this suspense voucher's advance/topup confirmation.
@@ -11771,7 +11782,7 @@ const App = () => {
           fileName: fileName || '',
           allCompanyIds: (user.companies || []).map(c => c.id).filter(id => id && id !== user.company.id),
         }).then(async result => {
-          if (_contextFound) return; // server context arrived first — context modal is showing
+          if (_contextFound) { refreshVouchers(); return; } // context modal is showing; refresh so status reflects paid
           // Auto-switch company if match was found in a different company
           if (result.detectedCompanyId && result.detectedCompanyId !== user.company.id) {
             try {
