@@ -28,6 +28,10 @@
       "dest": "/$1"
     },
     {
+      "src": "/share-target",
+      "dest": "/server-supabase.js"
+    },
+    {
       "src": "/capture/(.*)",
       "dest": "/capture.html"
     },

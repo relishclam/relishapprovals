@@ -21,6 +21,93 @@ app.use(cors());
 app.use(express.json({ limit: '20mb' }));
 app.use(express.static('public'));
 
+// ── Web Share Target fallback (Migration: SW-not-active safety net) ──────────
+// Temporary in-memory store for receipts shared when the service worker was not
+// yet controlling the page (first install, SW update transition, etc.).
+// The service worker normally intercepts POST /share-target entirely; this path
+// only runs when the request escapes the SW and reaches the server.
+const _serverSharePending = new Map(); // sid → { base64Data, mimeType, fileName, expires }
+setInterval(() => {
+  const _now = Date.now();
+  for (const [_sid, _val] of _serverSharePending) {
+    if (_val.expires < _now) _serverSharePending.delete(_sid);
+  }
+}, 120_000);
+
+// Minimal multipart/form-data parser — extracts named parts from a raw Buffer.
+function _parseMultipart(buf, boundary) {
+  const parts = [];
+  const _delim = Buffer.from('\r\n--' + boundary);
+  const _first = Buffer.from('--' + boundary);
+  let _pos = buf.indexOf(_first);
+  if (_pos < 0) return parts;
+  _pos += _first.length;
+  while (_pos < buf.length) {
+    // End marker: --boundary--
+    if (buf[_pos] === 0x2d && buf[_pos + 1] === 0x2d) break;
+    // Skip the CRLF after the boundary line
+    if (buf[_pos] === 0x0d && buf[_pos + 1] === 0x0a) _pos += 2;
+    const _end = buf.indexOf(_delim, _pos);
+    if (_end < 0) break;
+    const _partBuf = buf.slice(_pos, _end);
+    const _hdrEnd = _partBuf.indexOf(Buffer.from('\r\n\r\n'));
+    if (_hdrEnd >= 0) {
+      const _hdrs = _partBuf.slice(0, _hdrEnd).toString('utf8');
+      const _body = _partBuf.slice(_hdrEnd + 4);
+      const _part = { data: _body };
+      const _cdName = _hdrs.match(/Content-Disposition:[^\r\n]*name="([^"]+)"/i);
+      if (_cdName) _part.name = _cdName[1];
+      const _cdFile = _hdrs.match(/Content-Disposition:[^\r\n]*filename="([^"]+)"/i);
+      if (_cdFile) _part.filename = _cdFile[1];
+      const _ct = _hdrs.match(/Content-Type:\s*([^\r\n]+)/i);
+      if (_ct) _part.contentType = _ct[1].trim();
+      parts.push(_part);
+    }
+    _pos = _end + _delim.length;
+  }
+  return parts;
+}
+
+// POST /share-target — server-side fallback when the service worker was not active.
+// The manifest share_target sends multipart/form-data here; the SW normally intercepts
+// it before it reaches the network.  When the SW is absent (first install, update
+// transition), this handler stashes the file and redirects to /?incoming-share=1&sid=…
+// so the app can retrieve it via GET /api/share-pending/:sid.
+app.post('/share-target', express.raw({ type: '*/*', limit: '10mb' }), (req, res) => {
+  try {
+    const _ct = req.headers['content-type'] || '';
+    const _bm = _ct.match(/boundary=([^\s;]+)/);
+    if (!_bm) return res.redirect(303, '/');
+    const _parts = _parseMultipart(req.body, _bm[1]);
+    const _file = _parts.find(p => p.name === 'receipt' && p.data && p.data.length > 0);
+    if (!_file) return res.redirect(303, '/');
+    const { v4: uuidv4 } = require('uuid');
+    const _sid = uuidv4();
+    _serverSharePending.set(_sid, {
+      base64Data: _file.data.toString('base64'),
+      mimeType: _file.contentType || 'application/octet-stream',
+      fileName: _file.filename || 'receipt',
+      expires: Date.now() + 5 * 60 * 1000,
+    });
+    return res.redirect(303, `/?incoming-share=1&sid=${_sid}`);
+  } catch (_e) {
+    console.error('POST /share-target error:', _e.message);
+    return res.redirect(303, '/');
+  }
+});
+
+// GET /api/share-pending/:sid — consume-once retrieval for the server-stashed share.
+// Called by the app when /_share_pending (SW cache) is empty but a ?sid= param exists.
+app.get('/api/share-pending/:sid', (req, res) => {
+  const _entry = _serverSharePending.get(req.params.sid);
+  if (!_entry || _entry.expires < Date.now()) {
+    _serverSharePending.delete(req.params.sid);
+    return res.status(404).json({ error: 'no pending share' });
+  }
+  _serverSharePending.delete(req.params.sid);
+  res.json({ mimeType: _entry.mimeType, base64Data: _entry.base64Data, fileName: _entry.fileName });
+});
+
 // Supabase Configuration
 if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_KEY) {
   throw new Error('Missing required environment variables: SUPABASE_URL and SUPABASE_SERVICE_KEY');

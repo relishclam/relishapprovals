@@ -11845,9 +11845,12 @@ const App = () => {
     // Detect incoming Web Share Target redirect: service worker redirects here
     // with ?incoming-share=1 after stashing the file in /_share_pending cache.
     // We fetch it (consume-once), clean the URL, then fire window.onReceiptShared.
+    // When the SW was not active (first install / SW update), the server stashes the
+    // file instead and appends ?sid= so we can fall back to /api/share-pending/:sid.
     const _params = new URLSearchParams(window.location.search);
     if (_params.get('incoming-share') === '1') {
-      // Remove the query param immediately so a refresh doesn't re-trigger
+      const _sid = _params.get('sid'); // present only when server handled the share
+      // Remove the query params immediately so a refresh doesn't re-trigger
       window.history.replaceState({}, '', window.location.pathname);
       const _appFetchTime = Date.now();
       fetch('/_share_pending')
@@ -11865,6 +11868,15 @@ const App = () => {
         .then(data => {
           if (data && data.mimeType && data.base64Data) {
             window.onReceiptShared({ mimeType: data.mimeType, base64Data: data.base64Data, fileName: data.fileName || '' });
+          } else if (_sid) {
+            // SW wasn't active — retrieve from server stash (fallback path)
+            return fetch(`/api/share-pending/${_sid}`)
+              .then(r => r.ok ? r.json() : null)
+              .then(serverData => {
+                if (serverData && serverData.mimeType && serverData.base64Data) {
+                  window.onReceiptShared({ mimeType: serverData.mimeType, base64Data: serverData.base64Data, fileName: serverData.fileName || '' });
+                }
+              });
           } else {
             console.warn('[share-app] /_share_pending returned empty — read /_share_debug for SW-side trace');
           }
