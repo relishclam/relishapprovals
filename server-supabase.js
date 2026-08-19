@@ -117,14 +117,15 @@ const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
-// 2Factor.in Configuration
-if (!process.env.TWOFACTOR_API_KEY) {
-  throw new Error('Missing required environment variable: TWOFACTOR_API_KEY');
+// MSG91 Configuration
+if (!process.env.MSG91_AUTH_KEY) {
+  throw new Error('Missing required environment variable: MSG91_AUTH_KEY');
 }
-const TWOFACTOR_API_KEY = process.env.TWOFACTOR_API_KEY;
-const TWOFACTOR_BASE_URL = 'https://2factor.in/API/V1';
-const TWOFACTOR_TEMPLATE_NAME = process.env.TWOFACTOR_TEMPLATE_NAME || 'Relish-Approvals';
-// Template: "Dear #VAR1#, Your ClamFlow OTP is #VAR2#." - Sender ID: Relish
+const MSG91_AUTH_KEY = process.env.MSG91_AUTH_KEY;
+const MSG91_OTP_TEMPLATE_ID = process.env.MSG91_OTP_TEMPLATE_ID; // DLT-registered OTP template ID
+const MSG91_SENDER_ID = process.env.MSG91_SENDER_ID || 'RHHF';
+const MSG91_FLOW_ID = process.env.MSG91_FLOW_ID || '6a856298c46183266e086f33';
+const MSG91_BASE_URL = 'https://api.msg91.com/api/v5';
 
 // WebAuthn (Passkey) Configuration
 // WEBAUTHN_RP_ID    = registrable domain of the app, e.g. relishvoucher.vercel.app  (no https://)
@@ -236,11 +237,11 @@ const getAndDeleteChallengeByValue = async (challengeValue, type) => {
   return data; // returns full row including user_id
 };
 
-// Helper function to format mobile number for 2Factor API (needs 91XXXXXXXXXX format)
+// Format mobile number for MSG91 API (needs 91XXXXXXXXXX format)
 const formatMobile = (mobile) => {
   // Remove any non-digit characters
   let cleaned = mobile.replace(/\D/g, '');
-  // Ensure we have 91 prefix for 2Factor API
+  // Ensure we have 91 prefix
   if (cleaned.length === 10) {
     // Add country code if only 10 digits
     cleaned = '91' + cleaned;
@@ -257,19 +258,25 @@ const generateSettlementToken = () => {
   return crypto.randomBytes(24).toString('hex');
 };
 
-const send2FactorSms = async (mobile, message) => {
+const sendMsg91Sms = async (mobile, message) => {
   if (!mobile) return { success: false, error: 'No mobile number provided' };
   const formattedMobile = formatMobile(mobile);
-  const encodedMessage = encodeURIComponent(message);
-  const url = `${TWOFACTOR_BASE_URL}/${TWOFACTOR_API_KEY}/SMS/${formattedMobile}/${encodedMessage}`;
-  console.log(`\n📩 Sending custom SMS to ${formattedMobile}`);
-  console.log(`   URL: ${url}`);
+  console.log(`\n📩 Sending SMS to ${formattedMobile}`);
 
   try {
-    const response = await fetch(url);
+    const response = await fetch(`${MSG91_BASE_URL}/flow/`, {
+      method: 'POST',
+      headers: { authkey: MSG91_AUTH_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        flow_id: MSG91_FLOW_ID,
+        sender: MSG91_SENDER_ID,
+        mobiles: formattedMobile,
+        VAR1: message
+      })
+    });
     const data = await response.json();
     console.log(`   SMS Response: ${JSON.stringify(data)}`);
-    return { success: data.Status === 'Success', data };
+    return { success: data.type === 'success', data };
   } catch (error) {
     console.log(`   SMS Error: ${error.message}`);
     return { success: false, error: error.message };
@@ -286,33 +293,44 @@ const getActorRole = async (userId) => {
   return data || {};
 };
 
-// Helper function to call 2Factor API with logging
-const call2FactorAPI = async (endpoint, description) => {
-  const url = `${TWOFACTOR_BASE_URL}/${TWOFACTOR_API_KEY}${endpoint}`;
-  console.log(`\n📱 2FACTOR API CALL: ${description}`);
-  console.log(`   Full Endpoint: ${endpoint}`);
-  console.log(`   Using: Default Transactional SMS OTP`);
+// Send OTP via MSG91
+const callMsg91OtpSend = async (mobile, description) => {
+  console.log(`\n📱 MSG91 SEND OTP: ${description}`);
+  console.log(`   Mobile: ${mobile}`);
+  console.log(`   Template: ${MSG91_OTP_TEMPLATE_ID || 'NOT SET'}`);
   console.log(`   Time: ${new Date().toISOString()}`);
-  
+
   try {
-    const response = await fetch(url);
+    const params = new URLSearchParams({
+      authkey: MSG91_AUTH_KEY,
+      mobile,
+      otp_expiry: '15',
+      realTimeResponse: '1',
+      ...(MSG91_OTP_TEMPLATE_ID ? { template_id: MSG91_OTP_TEMPLATE_ID } : {})
+    });
+    const response = await fetch(`${MSG91_BASE_URL}/otp?${params}`, { method: 'POST' });
     const data = await response.json();
-    
-    console.log(`   Response Status: ${data.Status}`);
-    console.log(`   Response Details: ${JSON.stringify(data.Details)}`);
-    
-    // Check if Voice was used (indicates template issue)
-    if (data.Details && typeof data.Details === 'string' && data.Details.includes('Voice')) {
-      console.log(`   ⚠️ WARNING: Voice OTP was triggered - possible template mismatch!`);
-    }
-    
-    if (data.Status === 'Success') {
-      console.log(`   ✅ SUCCESS`);
-    } else {
-      console.log(`   ❌ FAILED: ${JSON.stringify(data)}`);
-    }
-    
-    return { success: data.Status === 'Success', data };
+    console.log(`   Response: ${JSON.stringify(data)}`);
+    const success = data.type === 'success';
+    if (success) console.log(`   ✅ SUCCESS`); else console.log(`   ❌ FAILED: ${JSON.stringify(data)}`);
+    return { success, data };
+  } catch (error) {
+    console.log(`   ❌ ERROR: ${error.message}`);
+    return { success: false, error: error.message };
+  }
+};
+
+// Verify OTP via MSG91
+const callMsg91OtpVerify = async (mobile, otp, description) => {
+  console.log(`\n🔐 MSG91 VERIFY OTP: ${description}`);
+
+  try {
+    const params = new URLSearchParams({ authkey: MSG91_AUTH_KEY, mobile, otp });
+    const response = await fetch(`${MSG91_BASE_URL}/otp/verify?${params}`, { method: 'POST' });
+    const data = await response.json();
+    console.log(`   Response: ${JSON.stringify(data)}`);
+    const success = data.type === 'success';
+    return { success, data };
   } catch (error) {
     console.log(`   ❌ ERROR: ${error.message}`);
     return { success: false, error: error.message };
@@ -345,6 +363,17 @@ app.get('/api/debug/otp-sessions', async (req, res) => {
 
 // ============ API ROUTES ============
 
+// Debug endpoint to verify MSG91 configuration
+app.get('/api/debug/test-msg91', async (req, res) => {
+  res.json({
+    authKeyConfigured: !!MSG91_AUTH_KEY,
+    authKeyPrefix: MSG91_AUTH_KEY ? MSG91_AUTH_KEY.substring(0, 8) + '...' : 'NOT SET',
+    otpTemplateId: MSG91_OTP_TEMPLATE_ID || 'NOT SET',
+    flowId: MSG91_FLOW_ID,
+    senderId: MSG91_SENDER_ID
+  });
+});
+
 // Debug endpoint to test voucher and payee data
 app.get('/api/debug/voucher/:voucherId', async (req, res) => {
   try {
@@ -370,34 +399,8 @@ app.get('/api/debug/voucher/:voucherId', async (req, res) => {
   }
 });
 
-// Debug endpoint to test 2Factor.in API connection
-app.get('/api/debug/test-2factor', async (req, res) => {
-  try {
-    // Test API balance check (doesn't send SMS)
-    const url = `${TWOFACTOR_BASE_URL}/${TWOFACTOR_API_KEY}/BAL/SMS`;
-    console.log(`\n🔍 TESTING 2FACTOR.IN API`);
-    console.log(`   URL: ${url.replace(TWOFACTOR_API_KEY, 'API_KEY_HIDDEN')}`);
-    
-    const response = await fetch(url);
-    const data = await response.json();
-    
-    console.log(`   Response: ${JSON.stringify(data)}`);
-    
-    res.json({
-      apiKeyConfigured: !!TWOFACTOR_API_KEY,
-      apiKeyLength: TWOFACTOR_API_KEY ? TWOFACTOR_API_KEY.length : 0,
-      apiKeyPrefix: TWOFACTOR_API_KEY ? TWOFACTOR_API_KEY.substring(0, 8) + '...' : 'NOT SET',
-      baseUrl: TWOFACTOR_BASE_URL,
-      balanceCheck: data
-    });
-  } catch (error) {
-    res.status(500).json({ 
-      error: error.message,
-      apiKeyConfigured: !!TWOFACTOR_API_KEY,
-      apiKeyLength: TWOFACTOR_API_KEY ? TWOFACTOR_API_KEY.length : 0
-    });
-  }
-});
+// Kept for backwards compat — redirects to new debug endpoint
+app.get('/api/debug/test-2factor', (req, res) => res.redirect('/api/debug/test-msg91'));
 
 // Get all companies
 app.get('/api/companies', async (req, res) => {
@@ -412,7 +415,7 @@ app.get('/api/companies', async (req, res) => {
   }
 });
 
-// Send OTP using 2Factor.in
+// Send OTP using MSG91
 app.post('/api/otp/send', async (req, res) => {
   const { mobile, purpose } = req.body;
   if (!mobile) return res.status(400).json({ error: 'Mobile number is required' });
@@ -422,22 +425,19 @@ app.post('/api/otp/send', async (req, res) => {
   console.log(`   Original: ${mobile}`);
   console.log(`   Formatted: ${formattedMobile}`);
   console.log(`   Purpose: ${purpose}`);
-  console.log(`   Template: ${TWOFACTOR_TEMPLATE_NAME}`);
   
-  const result = await call2FactorAPI(`/SMS/${formattedMobile}/AUTOGEN/${TWOFACTOR_TEMPLATE_NAME}`, `Send OTP to ${formattedMobile}`);
+  const result = await callMsg91OtpSend(formattedMobile, `Send OTP to ${formattedMobile}`);
   
   if (result.success) {
-    // Store session in Supabase
-    await saveOtpSession(formattedMobile, result.data.Details, purpose);
+    await saveOtpSession(formattedMobile, 'msg91', purpose);
     console.log(`   📝 Session stored in DB for: ${formattedMobile}`);
-    console.log(`   📝 Session ID: ${result.data.Details}`);
     res.json({ success: true, message: 'OTP sent successfully' });
   } else {
-    res.status(500).json({ error: 'Failed to send OTP', details: result.data?.Details || result.error });
+    res.status(500).json({ error: 'Failed to send OTP', details: result.data?.message || result.error });
   }
 });
 
-// Verify OTP using 2Factor.in
+// Verify OTP using MSG91
 app.post('/api/otp/verify', async (req, res) => {
   const { mobile, code } = req.body;
   if (!mobile || !code) return res.status(400).json({ error: 'Mobile and OTP code are required' });
@@ -454,19 +454,18 @@ app.post('/api/otp/verify', async (req, res) => {
     return res.status(400).json({ error: 'No OTP session found. Please request a new OTP.' });
   }
   
-  console.log(`   📝 Session found: ${session.sessionId.substring(0, 8)}...`);
+  console.log(`   📝 Session found (purpose: ${session.purpose})`);
   
-  const result = await call2FactorAPI(`/SMS/VERIFY/${session.sessionId}/${code}`, `Verify OTP for ${formattedMobile}`);
+  const result = await callMsg91OtpVerify(formattedMobile, code, `Verify OTP for ${formattedMobile}`);
   
-  if (result.success && result.data.Details === 'OTP Matched') {
-    // Clear the session
+  if (result.success) {
     await deleteOtpSession(formattedMobile);
     console.log(`   ✅ OTP Verified! Session cleared.`);
     const signature = Buffer.from(`${formattedMobile}:${Date.now()}:verified`).toString('base64');
     res.json({ success: true, status: 'approved', signature });
   } else {
-    console.log(`   ❌ OTP verification failed: ${result.data?.Details || result.error}`);
-    res.status(400).json({ success: false, message: 'Invalid OTP', details: result.data?.Details });
+    console.log(`   ❌ OTP verification failed: ${result.data?.message || result.error}`);
+    res.status(400).json({ success: false, message: 'Invalid OTP', details: result.data?.message });
   }
 });
 
@@ -855,17 +854,16 @@ app.post('/api/users/login', async (req, res) => {
         if (!otp) {
           try {
             const formattedMobile = formatMobile(user.mobile);
-            const response = await fetch(`${TWOFACTOR_BASE_URL}/${TWOFACTOR_API_KEY}/SMS/${formattedMobile}/AUTOGEN/${TWOFACTOR_TEMPLATE_NAME}`);
-            const data = await response.json();
-            if (data.Status === 'Success') {
-              await saveOtpSession(formattedMobile, data.Details, 'first_login');
+            const otpResult = await callMsg91OtpSend(formattedMobile, 'Send first-login OTP');
+            if (otpResult.success) {
+              await saveOtpSession(formattedMobile, 'msg91', 'first_login');
               return res.json({ requiresOtp: true, message: 'An OTP has been sent to your registered mobile. Verify to set your password.' });
             } else {
-              console.error('2Factor OTP send error:', data.Details);
+              console.error('MSG91 OTP send error:', otpResult.data?.message);
               return res.status(500).json({ error: 'Failed to send OTP' });
             }
           } catch (err) {
-            console.error('2Factor OTP send error:', err.message);
+            console.error('OTP send error:', err.message);
             return res.status(500).json({ error: 'Failed to send OTP' });
           }
         } else {
@@ -873,9 +871,8 @@ app.post('/api/users/login', async (req, res) => {
             const formattedMobile = formatMobile(user.mobile);
             const session = await getOtpSession(formattedMobile);
             if (!session) return res.status(400).json({ error: 'No OTP session found. Please request a new OTP.' });
-            const verifyRes = await fetch(`${TWOFACTOR_BASE_URL}/${TWOFACTOR_API_KEY}/SMS/VERIFY/${session.sessionId}/${otp}`);
-            const verifyData = await verifyRes.json();
-            if (verifyData.Status !== 'Success' || verifyData.Details !== 'OTP Matched') {
+            const verifyResult = await callMsg91OtpVerify(formattedMobile, otp, 'Verify first-login OTP');
+            if (!verifyResult.success) {
               return res.status(400).json({ error: 'Invalid OTP' });
             }
             await deleteOtpSession(formattedMobile);
@@ -1078,10 +1075,9 @@ app.post('/api/auth/forgot-password', async (req, res) => {
     const formattedMobile = formatMobile(user.mobile);
 
     if (!otp) {
-      const response = await fetch(`${TWOFACTOR_BASE_URL}/${TWOFACTOR_API_KEY}/SMS/${formattedMobile}/AUTOGEN/${TWOFACTOR_TEMPLATE_NAME}`);
-      const data = await response.json();
-      if (data.Status !== 'Success') return res.status(500).json({ error: 'Failed to send OTP' });
-      await saveOtpSession(formattedMobile, data.Details, 'password_reset');
+      const otpResult = await callMsg91OtpSend(formattedMobile, 'Send password-reset OTP');
+      if (!otpResult.success) return res.status(500).json({ error: 'Failed to send OTP' });
+      await saveOtpSession(formattedMobile, 'msg91', 'password_reset');
       return res.json({ requiresOtp: true, message: 'OTP sent to registered mobile.' });
     }
 
@@ -1089,9 +1085,8 @@ app.post('/api/auth/forgot-password', async (req, res) => {
     const session = await getOtpSession(formattedMobile);
     if (!session) return res.status(400).json({ error: 'No OTP session found. Please request again.' });
 
-    const verifyRes = await fetch(`${TWOFACTOR_BASE_URL}/${TWOFACTOR_API_KEY}/SMS/VERIFY/${session.sessionId}/${otp}`);
-    const verifyData = await verifyRes.json();
-    if (verifyData.Status !== 'Success' || verifyData.Details !== 'OTP Matched') {
+    const verifyResult = await callMsg91OtpVerify(formattedMobile, otp, 'Verify password-reset OTP');
+    if (!verifyResult.success) {
       return res.status(400).json({ error: 'Invalid OTP' });
     }
     await deleteOtpSession(formattedMobile);
@@ -2181,20 +2176,16 @@ app.post('/api/vouchers/:voucherId/approve', async (req, res) => {
       })
       .eq('id', req.params.voucherId);
     
-    // Send OTP to payee using 2Factor.in (default transactional SMS)
+    // Send OTP to payee via MSG91
     try {
       const formattedMobile = formatMobile(voucher.payee.mobile);
       console.log(`   Sending OTP to: ${formattedMobile}`);
-      console.log(`   Using Template: ${TWOFACTOR_TEMPLATE_NAME}`);
       
-      const response = await fetch(`${TWOFACTOR_BASE_URL}/${TWOFACTOR_API_KEY}/SMS/${formattedMobile}/AUTOGEN/${TWOFACTOR_TEMPLATE_NAME}`);
-      const data = await response.json();
-      console.log(`   2Factor Response: ${JSON.stringify(data)}`);
+      const otpResult = await callMsg91OtpSend(formattedMobile, `Send Payee OTP for voucher ${req.params.voucherId}`);
       
-      if (data.Status === 'Success') {
-        // Store session for payee verification in Supabase
-        await saveOtpSession(formattedMobile, data.Details, 'payee_verification', req.params.voucherId);
-        console.log(`   ✅ OTP sent successfully, session: ${data.Details}`);
+      if (otpResult.success) {
+        await saveOtpSession(formattedMobile, 'msg91', 'payee_verification', req.params.voucherId);
+        console.log(`   ✅ OTP sent successfully`);
         
         // Notify preparer
         await supabase.from('notifications').insert({
@@ -2219,11 +2210,11 @@ app.post('/api/vouchers/:voucherId/approve', async (req, res) => {
           payeeMobile: voucher.payee.mobile.replace(/\d(?=\d{4})/g, '*')
         });
       } else {
-        console.error('   ❌ 2Factor Error:', data);
-        res.status(500).json({ error: 'Failed to send OTP to payee', details: data.Details });
+        console.error('   ❌ MSG91 Error:', otpResult.data);
+        res.status(500).json({ error: 'Failed to send OTP to payee', details: otpResult.data?.message || otpResult.error });
       }
     } catch (err) {
-      console.error('   ❌ 2Factor Exception:', err.message);
+      console.error('   ❌ OTP Exception:', err.message);
       res.status(500).json({ error: 'Failed to send OTP to payee', details: err.message });
     }
   } catch (error) {
@@ -2299,7 +2290,7 @@ app.post('/api/vouchers/:voucherId/complete', async (req, res) => {
       return res.status(400).json({ error: 'Voucher is not awaiting payee OTP' });
     }
     
-    // Verify payee OTP using 2Factor.in
+    // Verify payee OTP via MSG91
     const formattedMobile = formatMobile(voucher.payee.mobile);
     console.log(`   Payee Mobile: ${formattedMobile}`);
     
@@ -2310,12 +2301,12 @@ app.post('/api/vouchers/:voucherId/complete', async (req, res) => {
       return res.status(400).json({ error: 'No OTP session found. Please click "Resend OTP" to send a fresh OTP.' });
     }
     
-    console.log(`   📝 Session found: ${session.sessionId.substring(0, 8)}... (purpose: ${session.purpose})`);
+    console.log(`   📝 Session found (purpose: ${session.purpose})`);
     
-    const result = await call2FactorAPI(`/SMS/VERIFY/${session.sessionId}/${otp}`, `Verify Payee OTP for voucher ${req.params.voucherId}`);
+    const result = await callMsg91OtpVerify(formattedMobile, otp, `Verify Payee OTP for voucher ${req.params.voucherId}`);
     
-    if (!result.success || result.data.Details !== 'OTP Matched') {
-      const detail = result.data?.Details || result.error || 'Unknown error';
+    if (!result.success) {
+      const detail = result.data?.message || result.error || 'Unknown error';
       console.log(`   ❌ OTP verification failed: ${detail}`);
       return res.status(400).json({ error: 'Invalid OTP', details: detail });
     }
@@ -2368,7 +2359,7 @@ app.post('/api/vouchers/:voucherId/complete', async (req, res) => {
   }
 });
 
-// Resend payee OTP using 2Factor.in
+// Resend payee OTP
 app.post('/api/vouchers/:voucherId/resend-otp', async (req, res) => {
   console.log(`\n🔄 RESEND PAYEE OTP REQUEST`);
   console.log(`   Voucher ID: ${req.params.voucherId}`);
@@ -2401,18 +2392,15 @@ app.post('/api/vouchers/:voucherId/resend-otp', async (req, res) => {
     
     const formattedMobile = formatMobile(voucher.payee.mobile);
     console.log(`   Payee Mobile: ${formattedMobile}`);
-    console.log(`   Using Template: ${TWOFACTOR_TEMPLATE_NAME}`);
     
-    const result = await call2FactorAPI(`/SMS/${formattedMobile}/AUTOGEN/${TWOFACTOR_TEMPLATE_NAME}`, `Resend Payee OTP for voucher ${req.params.voucherId}`);
+    const result = await callMsg91OtpSend(formattedMobile, `Resend Payee OTP for voucher ${req.params.voucherId}`);
     
     if (result.success) {
-      // Store session ID in Supabase for verification
-      await saveOtpSession(formattedMobile, result.data.Details, 'payee_verification', req.params.voucherId);
+      await saveOtpSession(formattedMobile, 'msg91', 'payee_verification', req.params.voucherId);
       console.log(`   📝 Session stored in Supabase for: ${formattedMobile}`);
-      console.log(`   📝 Session ID: ${result.data.Details}`);
       res.json({ success: true, message: 'OTP resent to payee' });
     } else {
-      res.status(500).json({ error: 'Failed to resend OTP', details: result.data?.Details || result.error });
+      res.status(500).json({ error: 'Failed to resend OTP', details: result.data?.message || result.error });
     }
   } catch (error) {
     console.log(`   ❌ Error: ${error.message}`);
@@ -3423,16 +3411,13 @@ app.post('/api/suspense-vouchers/:id/approve', async (req, res) => {
     // Send OTP to the staff payee so they can confirm receipt of the advance.
     // The settlement form link is only activated AFTER OTP is verified.
     const formattedMobile = formatMobile(payee.mobile);
-    const otpResponse = await fetch(
-      `${TWOFACTOR_BASE_URL}/${TWOFACTOR_API_KEY}/SMS/${formattedMobile}/AUTOGEN/${TWOFACTOR_TEMPLATE_NAME}`
-    );
-    const otpData = await otpResponse.json();
-    if (otpData.Status !== 'Success') {
+    const otpResult = await callMsg91OtpSend(formattedMobile, `Send advance OTP for suspense ${sv.serial_number}`);
+    if (!otpResult.success) {
       // Roll back status so Admin can retry
       await supabase.from('suspense_vouchers').update({ status: 'pending_approval', approved_by: null, approved_at: null }).eq('id', sv.id);
-      return res.status(500).json({ error: 'Failed to send OTP to payee', details: otpData.Details });
+      return res.status(500).json({ error: 'Failed to send OTP to payee', details: otpResult.data?.message || otpResult.error });
     }
-    await saveOtpSession(formattedMobile, otpData.Details, 'suspense_advance', null, sv.id);
+    await saveOtpSession(formattedMobile, 'msg91', 'suspense_advance', null, sv.id);
 
     // Notify Accounts creator that OTP has been sent and is awaiting verification
     const { data: approver } = await supabase.from('users').select('name').eq('id', approvedBy).single();
@@ -3479,18 +3464,17 @@ app.post('/api/suspense-vouchers/:id/verify-advance-otp', async (req, res) => {
     const payee = sv.payees;
     if (!payee?.mobile) return res.status(400).json({ error: 'Payee mobile not found' });
 
-    // Verify OTP via 2Factor
     const formattedMobile = formatMobile(payee.mobile);
     const session = await getOtpSession(formattedMobile);
     if (!session) {
       return res.status(400).json({ error: 'No active OTP session found. Please resend OTP first.' });
     }
-    const result = await call2FactorAPI(
-      `/SMS/VERIFY/${session.sessionId}/${otp}`,
+    const result = await callMsg91OtpVerify(
+      formattedMobile, otp,
       `Verify advance OTP for suspense ${sv.serial_number}`
     );
-    if (!result.success || result.data.Details !== 'OTP Matched') {
-      return res.status(400).json({ error: 'Invalid OTP', details: result.data?.Details });
+    if (!result.success) {
+      return res.status(400).json({ error: 'Invalid OTP', details: result.data?.message });
     }
 
     // Mark voucher as open and stamp the verification timestamp
@@ -3514,7 +3498,7 @@ app.post('/api/suspense-vouchers/:id/verify-advance-otp', async (req, res) => {
     const baseUrl = process.env.APP_BASE_URL || `${req.protocol}://${req.get('host')}`;
     const settlementUrl = `${baseUrl}/settlement/${settlementToken}`;
     const smsMessage = `Your settlement form for suspense voucher ${sv.serial_number} is ready. Open it here: ${settlementUrl}`;
-    const smsSent = await send2FactorSms(payee.mobile, smsMessage);
+    const smsSent = await sendMsg91Sms(payee.mobile, smsMessage);
 
     // Notify creator + payee (if a system user)
     const { data: verifier } = await supabase.from('users').select('name').eq('id', verifiedBy).single();
@@ -3565,14 +3549,11 @@ app.post('/api/suspense-vouchers/:id/resend-advance-otp', async (req, res) => {
     if (!payee?.mobile) return res.status(400).json({ error: 'Payee mobile not found' });
 
     const formattedMobile = formatMobile(payee.mobile);
-    const otpResponse = await fetch(
-      `${TWOFACTOR_BASE_URL}/${TWOFACTOR_API_KEY}/SMS/${formattedMobile}/AUTOGEN/${TWOFACTOR_TEMPLATE_NAME}`
-    );
-    const otpData = await otpResponse.json();
-    if (otpData.Status !== 'Success') {
-      return res.status(500).json({ error: 'Failed to resend OTP', details: otpData.Details });
+    const otpResult = await callMsg91OtpSend(formattedMobile, `Resend advance OTP for suspense ${sv.id}`);
+    if (!otpResult.success) {
+      return res.status(500).json({ error: 'Failed to resend OTP', details: otpResult.data?.message || otpResult.error });
     }
-    await saveOtpSession(formattedMobile, otpData.Details, 'suspense_advance', null, sv.id);
+    await saveOtpSession(formattedMobile, 'msg91', 'suspense_advance', null, sv.id);
 
     res.json({ success: true, payeeMobile: payee.mobile.replace(/\d(?=\d{4})/g, '*') });
   } catch (error) {
@@ -3665,7 +3646,7 @@ app.post('/api/suspense-vouchers/:id/resend-settlement-link', async (req, res) =
     const baseUrl = process.env.APP_BASE_URL || `${req.protocol}://${req.get('host')}`;
     const settlementUrl = `${baseUrl}/settlement/${settlementToken}`;
     const smsMessage = `Your settlement form for suspense voucher ${sv.serial_number} is ready. Open it here: ${settlementUrl}`;
-    const smsResult = await send2FactorSms(payee.mobile, smsMessage);
+    const smsResult = await sendMsg91Sms(payee.mobile, smsMessage);
 
     res.json({
       success: true,
@@ -4472,7 +4453,7 @@ app.post('/api/suspense-settlements/:settlementId/approve-topup', async (req, re
       if (payee?.mobile) {
         const { data: approver } = await supabase.from('users').select('name').eq('id', approvedBy).single();
         const smsMessage = `Hi ${payee.name}, your suspense account ${sv.serial_number} has been topped up by ₹${parseFloat(settlement.amount).toFixed(2)}. New balance: ₹${balance.toFixed(2)}. - ${approver?.name || 'Admin'}`;
-        await send2FactorSms(payee.mobile, smsMessage);
+        await sendMsg91Sms(payee.mobile, smsMessage);
       }
     }
 
