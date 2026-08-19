@@ -119,7 +119,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
 // MSG91 Configuration
 if (!process.env.MSG91_AUTH_KEY) {
-  throw new Error('Missing required environment variable: MSG91_AUTH_KEY');
+  console.warn('⚠️ WARNING: MSG91_AUTH_KEY not set — SMS/OTP will fail');
 }
 const MSG91_AUTH_KEY = process.env.MSG91_AUTH_KEY;
 const MSG91_OTP_TEMPLATE_ID = process.env.MSG91_OTP_TEMPLATE_ID; // DLT-registered OTP template ID
