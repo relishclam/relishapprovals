@@ -11261,8 +11261,10 @@ const ReconcileReceipts = () => {
 const App = () => {
   const [user, setUser] = useState(() => {
     try {
-      // On mobile with lock active, start as null — lock screen will re-hydrate
-      if (isMobileDevice()) {
+      // On mobile with lock active, start as null — lock screen will re-hydrate.
+      // Exception: share-target redirects bypass the lock (user intentionally triggered the share).
+      const _isShareRedirect = window.location.search.includes('incoming-share=1');
+      if (isMobileDevice() && !_isShareRedirect) {
         const _s = localStorage.getItem('relish_session');
         const _uid = _s ? (() => { try { return JSON.parse(_s)?.id; } catch { return null; } })() : null;
         const hasLock = _uid && (!!localStorage.getItem('relish_mobile_pin_' + _uid) || !!localStorage.getItem('relish_mobile_bio_id_' + _uid));
@@ -11277,6 +11279,8 @@ const App = () => {
   const [mobileLocked, setMobileLocked] = useState(() => {
     try {
       if (!isMobileDevice()) return false;
+      const _isShareRedirect = window.location.search.includes('incoming-share=1');
+      if (_isShareRedirect) return false; // share-target reload — skip lock
       const _s = localStorage.getItem('relish_session');
       const _uid = _s ? (() => { try { return JSON.parse(_s)?.id; } catch { return null; } })() : null;
       const hasLock = _uid && (!!localStorage.getItem('relish_mobile_pin_' + _uid) || !!localStorage.getItem('relish_mobile_bio_id_' + _uid));
@@ -11286,6 +11290,8 @@ const App = () => {
   const [mobileSavedUser, setMobileSavedUser] = useState(() => {
     try {
       if (!isMobileDevice()) return null;
+      const _isShareRedirect = window.location.search.includes('incoming-share=1');
+      if (_isShareRedirect) return null; // share-target reload — no lock state needed
       const _s = localStorage.getItem('relish_session');
       const _uid = _s ? (() => { try { return JSON.parse(_s)?.id; } catch { return null; } })() : null;
       const hasLock = _uid && (!!localStorage.getItem('relish_mobile_pin_' + _uid) || !!localStorage.getItem('relish_mobile_bio_id_' + _uid));
@@ -11308,8 +11314,10 @@ const App = () => {
       } else if (document.visibilityState === 'visible') {
         const elapsed = bgTimestamp.current ? Date.now() - bgTimestamp.current : 0;
         bgTimestamp.current = null;
+        // Don't re-lock if returning from a share-target redirect
+        const _fromShare = window.location.search.includes('incoming-share=1');
         const hasLock = !!localStorage.getItem('relish_mobile_pin_' + user?.id) || !!localStorage.getItem('relish_mobile_bio_id_' + user?.id);
-        if (elapsed > 10000 && hasLock && user) {
+        if (elapsed > 10000 && hasLock && user && !_fromShare) {
           setMobileSavedUser(user);
           setMobileLocked(true);
           setUser(null);
