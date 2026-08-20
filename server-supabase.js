@@ -293,44 +293,51 @@ const getActorRole = async (userId) => {
   return data || {};
 };
 
-// Send OTP via MSG91
-const callMsg91OtpSend = async (mobile, description) => {
+// Send OTP via MSG91 Flow API — OTP generated and verified locally
+const callMsg91OtpSend = async (mobile, description, { name = '', amount = '' } = {}) => {
   console.log(`\n📱 MSG91 SEND OTP: ${description}`);
   console.log(`   Mobile: ${mobile}`);
-  console.log(`   Template: ${MSG91_OTP_TEMPLATE_ID || 'NOT SET'}`);
   console.log(`   Time: ${new Date().toISOString()}`);
 
   try {
-    const params = new URLSearchParams({
-      authkey: MSG91_AUTH_KEY,
-      mobile,
-      otp_expiry: '15',
-      realTimeResponse: '1',
-      ...(MSG91_OTP_TEMPLATE_ID ? { template_id: MSG91_OTP_TEMPLATE_ID } : {})
+    const otp = crypto.randomInt(0, 1000000).toString().padStart(6, '0');
+    const salt = crypto.randomBytes(16).toString('hex');
+    const hashHex = crypto.createHash('sha256').update(`${salt}:${otp}`).digest('hex');
+    const sessionId = `${salt}:${hashHex}`;
+
+    const response = await fetch(`${MSG91_BASE_URL}/flow/`, {
+      method: 'POST',
+      headers: { authkey: MSG91_AUTH_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        flow_id: MSG91_FLOW_ID,
+        sender: MSG91_SENDER_ID,
+        recipients: [{ mobiles: mobile, otp, ...(name ? { name } : {}), ...(amount ? { amount } : {}) }],
+      }),
     });
-    const response = await fetch(`${MSG91_BASE_URL}/otp?${params}`, { method: 'POST' });
     const data = await response.json();
     console.log(`   Response: ${JSON.stringify(data)}`);
     const success = data.type === 'success';
     if (success) console.log(`   ✅ SUCCESS`); else console.log(`   ❌ FAILED: ${JSON.stringify(data)}`);
-    return { success, data };
+    return { success, sessionId, data };
   } catch (error) {
     console.log(`   ❌ ERROR: ${error.message}`);
     return { success: false, error: error.message };
   }
 };
 
-// Verify OTP via MSG91
-const callMsg91OtpVerify = async (mobile, otp, description) => {
-  console.log(`\n🔐 MSG91 VERIFY OTP: ${description}`);
-
+// Verify OTP locally using salt:hash stored in session
+const callMsg91OtpVerify = async (otp, stored, description) => {
+  console.log(`\n🔐 VERIFY OTP (local): ${description}`);
   try {
-    const params = new URLSearchParams({ authkey: MSG91_AUTH_KEY, mobile, otp });
-    const response = await fetch(`${MSG91_BASE_URL}/otp/verify?${params}`, { method: 'POST' });
-    const data = await response.json();
-    console.log(`   Response: ${JSON.stringify(data)}`);
-    const success = data.type === 'success';
-    return { success, data };
+    const [salt, existingHash] = stored.split(':');
+    if (!salt || !existingHash) return { success: false };
+    const computed = crypto.createHash('sha256').update(`${salt}:${otp}`).digest('hex');
+    if (existingHash.length !== computed.length) return { success: false };
+    let diff = 0;
+    for (let i = 0; i < existingHash.length; i++) diff |= existingHash.charCodeAt(i) ^ computed.charCodeAt(i);
+    const success = diff === 0;
+    if (success) console.log(`   ✅ OTP matched`); else console.log(`   ❌ OTP mismatch`);
+    return { success };
   } catch (error) {
     console.log(`   ❌ ERROR: ${error.message}`);
     return { success: false, error: error.message };
@@ -429,7 +436,7 @@ app.post('/api/otp/send', async (req, res) => {
   const result = await callMsg91OtpSend(formattedMobile, `Send OTP to ${formattedMobile}`);
   
   if (result.success) {
-    await saveOtpSession(formattedMobile, 'msg91', purpose);
+    await saveOtpSession(formattedMobile, result.sessionId, purpose);
     console.log(`   📝 Session stored in DB for: ${formattedMobile}`);
     res.json({ success: true, message: 'OTP sent successfully' });
   } else {
@@ -456,7 +463,7 @@ app.post('/api/otp/verify', async (req, res) => {
   
   console.log(`   📝 Session found (purpose: ${session.purpose})`);
   
-  const result = await callMsg91OtpVerify(formattedMobile, code, `Verify OTP for ${formattedMobile}`);
+  const result = await callMsg91OtpVerify(code, session.sessionId, `Verify OTP for ${formattedMobile}`);
   
   if (result.success) {
     await deleteOtpSession(formattedMobile);
@@ -856,7 +863,7 @@ app.post('/api/users/login', async (req, res) => {
             const formattedMobile = formatMobile(user.mobile);
             const otpResult = await callMsg91OtpSend(formattedMobile, 'Send first-login OTP');
             if (otpResult.success) {
-              await saveOtpSession(formattedMobile, 'msg91', 'first_login');
+              await saveOtpSession(formattedMobile, otpResult.sessionId, 'first_login');
               return res.json({ requiresOtp: true, message: 'An OTP has been sent to your registered mobile. Verify to set your password.' });
             } else {
               console.error('MSG91 OTP send error:', otpResult.data?.message);
@@ -871,7 +878,7 @@ app.post('/api/users/login', async (req, res) => {
             const formattedMobile = formatMobile(user.mobile);
             const session = await getOtpSession(formattedMobile);
             if (!session) return res.status(400).json({ error: 'No OTP session found. Please request a new OTP.' });
-            const verifyResult = await callMsg91OtpVerify(formattedMobile, otp, 'Verify first-login OTP');
+            const verifyResult = await callMsg91OtpVerify(otp, session.sessionId, 'Verify first-login OTP');
             if (!verifyResult.success) {
               return res.status(400).json({ error: 'Invalid OTP' });
             }
@@ -1077,7 +1084,7 @@ app.post('/api/auth/forgot-password', async (req, res) => {
     if (!otp) {
       const otpResult = await callMsg91OtpSend(formattedMobile, 'Send password-reset OTP');
       if (!otpResult.success) return res.status(500).json({ error: 'Failed to send OTP' });
-      await saveOtpSession(formattedMobile, 'msg91', 'password_reset');
+      await saveOtpSession(formattedMobile, otpResult.sessionId, 'password_reset');
       return res.json({ requiresOtp: true, message: 'OTP sent to registered mobile.' });
     }
 
@@ -1085,7 +1092,7 @@ app.post('/api/auth/forgot-password', async (req, res) => {
     const session = await getOtpSession(formattedMobile);
     if (!session) return res.status(400).json({ error: 'No OTP session found. Please request again.' });
 
-    const verifyResult = await callMsg91OtpVerify(formattedMobile, otp, 'Verify password-reset OTP');
+    const verifyResult = await callMsg91OtpVerify(otp, session.sessionId, 'Verify password-reset OTP');
     if (!verifyResult.success) {
       return res.status(400).json({ error: 'Invalid OTP' });
     }
@@ -2184,7 +2191,7 @@ app.post('/api/vouchers/:voucherId/approve', async (req, res) => {
       const otpResult = await callMsg91OtpSend(formattedMobile, `Send Payee OTP for voucher ${req.params.voucherId}`);
       
       if (otpResult.success) {
-        await saveOtpSession(formattedMobile, 'msg91', 'payee_verification', req.params.voucherId);
+        await saveOtpSession(formattedMobile, otpResult.sessionId, 'payee_verification', req.params.voucherId);
         console.log(`   ✅ OTP sent successfully`);
         
         // Notify preparer
@@ -2303,7 +2310,7 @@ app.post('/api/vouchers/:voucherId/complete', async (req, res) => {
     
     console.log(`   📝 Session found (purpose: ${session.purpose})`);
     
-    const result = await callMsg91OtpVerify(formattedMobile, otp, `Verify Payee OTP for voucher ${req.params.voucherId}`);
+    const result = await callMsg91OtpVerify(otp, session.sessionId, `Verify Payee OTP for voucher ${req.params.voucherId}`);
     
     if (!result.success) {
       const detail = result.data?.message || result.error || 'Unknown error';
@@ -2396,7 +2403,7 @@ app.post('/api/vouchers/:voucherId/resend-otp', async (req, res) => {
     const result = await callMsg91OtpSend(formattedMobile, `Resend Payee OTP for voucher ${req.params.voucherId}`);
     
     if (result.success) {
-      await saveOtpSession(formattedMobile, 'msg91', 'payee_verification', req.params.voucherId);
+      await saveOtpSession(formattedMobile, result.sessionId, 'payee_verification', req.params.voucherId);
       console.log(`   📝 Session stored in Supabase for: ${formattedMobile}`);
       res.json({ success: true, message: 'OTP resent to payee' });
     } else {
@@ -3417,7 +3424,7 @@ app.post('/api/suspense-vouchers/:id/approve', async (req, res) => {
       await supabase.from('suspense_vouchers').update({ status: 'pending_approval', approved_by: null, approved_at: null }).eq('id', sv.id);
       return res.status(500).json({ error: 'Failed to send OTP to payee', details: otpResult.data?.message || otpResult.error });
     }
-    await saveOtpSession(formattedMobile, 'msg91', 'suspense_advance', null, sv.id);
+    await saveOtpSession(formattedMobile, otpResult.sessionId, 'suspense_advance', null, sv.id);
 
     // Notify Accounts creator that OTP has been sent and is awaiting verification
     const { data: approver } = await supabase.from('users').select('name').eq('id', approvedBy).single();
@@ -3470,7 +3477,7 @@ app.post('/api/suspense-vouchers/:id/verify-advance-otp', async (req, res) => {
       return res.status(400).json({ error: 'No active OTP session found. Please resend OTP first.' });
     }
     const result = await callMsg91OtpVerify(
-      formattedMobile, otp,
+      otp, session.sessionId,
       `Verify advance OTP for suspense ${sv.serial_number}`
     );
     if (!result.success) {
@@ -3553,7 +3560,7 @@ app.post('/api/suspense-vouchers/:id/resend-advance-otp', async (req, res) => {
     if (!otpResult.success) {
       return res.status(500).json({ error: 'Failed to resend OTP', details: otpResult.data?.message || otpResult.error });
     }
-    await saveOtpSession(formattedMobile, 'msg91', 'suspense_advance', null, sv.id);
+    await saveOtpSession(formattedMobile, otpResult.sessionId, 'suspense_advance', null, sv.id);
 
     res.json({ success: true, payeeMobile: payee.mobile.replace(/\d(?=\d{4})/g, '*') });
   } catch (error) {
