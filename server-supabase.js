@@ -861,7 +861,7 @@ app.post('/api/users/login', async (req, res) => {
         if (!otp) {
           try {
             const formattedMobile = formatMobile(user.mobile);
-            const otpResult = await callMsg91OtpSend(formattedMobile, 'Send first-login OTP');
+            const otpResult = await callMsg91OtpSend(formattedMobile, 'Send first-login OTP', { name: user.name });
             if (otpResult.success) {
               await saveOtpSession(formattedMobile, otpResult.sessionId, 'first_login');
               return res.json({ requiresOtp: true, message: 'An OTP has been sent to your registered mobile. Verify to set your password.' });
@@ -1082,7 +1082,7 @@ app.post('/api/auth/forgot-password', async (req, res) => {
     const formattedMobile = formatMobile(user.mobile);
 
     if (!otp) {
-      const otpResult = await callMsg91OtpSend(formattedMobile, 'Send password-reset OTP');
+      const otpResult = await callMsg91OtpSend(formattedMobile, 'Send password-reset OTP', { name: user.name });
       if (!otpResult.success) return res.status(500).json({ error: 'Failed to send OTP' });
       await saveOtpSession(formattedMobile, otpResult.sessionId, 'password_reset');
       return res.json({ requiresOtp: true, message: 'OTP sent to registered mobile.' });
@@ -2058,7 +2058,7 @@ app.post('/api/vouchers/:voucherId/approve', async (req, res) => {
     }
     
     const { data: voucher, error: voucherError } = await supabase.from('vouchers')
-      .select('*, payee:payees(mobile, requires_otp, payee_type)')
+      .select('*, payee:payees(name, mobile, requires_otp, payee_type)')
       .eq('id', req.params.voucherId)
       .single();
     
@@ -2188,7 +2188,7 @@ app.post('/api/vouchers/:voucherId/approve', async (req, res) => {
       const formattedMobile = formatMobile(voucher.payee.mobile);
       console.log(`   Sending OTP to: ${formattedMobile}`);
       
-      const otpResult = await callMsg91OtpSend(formattedMobile, `Send Payee OTP for voucher ${req.params.voucherId}`);
+      const otpResult = await callMsg91OtpSend(formattedMobile, `Send Payee OTP for voucher ${req.params.voucherId}`, { name: voucher.payee.name, amount: voucher.amount });
       
       if (otpResult.success) {
         await saveOtpSession(formattedMobile, otpResult.sessionId, 'payee_verification', req.params.voucherId);
@@ -2373,7 +2373,7 @@ app.post('/api/vouchers/:voucherId/resend-otp', async (req, res) => {
   
   try {
     const { data: voucher, error: voucherError } = await supabase.from('vouchers')
-      .select('*, payee:payees(mobile)')
+      .select('*, payee:payees(name, mobile)')
       .eq('id', req.params.voucherId)
       .single();
     
@@ -2400,7 +2400,7 @@ app.post('/api/vouchers/:voucherId/resend-otp', async (req, res) => {
     const formattedMobile = formatMobile(voucher.payee.mobile);
     console.log(`   Payee Mobile: ${formattedMobile}`);
     
-    const result = await callMsg91OtpSend(formattedMobile, `Resend Payee OTP for voucher ${req.params.voucherId}`);
+    const result = await callMsg91OtpSend(formattedMobile, `Resend Payee OTP for voucher ${req.params.voucherId}`, { name: voucher.payee.name, amount: voucher.amount });
     
     if (result.success) {
       await saveOtpSession(formattedMobile, result.sessionId, 'payee_verification', req.params.voucherId);
@@ -3418,7 +3418,7 @@ app.post('/api/suspense-vouchers/:id/approve', async (req, res) => {
     // Send OTP to the staff payee so they can confirm receipt of the advance.
     // The settlement form link is only activated AFTER OTP is verified.
     const formattedMobile = formatMobile(payee.mobile);
-    const otpResult = await callMsg91OtpSend(formattedMobile, `Send advance OTP for suspense ${sv.serial_number}`);
+    const otpResult = await callMsg91OtpSend(formattedMobile, `Send advance OTP for suspense ${sv.serial_number}`, { name: payee.name, amount: sv.amount });
     if (!otpResult.success) {
       // Roll back status so Admin can retry
       await supabase.from('suspense_vouchers').update({ status: 'pending_approval', approved_by: null, approved_at: null }).eq('id', sv.id);
@@ -3556,7 +3556,7 @@ app.post('/api/suspense-vouchers/:id/resend-advance-otp', async (req, res) => {
     if (!payee?.mobile) return res.status(400).json({ error: 'Payee mobile not found' });
 
     const formattedMobile = formatMobile(payee.mobile);
-    const otpResult = await callMsg91OtpSend(formattedMobile, `Resend advance OTP for suspense ${sv.id}`);
+    const otpResult = await callMsg91OtpSend(formattedMobile, `Resend advance OTP for suspense ${sv.id}`, { name: payee.name, amount: sv.amount });
     if (!otpResult.success) {
       return res.status(500).json({ error: 'Failed to resend OTP', details: otpResult.data?.message || otpResult.error });
     }
