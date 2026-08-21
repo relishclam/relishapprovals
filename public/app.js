@@ -2788,6 +2788,7 @@ const VoucherList = ({ filter }) => {
   const [showExcelModal, setShowExcelModal] = useState(false);
   const [excelDateFrom, setExcelDateFrom] = useState('');
   const [excelDateTo, setExcelDateTo] = useState('');
+  const [excelPayee, setExcelPayee] = useState('');
   const [loading, setLoading] = useState(false);
   
   // Document verification state
@@ -3642,8 +3643,12 @@ const VoucherList = ({ filter }) => {
       const vDate = new Date(v.created_at);
       return vDate >= from && vDate <= to;
     });
-    if (dateFiltered.length === 0) { addToast('No vouchers in selected date range', 'error'); return; }
-    const rows = dateFiltered.map((v, idx) => {
+    const payeeQuery = excelPayee.trim().toLowerCase();
+    const payeeFiltered = payeeQuery
+      ? dateFiltered.filter(v => (v.payee_name || '').toLowerCase().includes(payeeQuery))
+      : dateFiltered;
+    if (payeeFiltered.length === 0) { addToast('No vouchers match the selected filters', 'error'); return; }
+    const rows = payeeFiltered.map((v, idx) => {
       const items = typeof v.narration_items === 'string'
         ? JSON.parse(v.narration_items || '[]')
         : (v.narration_items || []);
@@ -3665,6 +3670,7 @@ const VoucherList = ({ filter }) => {
         'Status': (v.status || '').replace(/_/g, ' '),
       };
     });
+    const payeeSuffix = excelPayee.trim() ? '_' + excelPayee.trim().replace(/[^a-zA-Z0-9]/g, '_') : '';
     const ws = XLSX.utils.json_to_sheet(rows);
     const colWidths = Object.keys(rows[0]).map(key => ({
       wch: Math.max(key.length, ...rows.map(r => String(r[key]).length)) + 2
@@ -3672,7 +3678,7 @@ const VoucherList = ({ filter }) => {
     ws['!cols'] = colWidths;
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, titles[filter]);
-    XLSX.writeFile(wb, `${titles[filter].replace(/\s+/g, '_')}_${excelDateFrom}_to_${excelDateTo}.xlsx`);
+    XLSX.writeFile(wb, `${titles[filter].replace(/\s+/g, '_')}${payeeSuffix}_${excelDateFrom}_to_${excelDateTo}.xlsx`);
     setShowExcelModal(false);
   };
 
@@ -3685,7 +3691,7 @@ const VoucherList = ({ filter }) => {
         </div>
         {filtered.length > 0 && (
           <div style={{display: 'flex', gap: '0.5rem', flexWrap: 'wrap'}}>
-            {(filter === 'all' || filter === 'completed') && (
+            {(filter === 'all' || filter === 'completed' || filter === 'paid') && (
               <button className="btn btn-secondary" onClick={() => setShowExcelModal(true)}>
                 {Icons.download} Excel
               </button>
@@ -4179,8 +4185,8 @@ const VoucherList = ({ filter }) => {
         </div></div>
       )}
       {showExcelModal && (
-        <div className="modal-overlay" onClick={() => setShowExcelModal(false)}><div className="modal" onClick={(e) => e.stopPropagation()}>
-          <div className="modal-header"><h3 className="modal-title">{Icons.download} Download Excel Report</h3><button className="modal-close" onClick={() => setShowExcelModal(false)}>×</button></div>
+        <div className="modal-overlay" onClick={() => { setShowExcelModal(false); setExcelPayee(''); }}><div className="modal" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-header"><h3 className="modal-title">{Icons.download} Download Excel Report</h3><button className="modal-close" onClick={() => { setShowExcelModal(false); setExcelPayee(''); }}>×</button></div>
           <div className="modal-body">
             <p style={{marginBottom: '1rem', color: '#666'}}>Select date range for Excel report</p>
             <div className="form-row">
@@ -4193,16 +4199,20 @@ const VoucherList = ({ filter }) => {
                 <input type="date" className="form-input" value={excelDateTo} onChange={(e) => setExcelDateTo(e.target.value)} />
               </div>
             </div>
-            <div style={{background: '#f8f9fa', padding: '1rem', borderRadius: '8px', fontSize: '0.9rem'}}>
+            <div className="form-group" style={{marginTop: '0.75rem'}}>
+              <label className="form-label">Filter by Payee <span style={{color:'#9ca3af', fontWeight: 400}}>(optional — leave blank for all payees)</span></label>
+              <input type="text" className="form-input" placeholder="e.g. Mahadeva Electricals" value={excelPayee} onChange={(e) => setExcelPayee(e.target.value)} />
+            </div>
+            <div style={{background: '#f8f9fa', padding: '1rem', borderRadius: '8px', fontSize: '0.9rem', marginTop: '0.75rem'}}>
               <strong>ℹ️ Excel report will include:</strong>
               <ul style={{margin: '0.5rem 0 0', paddingLeft: '1.5rem'}}>
-                <li>All {titles[filter].toLowerCase()} in selected date range</li>
+                <li>{excelPayee.trim() ? `Only vouchers for payee matching "${excelPayee.trim()}"` : `All ${titles[filter].toLowerCase()}`} in selected date range</li>
                 <li>Serial No, Head of Account, Payee, Amount, Mode, Status</li>
                 <li>Narration, Invoice Reference, Sub Head details</li>
               </ul>
             </div>
           </div>
-          <div className="modal-footer"><button className="btn btn-secondary" onClick={() => setShowExcelModal(false)}>Cancel</button><button className="btn btn-primary" onClick={handleDownloadExcel} disabled={!excelDateFrom || !excelDateTo}>{Icons.download} Download Excel</button></div>
+          <div className="modal-footer"><button className="btn btn-secondary" onClick={() => { setShowExcelModal(false); setExcelPayee(''); }}>Cancel</button><button className="btn btn-primary" onClick={handleDownloadExcel} disabled={!excelDateFrom || !excelDateTo}>{Icons.download} Download Excel</button></div>
         </div></div>
       )}
       {showPrintModal && (
