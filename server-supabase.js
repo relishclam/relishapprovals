@@ -518,7 +518,7 @@ app.post('/api/otp/verify', async (req, res) => {
 // Admin-only: Onboard new user
 app.post('/api/admin/onboard-user', async (req, res) => {
   const { adminMobile, companyId, name, mobile, aadhar, role, companyAccess } = req.body;
-  if (!adminMobile || !companyId || !name || !mobile || !role || (role !== 'auditor' && role !== 'staff' && !aadhar)) {
+  if (!adminMobile || !companyId || !name || !mobile || !role || (role !== 'auditor' && role !== 'staff' && role !== 'staff_lead' && !aadhar)) {
     return res.status(400).json({ error: 'All fields are required' });
   }
   
@@ -530,7 +530,7 @@ app.post('/api/admin/onboard-user', async (req, res) => {
     }
     
     const firstName = name.split(' ')[0];
-    const rolePrefix = role === 'admin' ? 'Approve' : role === 'auditor' ? 'Audit' : role === 'staff' ? 'Staff' : 'Accounts';
+    const rolePrefix = role === 'admin' ? 'Approve' : role === 'auditor' ? 'Audit' : role === 'staff' ? 'Staff' : role === 'staff_lead' ? 'Lead' : 'Accounts';
     const username = `${rolePrefix}-${firstName}`;
     const formattedMobile = formatMobile(mobile);
     
@@ -602,7 +602,7 @@ app.post('/api/users/:userId/verify-mobile', async (req, res) => {
 app.put('/api/users/:userId', async (req, res) => {
   const { name, mobile, aadhar, role, requesterId } = req.body;
   
-  if (!name || !mobile || !role || (role !== 'auditor' && role !== 'staff' && !aadhar)) {
+  if (!name || !mobile || !role || (role !== 'auditor' && role !== 'staff' && role !== 'staff_lead' && !aadhar)) {
     return res.status(400).json({ error: 'All fields are required' });
   }
   
@@ -613,7 +613,7 @@ app.put('/api/users/:userId', async (req, res) => {
     }
     
     const firstName = name.split(' ')[0];
-    const rolePrefix = role === 'admin' ? 'Approve' : role === 'auditor' ? 'Audit' : role === 'staff' ? 'Staff' : 'Accounts';
+    const rolePrefix = role === 'admin' ? 'Approve' : role === 'auditor' ? 'Audit' : role === 'staff' ? 'Staff' : role === 'staff_lead' ? 'Lead' : 'Accounts';
     const username = `${rolePrefix}-${firstName}`;
     const formattedMobile = formatMobile(mobile);
     
