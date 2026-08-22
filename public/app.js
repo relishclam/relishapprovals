@@ -4936,7 +4936,7 @@ const UsersManagement = () => {
   };
   
   const handleOnboardSubmit = async () => {
-    if (!newUser.name?.trim() || !newUser.mobile?.trim() || (newUser.role !== 'auditor' && newUser.role !== 'staff' && !newUser.aadhar?.trim())) {
+    if (!newUser.name?.trim() || !newUser.mobile?.trim() || (newUser.role !== 'auditor' && newUser.role !== 'staff' && newUser.role !== 'staff_lead' && !newUser.aadhar?.trim())) {
       addToast('All fields are required', 'error');
       console.log('Validation failed:', newUser);
       return;
@@ -5162,7 +5162,7 @@ const UsersManagement = () => {
   };
   
   const handleUpdateUser = async () => {
-    if (!editUser.name?.trim() || !editUser.mobile?.trim() || (editUser.role !== 'auditor' && editUser.role !== 'staff' && !editUser.aadhar?.trim())) {
+    if (!editUser.name?.trim() || !editUser.mobile?.trim() || (editUser.role !== 'auditor' && editUser.role !== 'staff' && editUser.role !== 'staff_lead' && !editUser.aadhar?.trim())) {
       addToast('All fields are required', 'error');
       return;
     }
@@ -5395,9 +5395,10 @@ const UsersManagement = () => {
                       <option value="accounts">👤 Accounts</option>
                       <option value="admin">🛡️ Approver</option>
                       <option value="auditor">🔍 Auditor</option>
+                      <option value="staff_lead">👷 Staff Lead</option>
                     </select>
                     <small style={{color: '#666', fontSize: '0.85rem', marginTop: '4px', display: 'block'}}>
-                      Username will be: <code style={{background: '#f0f0f0', padding: '2px 6px', borderRadius: '4px'}}>{newUser.role === 'admin' ? 'Approve' : newUser.role === 'auditor' ? 'Audit' : 'Accounts'}-{newUser.name.split(' ')[0] || 'FirstName'}</code>
+                      Username will be: <code style={{background: '#f0f0f0', padding: '2px 6px', borderRadius: '4px'}}>{newUser.role === 'admin' ? 'Approve' : newUser.role === 'auditor' ? 'Audit' : newUser.role === 'staff_lead' ? 'Lead' : 'Accounts'}-{newUser.name.split(' ')[0] || 'FirstName'}</code>
                     </small>
                   </div>
                   
@@ -5560,6 +5561,7 @@ const UsersManagement = () => {
                   <option value="accounts">👤 Accounts</option>
                   <option value="admin">🛡️ Approver</option>
                   <option value="auditor">🔍 Auditor</option>
+                  <option value="staff_lead">👷 Staff Lead</option>
                 </select>
               </div>
               
@@ -11267,6 +11269,699 @@ const ReconcileReceipts = () => {
   );
 };
 
+// ─── Construction Labour Attendance ──────────────────────────────────────────
+
+const CONSTRUCTION_ATTENDANCE_OPTIONS = [
+  { label: 'Full Day',      value: 1.00, color: '#10b981' },
+  { label: 'Three-Quarter', value: 0.75, color: '#3b82f6' },
+  { label: 'Half Day',      value: 0.50, color: '#f59e0b' },
+  { label: 'Quarter Day',   value: 0.25, color: '#f87171' },
+];
+const CONSTRUCTION_CATEGORY_ICONS = {
+  'Civil': '🏗️', 'Electrical': '⚡', 'Plumbing': '🔧',
+  'Mechanical': '⚙️', 'IT / Security': '🔒',
+};
+const TODAY_DATE = new Date().toISOString().split('T')[0];
+
+const constructionFetch = async (path, opts = {}) => {
+  const r = await fetch(`/api/construction${path}`, {
+    headers: { 'Content-Type': 'application/json' },
+    ...opts,
+  });
+  const d = await r.json();
+  if (!r.ok) throw new Error(d.error || 'Request failed');
+  return d;
+};
+
+// Staff Lead — attendance marking screen
+const ConstructionAttendanceSiteLeadPage = () => {
+  const { user, addToast } = useApp();
+  const [categories, setCategories] = useState([]);
+  const [selectedCat, setSelectedCat] = useState(null);
+  const [supervisors, setSupervisors] = useState([]);
+  const [attendance, setAttendance] = useState({});
+  const [existing, setExisting] = useState({});
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
+
+  useEffect(() => {
+    constructionFetch('/categories').then(setCategories).catch(() => addToast('Failed to load categories', 'error'));
+  }, []);
+
+  const loadCategory = async (cat) => {
+    setSelectedCat(cat);
+    setLoading(true);
+    setAttendance({});
+    setSubmitted(false);
+    try {
+      const [sups, attData] = await Promise.all([
+        constructionFetch(`/categories/${cat.id}/supervisors`),
+        constructionFetch(`/attendance?category_id=${cat.id}&date=${TODAY_DATE}`),
+      ]);
+      setSupervisors(sups);
+      const existingMap = {}, attMap = {};
+      attData.forEach(r => { existingMap[r.supervisor_id] = r; attMap[r.supervisor_id] = r.attendance_value; });
+      setExisting(existingMap);
+      setAttendance(attMap);
+      if (attData.length > 0) setSubmitted(true);
+    } catch (e) {
+      addToast('Failed to load: ' + e.message, 'error');
+    }
+    setLoading(false);
+  };
+
+  const handleSubmit = async () => {
+    const entries = supervisors.filter(s => attendance[s.id] !== undefined);
+    if (!entries.length) { addToast('Mark at least one supervisor before saving.', 'error'); return; }
+    setSaving(true);
+    try {
+      const records = entries.map(s => ({
+        category_id: selectedCat.id,
+        supervisor_id: s.id,
+        attendance_value: attendance[s.id],
+      }));
+      await constructionFetch('/attendance', { method: 'POST', body: JSON.stringify({ records }) });
+      setSubmitted(true);
+      addToast(`Attendance saved for ${entries.length} supervisor(s).`);
+      loadCategory(selectedCat);
+    } catch (e) {
+      addToast('Error saving: ' + e.message, 'error');
+    }
+    setSaving(false);
+  };
+
+  const markedCount = supervisors.filter(s => attendance[s.id] !== undefined).length;
+
+  if (!selectedCat) {
+    return (
+      <div style={{ maxWidth: 480, margin: '0 auto', padding: '1.5rem 1rem' }}>
+        <div style={{ marginBottom: '1.5rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4 }}>
+            <div style={{ width: 36, height: 36, background: '#4f46e5', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 700, fontSize: 14 }}>B</div>
+            <div>
+              <div style={{ fontWeight: 600, color: '#1e293b' }}>Balachandran · Staff Lead</div>
+              <div style={{ fontSize: 12, color: '#94a3b8' }}>{new Date(TODAY_DATE).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</div>
+            </div>
+          </div>
+        </div>
+        <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 12 }}>Select Category</div>
+        {categories.map(cat => (
+          <div key={cat.id} onClick={() => loadCategory(cat)} style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 12, padding: '1rem 1.25rem', display: 'flex', alignItems: 'center', gap: 16, marginBottom: 10, cursor: 'pointer' }}>
+            <span style={{ fontSize: 24 }}>{CONSTRUCTION_CATEGORY_ICONS[cat.name] || '📋'}</span>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 600, color: '#1e293b' }}>{cat.name}</div>
+              {cat.description && <div style={{ fontSize: 12, color: '#94a3b8' }}>{cat.description}</div>}
+            </div>
+            <span style={{ color: '#cbd5e1' }}>›</span>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ maxWidth: 480, margin: '0 auto', padding: '1.5rem 1rem' }}>
+      <button onClick={() => setSelectedCat(null)} style={{ background: 'none', border: 'none', color: '#4f46e5', cursor: 'pointer', fontSize: 14, marginBottom: 16, display: 'flex', alignItems: 'center', gap: 4 }}>← Categories</button>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
+        <span style={{ fontSize: 24 }}>{CONSTRUCTION_CATEGORY_ICONS[selectedCat.name] || '📋'}</span>
+        <span style={{ fontWeight: 700, fontSize: 18, color: '#1e293b' }}>{selectedCat.name}</span>
+        {submitted && <span style={{ background: '#d1fae5', color: '#065f46', fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 20 }}>Saved</span>}
+      </div>
+      {loading ? <div style={{ textAlign: 'center', padding: '3rem 0', color: '#64748b' }}>Loading…</div> : (
+        <>
+          {supervisors.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '3rem 0', color: '#94a3b8' }}>
+              <div style={{ fontSize: 32, marginBottom: 8 }}>👷</div>
+              <div>No supervisors assigned to this category yet.</div>
+              <div style={{ fontSize: 12, marginTop: 4 }}>Ask Accounts to add supervisors.</div>
+            </div>
+          ) : (
+            <div style={{ display: 'grid', gap: 12, marginBottom: 80 }}>
+              {supervisors.map(sup => {
+                const val = attendance[sup.id];
+                const isVouchered = existing[sup.id]?.voucher_id;
+                return (
+                  <div key={sup.id} style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 12, padding: '1rem', opacity: isVouchered ? 0.6 : 1 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                      <div>
+                        <div style={{ fontWeight: 600, color: '#1e293b' }}>{sup.name}</div>
+                        <div style={{ fontSize: 12, color: '#94a3b8' }}>{sup.mobile}</div>
+                      </div>
+                      {val !== undefined && <span style={{ background: '#eef2ff', color: '#4338ca', fontSize: 11, fontWeight: 700, padding: '3px 8px', borderRadius: 8 }}>{CONSTRUCTION_ATTENDANCE_OPTIONS.find(o => o.value === val)?.label}</span>}
+                    </div>
+                    {isVouchered ? (
+                      <div style={{ fontSize: 12, color: '#d97706', fontWeight: 500 }}>Already included in a payment voucher</div>
+                    ) : (
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                        {CONSTRUCTION_ATTENDANCE_OPTIONS.map(opt => (
+                          <button key={opt.value} onClick={() => setAttendance(p => { setSubmitted(false); return { ...p, [sup.id]: opt.value }; })}
+                            style={{ padding: '8px 12px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 500, background: val === opt.value ? opt.color : '#f1f5f9', color: val === opt.value ? '#fff' : '#475569', transition: 'all 0.15s' }}>
+                            {opt.label}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {supervisors.length > 0 && (
+            <div style={{ position: 'sticky', bottom: 16 }}>
+              <button onClick={handleSubmit} disabled={saving || markedCount === 0}
+                style={{ width: '100%', background: '#4f46e5', color: '#fff', border: 'none', borderRadius: 12, padding: '14px', fontSize: 15, fontWeight: 600, cursor: markedCount === 0 ? 'not-allowed' : 'pointer', opacity: markedCount === 0 ? 0.4 : 1, boxShadow: '0 4px 12px rgba(79,70,229,0.3)' }}>
+                {saving ? 'Saving…' : `Save Attendance · ${markedCount} of ${supervisors.length}`}
+              </button>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+};
+
+// Attendance log — Accounts/Admin read-only view
+const ConstructionAttendanceLogPage = () => {
+  const { addToast } = useApp();
+  const [records, setRecords] = useState([]);
+  const [categories, setCategories] = useState([]);
+  const [filterCat, setFilterCat] = useState('all');
+  const [filterDate, setFilterDate] = useState(TODAY_DATE);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    constructionFetch('/categories').then(setCategories).catch(() => {});
+  }, []);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams();
+      if (filterDate) params.set('date', filterDate);
+      if (filterCat !== 'all') params.set('category_id', filterCat);
+      const data = await constructionFetch(`/attendance?${params}`);
+      setRecords(data);
+    } catch (e) {
+      addToast('Failed to load records', 'error');
+    }
+    setLoading(false);
+  }, [filterCat, filterDate]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const attLabel = v => CONSTRUCTION_ATTENDANCE_OPTIONS.find(o => o.value === v)?.label || v;
+
+  return (
+    <div>
+      <div style={{ display: 'flex', gap: 12, marginBottom: 20, flexWrap: 'wrap' }}>
+        <input type="date" value={filterDate} onChange={e => setFilterDate(e.target.value)} className="form-input" style={{ width: 'auto' }} />
+        <select value={filterCat} onChange={e => setFilterCat(e.target.value)} className="form-input" style={{ width: 'auto' }}>
+          <option value="all">All Categories</option>
+          {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </select>
+        <button onClick={load} className="btn btn-primary">Refresh</button>
+      </div>
+      {loading ? <div style={{ textAlign: 'center', padding: '3rem', color: '#64748b' }}>Loading…</div> : (
+        <div className="card" style={{ overflowX: 'auto' }}>
+          {records.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '3rem', color: '#94a3b8', fontSize: 14 }}>No attendance records for this filter.</div>
+          ) : (
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
+              <thead>
+                <tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
+                  {['Date', 'Category', 'Supervisor', 'Attendance', 'Status', 'Marked By'].map(h => (
+                    <th key={h} style={{ textAlign: 'left', padding: '10px 14px', fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.5 }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {records.map(r => (
+                  <tr key={r.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                    <td style={{ padding: '10px 14px', color: '#475569', whiteSpace: 'nowrap' }}>{new Date(r.attendance_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</td>
+                    <td style={{ padding: '10px 14px' }}>{CONSTRUCTION_CATEGORY_ICONS[r.category_name] || '📋'} {r.category_name}</td>
+                    <td style={{ padding: '10px 14px' }}>
+                      <div style={{ fontWeight: 500, color: '#1e293b' }}>{r.supervisor_name}</div>
+                      <div style={{ fontSize: 11, color: '#94a3b8' }}>{r.supervisor_mobile}</div>
+                    </td>
+                    <td style={{ padding: '10px 14px' }}><span style={{ background: '#f1f5f9', color: '#475569', padding: '2px 8px', borderRadius: 20, fontSize: 12, fontWeight: 600 }}>{attLabel(r.attendance_value)}</span></td>
+                    <td style={{ padding: '10px 14px' }}>{r.voucher_id ? <span style={{ background: '#dbeafe', color: '#1d4ed8', padding: '2px 8px', borderRadius: 20, fontSize: 12, fontWeight: 600 }}>Vouchered</span> : <span style={{ background: '#fef3c7', color: '#92400e', padding: '2px 8px', borderRadius: 20, fontSize: 12, fontWeight: 600 }}>Unpaid</span>}</td>
+                    <td style={{ padding: '10px 14px', fontSize: 12, color: '#64748b' }}>{r.marked_by_name || '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// Dues & Voucher creation — Accounts
+const ConstructionDuesPage = () => {
+  const { user, addToast } = useApp();
+  const [categories, setCategories] = useState([]);
+  const [selectedCat, setSelectedCat] = useState('');
+  const [dues, setDues] = useState([]);
+  const [selected, setSelected] = useState({});
+  const [loading, setLoading] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [vouchers, setVouchers] = useState([]);
+  const [showVouchers, setShowVouchers] = useState(false);
+
+  useEffect(() => {
+    constructionFetch('/categories').then(setCategories).catch(() => {});
+  }, []);
+
+  const loadDues = useCallback(async () => {
+    if (!selectedCat) return;
+    setLoading(true);
+    setSelected({});
+    try {
+      const data = await constructionFetch(`/dues?category_id=${selectedCat}`);
+      setDues(data);
+    } catch (e) {
+      addToast('Failed to load dues', 'error');
+    }
+    setLoading(false);
+  }, [selectedCat]);
+
+  useEffect(() => { loadDues(); }, [loadDues]);
+
+  const loadVouchers = async () => {
+    if (!selectedCat) return;
+    try {
+      const data = await constructionFetch(`/vouchers?category_id=${selectedCat}`);
+      setVouchers(data);
+    } catch {}
+  };
+
+  useEffect(() => { if (selectedCat) loadVouchers(); }, [selectedCat]);
+
+  const toggle = id => setSelected(p => ({ ...p, [id]: !p[id] }));
+  const toggleAll = () => {
+    const allSel = dues.every(d => selected[d.supervisor_id]);
+    const next = {}; dues.forEach(d => { next[d.supervisor_id] = !allSel; }); setSelected(next);
+  };
+
+  const selectedDues = dues.filter(d => selected[d.supervisor_id]);
+  const totalSelected = selectedDues.reduce((s, d) => s + (d.total_dues || 0), 0);
+
+  const createVoucher = async () => {
+    if (!selectedDues.length) { addToast('Select at least one supervisor', 'error'); return; }
+    const missing = selectedDues.filter(d => !d.approved_rate);
+    if (missing.length) { addToast(`No approved rate for: ${missing.map(d => d.supervisor_name).join(', ')}`, 'error'); return; }
+    setCreating(true);
+    try {
+      const result = await constructionFetch('/vouchers', { method: 'POST', body: JSON.stringify({ category_id: selectedCat, supervisor_ids: selectedDues.map(d => d.supervisor_id) }) });
+      addToast(`Voucher ${result.voucher_number} created — ${formatRupees(result.total_amount)}`);
+      loadDues();
+      loadVouchers();
+      setShowVouchers(true);
+    } catch (e) {
+      addToast('Failed: ' + e.message, 'error');
+    }
+    setCreating(false);
+  };
+
+  const statusColors = { draft: '#f59e0b', submitted: '#3b82f6', approved: '#10b981', paid: '#10b981', rejected: '#ef4444' };
+
+  return (
+    <div>
+      <div style={{ marginBottom: 20 }}>
+        <select value={selectedCat} onChange={e => setSelectedCat(e.target.value)} className="form-input" style={{ width: 'auto' }}>
+          <option value="">— Select Category —</option>
+          {categories.map(c => <option key={c.id} value={c.id}>{CONSTRUCTION_CATEGORY_ICONS[c.name]} {c.name}</option>)}
+        </select>
+      </div>
+
+      {!selectedCat ? (
+        <div style={{ textAlign: 'center', padding: '4rem 0', color: '#94a3b8', fontSize: 14 }}>Select a category to view unpaid dues.</div>
+      ) : loading ? <div style={{ textAlign: 'center', padding: '3rem', color: '#64748b' }}>Loading…</div> : (
+        <>
+          {dues.length === 0 ? (
+            <div className="card" style={{ textAlign: 'center', padding: '3rem', color: '#94a3b8', fontSize: 14 }}>No unpaid dues for this category.</div>
+          ) : (
+            <div className="card" style={{ marginBottom: 16, overflow: 'hidden' }}>
+              <div style={{ padding: '10px 16px', borderBottom: '1px solid #f1f5f9', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 14, fontWeight: 500, color: '#334155' }}>
+                  <input type="checkbox" onChange={toggleAll} checked={dues.length > 0 && dues.every(d => selected[d.supervisor_id])} />
+                  Select All · {dues.length} supervisors
+                </label>
+                <span style={{ fontSize: 12, color: '#94a3b8' }}>Unpaid up to today</span>
+              </div>
+              {dues.map(d => (
+                <div key={d.supervisor_id} onClick={() => toggle(d.supervisor_id)}
+                  style={{ padding: '14px 16px', borderBottom: '1px solid #f1f5f9', display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer', background: selected[d.supervisor_id] ? '#f8fafc' : '#fff' }}>
+                  <input type="checkbox" checked={!!selected[d.supervisor_id]} onChange={() => toggle(d.supervisor_id)} onClick={e => e.stopPropagation()} />
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: 600, color: '#1e293b' }}>{d.supervisor_name}</div>
+                    <div style={{ fontSize: 12, color: '#94a3b8' }}>{d.mobile} · UPI: {d.upi_id}</div>
+                  </div>
+                  <div style={{ textAlign: 'right', fontSize: 13 }}>
+                    <div style={{ fontWeight: 600, color: '#1e293b' }}>{formatRupees(d.total_dues)}</div>
+                    <div style={{ fontSize: 12, color: '#94a3b8' }}>{d.total_days} days × {d.approved_rate ? formatRupees(d.approved_rate) : <span style={{ color: '#ef4444' }}>No rate!</span>}</div>
+                    <div style={{ fontSize: 11, color: '#94a3b8' }}>{d.earliest_date} – {d.latest_date}</div>
+                  </div>
+                </div>
+              ))}
+              {selectedDues.length > 0 && (
+                <div style={{ background: '#eef2ff', padding: '14px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div>
+                    <div style={{ fontWeight: 600, color: '#3730a3', fontSize: 14 }}>{selectedDues.length} supervisor(s) selected</div>
+                    <div style={{ fontSize: 12, color: '#4f46e5' }}>Total: {formatRupees(totalSelected)}</div>
+                  </div>
+                  <button onClick={createVoucher} disabled={creating} className="btn btn-primary" style={{ opacity: creating ? 0.5 : 1 }}>
+                    {creating ? 'Creating…' : 'Create Voucher →'}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          <div>
+            <button onClick={() => { setShowVouchers(!showVouchers); if (!showVouchers) loadVouchers(); }} style={{ background: 'none', border: 'none', color: '#4f46e5', cursor: 'pointer', fontSize: 14, fontWeight: 500, marginBottom: 10, display: 'flex', alignItems: 'center', gap: 4 }}>
+              {showVouchers ? '▾' : '▸'} Past Vouchers for this Category
+            </button>
+            {showVouchers && (
+              <div style={{ display: 'grid', gap: 10 }}>
+                {vouchers.length === 0 && <div style={{ fontSize: 14, color: '#94a3b8' }}>No vouchers yet.</div>}
+                {vouchers.map(v => (
+                  <div key={v.id} className="card" style={{ padding: '1rem' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+                      <div>
+                        <div style={{ fontWeight: 600, color: '#1e293b' }}>{v.voucher_number}</div>
+                        <div style={{ fontSize: 12, color: '#94a3b8' }}>{v.period_from} – {v.period_to}</div>
+                      </div>
+                      <div style={{ textAlign: 'right' }}>
+                        <div style={{ fontWeight: 700, color: '#1e293b' }}>{formatRupees(v.total_amount)}</div>
+                        <span style={{ background: statusColors[v.status] || '#e2e8f0', color: '#fff', fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 20 }}>{(v.status || '').toUpperCase()}</span>
+                      </div>
+                    </div>
+                    {(v.lines || []).map(l => (
+                      <div key={l.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#64748b', padding: '4px 0', borderTop: '1px solid #f1f5f9' }}>
+                        <span>{l.supervisor_name}</span>
+                        <span>{l.days_count} days × {formatRupees(l.rate_applied)} = {formatRupees(l.amount)}</span>
+                      </div>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+};
+
+// Setup — Accounts manages supervisors & assignments
+const ConstructionSetupPage = () => {
+  const { user, addToast } = useApp();
+  const [supervisors, setSupervisors] = useState([]);
+  const [categories, setCategories] = useState([]);
+  const [catSups, setCatSups] = useState([]);
+  const [showAddSup, setShowAddSup] = useState(false);
+  const [showAssign, setShowAssign] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [newSup, setNewSup] = useState({ name: '', mobile: '', upi_id: '', notes: '' });
+  const [assignment, setAssignment] = useState({ supervisor_id: '', category_id: '' });
+
+  const load = useCallback(async () => {
+    try {
+      const [sups, cats, cs] = await Promise.all([
+        constructionFetch('/supervisors'),
+        constructionFetch('/categories'),
+        constructionFetch('/category-supervisors'),
+      ]);
+      setSupervisors(sups);
+      setCategories(cats);
+      setCatSups(cs);
+    } catch {}
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const addSupervisor = async () => {
+    if (!newSup.name || !newSup.mobile || !newSup.upi_id) { addToast('Name, Mobile and UPI ID are required', 'error'); return; }
+    if (!/^[6-9][0-9]{9}$/.test(newSup.mobile)) { addToast('Enter a valid 10-digit Indian mobile number', 'error'); return; }
+    setSaving(true);
+    try {
+      await constructionFetch('/supervisors', { method: 'POST', body: JSON.stringify(newSup) });
+      addToast('Supervisor added.');
+      setNewSup({ name: '', mobile: '', upi_id: '', notes: '' });
+      setShowAddSup(false);
+      load();
+    } catch (e) { addToast('Error: ' + e.message, 'error'); }
+    setSaving(false);
+  };
+
+  const assignSupervisor = async () => {
+    if (!assignment.supervisor_id || !assignment.category_id) { addToast('Select both supervisor and category', 'error'); return; }
+    setSaving(true);
+    try {
+      await constructionFetch('/assign', { method: 'POST', body: JSON.stringify(assignment) });
+      addToast('Supervisor assigned to category.');
+      setAssignment({ supervisor_id: '', category_id: '' });
+      setShowAssign(false);
+      load();
+    } catch (e) { addToast(e.message.includes('duplicate') || e.message.includes('unique') ? 'Already assigned to this category.' : e.message, 'error'); }
+    setSaving(false);
+  };
+
+  const inputStyle = { width: '100%', padding: '8px 12px', border: '1px solid #e2e8f0', borderRadius: 8, fontSize: 14, boxSizing: 'border-box' };
+
+  return (
+    <div>
+      <div style={{ display: 'flex', gap: 10, marginBottom: 20 }}>
+        <button onClick={() => { setShowAddSup(!showAddSup); setShowAssign(false); }} className="btn btn-primary">+ Add Supervisor</button>
+        <button onClick={() => { setShowAssign(!showAssign); setShowAddSup(false); }} className="btn btn-secondary">Assign to Category</button>
+      </div>
+
+      {showAddSup && (
+        <div className="card" style={{ padding: '1.25rem', marginBottom: 16 }}>
+          <div style={{ fontWeight: 600, marginBottom: 16, color: '#1e293b' }}>New Supervisor</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            {[{ key: 'name', label: 'Full Name *', placeholder: 'e.g. Rajan K' }, { key: 'mobile', label: 'Mobile *', placeholder: '10-digit mobile' }, { key: 'upi_id', label: 'UPI ID *', placeholder: 'e.g. rajan@upi' }].map(f => (
+              <div key={f.key}>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 500, color: '#64748b', marginBottom: 4 }}>{f.label}</label>
+                <input type="text" placeholder={f.placeholder} value={newSup[f.key]} onChange={e => setNewSup(p => ({ ...p, [f.key]: e.target.value }))} style={inputStyle} />
+              </div>
+            ))}
+            <div>
+              <label style={{ display: 'block', fontSize: 12, fontWeight: 500, color: '#64748b', marginBottom: 4 }}>Notes</label>
+              <input type="text" placeholder="Optional" value={newSup.notes} onChange={e => setNewSup(p => ({ ...p, notes: e.target.value }))} style={inputStyle} />
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 10, marginTop: 14 }}>
+            <button onClick={addSupervisor} disabled={saving} className="btn btn-primary">{saving ? 'Saving…' : 'Save Supervisor'}</button>
+            <button onClick={() => setShowAddSup(false)} className="btn btn-secondary">Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {showAssign && (
+        <div className="card" style={{ padding: '1.25rem', marginBottom: 16 }}>
+          <div style={{ fontWeight: 600, marginBottom: 16, color: '#1e293b' }}>Assign Supervisor to Category</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div>
+              <label style={{ display: 'block', fontSize: 12, fontWeight: 500, color: '#64748b', marginBottom: 4 }}>Supervisor *</label>
+              <select value={assignment.supervisor_id} onChange={e => setAssignment(p => ({ ...p, supervisor_id: e.target.value }))} style={inputStyle}>
+                <option value="">— Select —</option>
+                {supervisors.filter(s => s.is_active).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={{ display: 'block', fontSize: 12, fontWeight: 500, color: '#64748b', marginBottom: 4 }}>Category *</label>
+              <select value={assignment.category_id} onChange={e => setAssignment(p => ({ ...p, category_id: e.target.value }))} style={inputStyle}>
+                <option value="">— Select —</option>
+                {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </div>
+          </div>
+          <div style={{ fontSize: 12, color: '#d97706', marginTop: 10 }}>⚠ Rate must be proposed and approved separately via Rate Approvals before payments can be made.</div>
+          <div style={{ display: 'flex', gap: 10, marginTop: 14 }}>
+            <button onClick={assignSupervisor} disabled={saving} className="btn btn-secondary">{saving ? 'Saving…' : 'Assign'}</button>
+            <button onClick={() => setShowAssign(false)} className="btn btn-secondary">Cancel</button>
+          </div>
+        </div>
+      )}
+
+      <div className="card" style={{ overflow: 'hidden' }}>
+        <div style={{ padding: '10px 16px', borderBottom: '1px solid #f1f5f9', fontWeight: 600, fontSize: 14, color: '#475569' }}>All Supervisors ({supervisors.length})</div>
+        {supervisors.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '2.5rem', color: '#94a3b8', fontSize: 14 }}>No supervisors added yet.</div>
+        ) : (
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
+            <thead>
+              <tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
+                {['Name', 'Mobile', 'UPI ID', 'Status'].map(h => (
+                  <th key={h} style={{ textAlign: 'left', padding: '9px 14px', fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {supervisors.map(s => (
+                <tr key={s.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                  <td style={{ padding: '10px 14px', fontWeight: 500, color: '#1e293b' }}>{s.name}</td>
+                  <td style={{ padding: '10px 14px', color: '#475569' }}>{s.mobile}</td>
+                  <td style={{ padding: '10px 14px', color: '#475569', fontFamily: 'monospace', fontSize: 12 }}>{s.upi_id}</td>
+                  <td style={{ padding: '10px 14px' }}><span style={{ background: s.is_active ? '#d1fae5' : '#f1f5f9', color: s.is_active ? '#065f46' : '#64748b', padding: '2px 8px', borderRadius: 20, fontSize: 12, fontWeight: 600 }}>{s.is_active ? 'Active' : 'Inactive'}</span></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// Rate Approvals — Admin
+const ConstructionRateApprovalsPage = () => {
+  const { user, addToast } = useApp();
+  const [proposals, setProposals] = useState([]);
+  const [catSups, setCatSups] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [processing, setProcessing] = useState(null);
+  const [showPropose, setShowPropose] = useState(false);
+  const [proposal, setProposal] = useState({ category_supervisor_id: '', proposed_rate: '' });
+  const [saving, setSaving] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try { setProposals(await constructionFetch('/rates/proposals')); } catch {}
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    if (showPropose) constructionFetch('/category-supervisors').then(setCatSups).catch(() => {});
+  }, [showPropose]);
+
+  const decide = async (p, action) => {
+    setProcessing(p.id);
+    try {
+      await constructionFetch(`/rates/${p.id}/decide`, { method: 'POST', body: JSON.stringify({ action }) });
+      addToast(action === 'approve' ? 'Rate approved and applied.' : 'Rate proposal rejected.');
+      load();
+    } catch (e) { addToast('Error: ' + e.message, 'error'); }
+    setProcessing(null);
+  };
+
+  const submitProposal = async () => {
+    if (!proposal.category_supervisor_id || !proposal.proposed_rate) { addToast('Fill all fields', 'error'); return; }
+    setSaving(true);
+    try {
+      await constructionFetch('/rates/propose', { method: 'POST', body: JSON.stringify({ ...proposal, proposed_rate: parseFloat(proposal.proposed_rate) }) });
+      addToast('Rate proposal submitted for admin approval.');
+      setProposal({ category_supervisor_id: '', proposed_rate: '' });
+      setShowPropose(false);
+      load();
+    } catch (e) { addToast('Error: ' + e.message, 'error'); }
+    setSaving(false);
+  };
+
+  const pending = proposals.filter(p => p.status === 'pending');
+  const reviewed = proposals.filter(p => p.status !== 'pending');
+
+  const inputStyle = { width: '100%', padding: '8px 12px', border: '1px solid #e2e8f0', borderRadius: 8, fontSize: 14, boxSizing: 'border-box' };
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
+        <div>
+          <div style={{ fontWeight: 600, fontSize: 16, color: '#1e293b' }}>Rate Approvals</div>
+          {pending.length > 0 && <div style={{ fontSize: 12, color: '#d97706', marginTop: 2 }}>{pending.length} pending approval{pending.length > 1 ? 's' : ''}</div>}
+        </div>
+        <button onClick={() => setShowPropose(!showPropose)} className="btn btn-primary">+ Propose Rate</button>
+      </div>
+
+      {showPropose && (
+        <div className="card" style={{ padding: '1.25rem', marginBottom: 16 }}>
+          <div style={{ fontWeight: 600, marginBottom: 16, color: '#1e293b' }}>Propose Daily Rate</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div>
+              <label style={{ display: 'block', fontSize: 12, fontWeight: 500, color: '#64748b', marginBottom: 4 }}>Supervisor · Category *</label>
+              <select value={proposal.category_supervisor_id} onChange={e => setProposal(p => ({ ...p, category_supervisor_id: e.target.value }))} style={inputStyle}>
+                <option value="">— Select —</option>
+                {catSups.map(cs => (
+                  <option key={cs.id} value={cs.id}>{cs.construction_supervisors?.name || cs.supervisor_name} · {cs.construction_categories?.name || cs.category_name}{cs.approved_rate ? ` (current: ₹${cs.approved_rate})` : ' (no rate yet)'}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label style={{ display: 'block', fontSize: 12, fontWeight: 500, color: '#64748b', marginBottom: 4 }}>Proposed Daily Rate (₹) *</label>
+              <input type="number" min="0" step="0.01" placeholder="e.g. 750" value={proposal.proposed_rate} onChange={e => setProposal(p => ({ ...p, proposed_rate: e.target.value }))} style={inputStyle} />
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 10, marginTop: 14 }}>
+            <button onClick={submitProposal} disabled={saving} className="btn btn-primary">{saving ? 'Submitting…' : 'Submit for Approval'}</button>
+            <button onClick={() => setShowPropose(false)} className="btn btn-secondary">Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {loading ? <div style={{ textAlign: 'center', padding: '3rem', color: '#64748b' }}>Loading…</div> : (
+        <>
+          {pending.length > 0 && (
+            <div style={{ marginBottom: 20 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: '#d97706', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 10 }}>Pending Approval</div>
+              {pending.map(p => (
+                <div key={p.id} style={{ background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 12, padding: '1rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                  <div>
+                    <div style={{ fontWeight: 600, color: '#1e293b' }}>{p.category_supervisor?.construction_supervisors?.name} · {p.category_supervisor?.construction_categories?.name}</div>
+                    <div style={{ fontSize: 13, color: '#475569', marginTop: 2 }}>Proposed: <strong>₹{p.proposed_rate}/day</strong>{p.category_supervisor?.approved_rate && <span style={{ color: '#94a3b8' }}> (current: ₹{p.category_supervisor.approved_rate})</span>}</div>
+                    <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>{p.proposed_at ? new Date(p.proposed_at).toLocaleDateString('en-IN') : ''}</div>
+                  </div>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button onClick={() => decide(p, 'approve')} disabled={processing === p.id} className="btn btn-primary" style={{ fontSize: 13 }}>{processing === p.id ? '…' : 'Approve'}</button>
+                    <button onClick={() => decide(p, 'reject')} disabled={processing === p.id} className="btn btn-secondary" style={{ fontSize: 13, color: '#dc2626' }}>{processing === p.id ? '…' : 'Reject'}</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {reviewed.length > 0 && (
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 10 }}>History</div>
+              <div className="card" style={{ overflow: 'hidden' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
+                  <thead>
+                    <tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
+                      {['Supervisor · Category', 'Rate', 'Status', 'Date'].map(h => (
+                        <th key={h} style={{ textAlign: 'left', padding: '9px 14px', fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {reviewed.map(p => (
+                      <tr key={p.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                        <td style={{ padding: '10px 14px' }}>
+                          <div style={{ fontWeight: 500, color: '#1e293b' }}>{p.category_supervisor?.construction_supervisors?.name}</div>
+                          <div style={{ fontSize: 11, color: '#94a3b8' }}>{p.category_supervisor?.construction_categories?.name}</div>
+                        </td>
+                        <td style={{ padding: '10px 14px', fontWeight: 600, color: '#334155' }}>₹{p.proposed_rate}/day</td>
+                        <td style={{ padding: '10px 14px' }}><span style={{ background: p.status === 'approved' ? '#d1fae5' : '#fee2e2', color: p.status === 'approved' ? '#065f46' : '#991b1b', padding: '2px 8px', borderRadius: 20, fontSize: 11, fontWeight: 700 }}>{(p.status || '').toUpperCase()}</span></td>
+                        <td style={{ padding: '10px 14px', fontSize: 12, color: '#94a3b8' }}>{p.reviewed_at ? new Date(p.reviewed_at).toLocaleDateString('en-IN') : '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {proposals.length === 0 && <div style={{ textAlign: 'center', padding: '3rem', color: '#94a3b8', fontSize: 14 }}>No rate proposals yet.</div>}
+        </>
+      )}
+    </div>
+  );
+};
+
 // Main App
 const App = () => {
   const [user, setUser] = useState(() => {
@@ -11632,7 +12327,7 @@ const App = () => {
       // We still set the user so we can show a meaningful message below
     }
     try { localStorage.setItem('relish_session', JSON.stringify(userData)); } catch {}
-    const defaultPage = userData.role === 'auditor' ? 'completed' : 'dashboard';
+    const defaultPage = userData.role === 'auditor' ? 'completed' : userData.role === 'staff_lead' ? 'construction-attendance' : 'dashboard';
     try { localStorage.setItem('relish_page', defaultPage); } catch {}
     // Clean up legacy keys
     try { localStorage.removeItem('relish_biometric_id'); } catch {}
@@ -11943,7 +12638,8 @@ const App = () => {
 
   const renderPage = () => {
     if (user.role === 'auditor') return <VoucherList filter="completed" />;
-    switch(currentPage) { case 'dashboard': return <Dashboard />; case 'create': return (user.role === 'accounts' || user.isSuperAdmin) ? <CreateVoucher /> : <Dashboard />; case 'drafts': return (user.role === 'accounts' || user.isSuperAdmin) ? <VoucherList filter="draft" /> : <Dashboard />; case 'pending': return <VoucherList filter="pending" />; case 'approved': return <VoucherList filter="approved" />; case 'completed': return <VoucherList filter="completed" />; case 'awaiting_payment': return <VoucherList filter="awaiting_payment" />; case 'paid': return <VoucherList filter="paid" />; case 'all': return <VoucherList filter="all" />; case 'users': return user.isSuperAdmin ? <UsersManagement /> : <Dashboard />; case 'payees': return (user.role === 'accounts' || user.isSuperAdmin) ? <PayeesManagement /> : <Dashboard />; case 'accounts': return (user.role === 'accounts' || user.isSuperAdmin) ? <AccountsManagement /> : <Dashboard />; case 'pay-from-accounts': return (user.role === 'accounts' || user.isSuperAdmin) ? <PaymentAccountsManagement /> : <Dashboard />; case 'suspense': return <SuspenseVoucherList onViewDetail={(id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); }} />; case 'create-suspense': return (user.role === 'accounts' || user.isSuperAdmin) ? <SuspenseVoucherForm onCreated={() => { setCurrentPage('suspense'); }} onViewDetail={(id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); }} /> : <Dashboard />; case 'suspense-detail': return suspenseDetailId ? <SuspenseVoucherDetail suspenseId={suspenseDetailId} onBack={() => setCurrentPage('suspense')} /> : <SuspenseVoucherList onViewDetail={(id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); }} />; case 'reconcile': return (user.role === 'accounts' || user.isSuperAdmin) ? <ReconcileReceipts /> : <Dashboard />; case 'unassigned-receipts': return (user.role === 'accounts' || user.isSuperAdmin) ? <UnassignedReceiptsPage /> : <Dashboard />; default: return <Dashboard />; } };
+    if (user.role === 'staff_lead') return <ConstructionAttendanceSiteLeadPage />;
+    switch(currentPage) { case 'dashboard': return <Dashboard />; case 'create': return (user.role === 'accounts' || user.isSuperAdmin) ? <CreateVoucher /> : <Dashboard />; case 'drafts': return (user.role === 'accounts' || user.isSuperAdmin) ? <VoucherList filter="draft" /> : <Dashboard />; case 'pending': return <VoucherList filter="pending" />; case 'approved': return <VoucherList filter="approved" />; case 'completed': return <VoucherList filter="completed" />; case 'awaiting_payment': return <VoucherList filter="awaiting_payment" />; case 'paid': return <VoucherList filter="paid" />; case 'all': return <VoucherList filter="all" />; case 'users': return user.isSuperAdmin ? <UsersManagement /> : <Dashboard />; case 'payees': return (user.role === 'accounts' || user.isSuperAdmin) ? <PayeesManagement /> : <Dashboard />; case 'accounts': return (user.role === 'accounts' || user.isSuperAdmin) ? <AccountsManagement /> : <Dashboard />; case 'pay-from-accounts': return (user.role === 'accounts' || user.isSuperAdmin) ? <PaymentAccountsManagement /> : <Dashboard />; case 'suspense': return <SuspenseVoucherList onViewDetail={(id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); }} />; case 'create-suspense': return (user.role === 'accounts' || user.isSuperAdmin) ? <SuspenseVoucherForm onCreated={() => { setCurrentPage('suspense'); }} onViewDetail={(id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); }} /> : <Dashboard />; case 'suspense-detail': return suspenseDetailId ? <SuspenseVoucherDetail suspenseId={suspenseDetailId} onBack={() => setCurrentPage('suspense')} /> : <SuspenseVoucherList onViewDetail={(id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); }} />; case 'reconcile': return (user.role === 'accounts' || user.isSuperAdmin) ? <ReconcileReceipts /> : <Dashboard />; case 'unassigned-receipts': return (user.role === 'accounts' || user.isSuperAdmin) ? <UnassignedReceiptsPage /> : <Dashboard />; case 'construction-attendance': return <ConstructionAttendanceSiteLeadPage />; case 'construction-log': return (user.role === 'accounts' || user.role === 'admin' || user.isSuperAdmin) ? <ConstructionAttendanceLogPage /> : <Dashboard />; case 'construction-dues': return (user.role === 'accounts' || user.isSuperAdmin) ? <ConstructionDuesPage /> : <Dashboard />; case 'construction-setup': return (user.role === 'accounts' || user.role === 'admin' || user.isSuperAdmin) ? <ConstructionSetupPage /> : <Dashboard />; case 'construction-rates': return (user.role === 'admin' || user.isSuperAdmin) ? <ConstructionRateApprovalsPage /> : <Dashboard />; default: return <Dashboard />; } };
 
   React.useEffect(() => {
     // After React renders the new page, scroll main-content to top.
@@ -12058,6 +12754,10 @@ const App = () => {
               <div className="nav-section"><div className="nav-section-title">Audit View</div>
                 <div className={`nav-item ${currentPage === 'completed' ? 'active' : ''}`} onClick={() => handleNavClick('completed')}>{Icons.checkCircle} Completed Vouchers</div>
               </div>
+            ) : user.role === 'staff_lead' ? (
+              <div className="nav-section"><div className="nav-section-title">Construction</div>
+                <div className={`nav-item ${currentPage === 'construction-attendance' ? 'active' : ''}`} onClick={() => handleNavClick('construction-attendance')}>✅ Mark Attendance</div>
+              </div>
             ) : (<>
             <div className="nav-section"><div className="nav-section-title">Main</div><div className={`nav-item ${currentPage === 'dashboard' ? 'active' : ''}`} onClick={() => handleNavClick('dashboard')}>{Icons.home} Dashboard</div></div>
             <div className="nav-section"><div className="nav-section-title">Vouchers</div>
@@ -12086,6 +12786,12 @@ const App = () => {
               <div className={`nav-item ${currentPage === 'unassigned-receipts' ? 'active' : ''}`} onClick={() => handleNavClick('unassigned-receipts')}>📬 Receipt Review Queue</div>
             </div>}
             {user.isSuperAdmin && <div className="nav-section"><div className="nav-section-title">Admin Dashboard</div><div className={`nav-item ${currentPage === 'users' ? 'active' : ''}`} onClick={() => handleNavClick('users')}>{Icons.users} User Management</div></div>}
+            {(user.role === 'accounts' || user.role === 'admin' || user.isSuperAdmin) && <div className="nav-section"><div className="nav-section-title">Construction</div>
+              <div className={`nav-item ${currentPage === 'construction-log' ? 'active' : ''}`} onClick={() => handleNavClick('construction-log')}>📋 Labour Log</div>
+              {(user.role === 'accounts' || user.isSuperAdmin) && <div className={`nav-item ${currentPage === 'construction-dues' ? 'active' : ''}`} onClick={() => handleNavClick('construction-dues')}>💰 Labour Dues</div>}
+              {(user.role === 'accounts' || user.isSuperAdmin) && <div className={`nav-item ${currentPage === 'construction-setup' ? 'active' : ''}`} onClick={() => handleNavClick('construction-setup')}>⚙️ Labour Setup</div>}
+              {(user.role === 'admin' || user.isSuperAdmin) && <div className={`nav-item ${currentPage === 'construction-rates' ? 'active' : ''}`} onClick={() => handleNavClick('construction-rates')}>📊 Rate Approvals</div>}
+            </div>}
             </>)}
           </aside>
           
