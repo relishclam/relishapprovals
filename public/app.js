@@ -11293,20 +11293,22 @@ const constructionFetch = async (path, opts = {}) => {
   return d;
 };
 
-// Staff Lead — attendance marking screen
+// ── Staff Lead — attendance marking screen ────────────────────────────────────
 const ConstructionAttendanceSiteLeadPage = () => {
   const { user, addToast } = useApp();
-  const [categories, setCategories] = useState([]);
+  const [categories, setCategories]   = useState([]);
   const [selectedCat, setSelectedCat] = useState(null);
-  const [supervisors, setSupervisors] = useState([]);
-  const [attendance, setAttendance] = useState({});
-  const [existing, setExisting] = useState({});
-  const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [submitted, setSubmitted] = useState(false);
+  const [supervisors, setSupervisors] = useState([]);   // [{id, name, workers:[…], …}]
+  const [attendance, setAttendance]   = useState({});   // worker_id → value
+  const [existing, setExisting]       = useState({});   // worker_id → record
+  const [loading, setLoading]         = useState(false);
+  const [saving, setSaving]           = useState(false);
+  const [submitted, setSubmitted]     = useState(false);
 
   useEffect(() => {
-    constructionFetch('/categories').then(setCategories).catch(() => addToast('Failed to load categories', 'error'));
+    constructionFetch('/categories')
+      .then(setCategories)
+      .catch(() => addToast('Failed to load categories', 'error'));
   }, []);
 
   const loadCategory = async (cat) => {
@@ -11321,51 +11323,50 @@ const ConstructionAttendanceSiteLeadPage = () => {
       ]);
       setSupervisors(sups);
       const existingMap = {}, attMap = {};
-      attData.forEach(r => { existingMap[r.supervisor_id] = r; attMap[r.supervisor_id] = r.attendance_value; });
+      attData.forEach(r => { existingMap[r.worker_id] = r; attMap[r.worker_id] = r.attendance_value; });
       setExisting(existingMap);
       setAttendance(attMap);
       if (attData.length > 0) setSubmitted(true);
-    } catch (e) {
-      addToast('Failed to load: ' + e.message, 'error');
-    }
+    } catch (e) { addToast('Failed to load: ' + e.message, 'error'); }
     setLoading(false);
   };
 
   const handleSubmit = async () => {
-    const entries = supervisors.filter(s => attendance[s.id] !== undefined);
-    if (!entries.length) { addToast('Mark at least one supervisor before saving.', 'error'); return; }
+    const records = [];
+    supervisors.forEach(sup => {
+      (sup.workers || []).forEach(w => {
+        if (attendance[w.id] !== undefined) {
+          records.push({ category_id: selectedCat.id, supervisor_id: sup.id, worker_id: w.id, attendance_value: attendance[w.id] });
+        }
+      });
+    });
+    if (!records.length) { addToast('Mark at least one worker before saving.', 'error'); return; }
     setSaving(true);
     try {
-      const records = entries.map(s => ({
-        category_id: selectedCat.id,
-        supervisor_id: s.id,
-        attendance_value: attendance[s.id],
-      }));
-      await constructionFetch('/attendance', { method: 'POST', body: JSON.stringify({ records }) });
+      await constructionFetch('/attendance', { method: 'POST', body: JSON.stringify({ records, requestedBy: user.id }) });
       setSubmitted(true);
-      addToast(`Attendance saved for ${entries.length} supervisor(s).`);
+      addToast(`Attendance saved for ${records.length} worker(s).`);
       loadCategory(selectedCat);
-    } catch (e) {
-      addToast('Error saving: ' + e.message, 'error');
-    }
+    } catch (e) { addToast('Error saving: ' + e.message, 'error'); }
     setSaving(false);
   };
 
-  const markedCount = supervisors.filter(s => attendance[s.id] !== undefined).length;
+  const totalWorkers  = supervisors.reduce((s, sup) => s + (sup.workers || []).length, 0);
+  const markedCount   = supervisors.reduce((s, sup) => s + (sup.workers || []).filter(w => attendance[w.id] !== undefined).length, 0);
+  const hasNoWorkers  = totalWorkers === 0 && supervisors.length > 0;
 
   if (!selectedCat) {
     return (
       <div style={{ maxWidth: 480, margin: '0 auto', padding: '1.5rem 1rem' }}>
-        <div style={{ marginBottom: '1.5rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4 }}>
-            <div style={{ width: 36, height: 36, background: '#4f46e5', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 700, fontSize: 14 }}>B</div>
-            <div>
-              <div style={{ fontWeight: 600, color: '#1e293b' }}>Balachandran · Staff Lead</div>
-              <div style={{ fontSize: 12, color: '#94a3b8' }}>{new Date(TODAY_DATE).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</div>
-            </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
+          <div style={{ width: 36, height: 36, background: '#4f46e5', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 700, fontSize: 14 }}>B</div>
+          <div>
+            <div style={{ fontWeight: 600, color: '#1e293b' }}>{user.name} · Staff Lead</div>
+            <div style={{ fontSize: 12, color: '#94a3b8' }}>{new Date(TODAY_DATE).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</div>
           </div>
         </div>
         <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 12 }}>Select Category</div>
+        {categories.length === 0 && <div style={{ textAlign: 'center', padding: '3rem', color: '#94a3b8', fontSize: 14 }}>No categories set up yet. Contact Accounts.</div>}
         {categories.map(cat => (
           <div key={cat.id} onClick={() => loadCategory(cat)} style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 12, padding: '1rem 1.25rem', display: 'flex', alignItems: 'center', gap: 16, marginBottom: 10, cursor: 'pointer' }}>
             <span style={{ fontSize: 24 }}>{CONSTRUCTION_CATEGORY_ICONS[cat.name] || '📋'}</span>
@@ -11373,7 +11374,7 @@ const ConstructionAttendanceSiteLeadPage = () => {
               <div style={{ fontWeight: 600, color: '#1e293b' }}>{cat.name}</div>
               {cat.description && <div style={{ fontSize: 12, color: '#94a3b8' }}>{cat.description}</div>}
             </div>
-            <span style={{ color: '#cbd5e1' }}>›</span>
+            <span style={{ color: '#cbd5e1', fontSize: 18 }}>›</span>
           </div>
         ))}
       </div>
@@ -11382,7 +11383,7 @@ const ConstructionAttendanceSiteLeadPage = () => {
 
   return (
     <div style={{ maxWidth: 480, margin: '0 auto', padding: '1.5rem 1rem' }}>
-      <button onClick={() => setSelectedCat(null)} style={{ background: 'none', border: 'none', color: '#4f46e5', cursor: 'pointer', fontSize: 14, marginBottom: 16, display: 'flex', alignItems: 'center', gap: 4 }}>← Categories</button>
+      <button onClick={() => setSelectedCat(null)} style={{ background: 'none', border: 'none', color: '#4f46e5', cursor: 'pointer', fontSize: 14, marginBottom: 16 }}>← Categories</button>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
         <span style={{ fontSize: 24 }}>{CONSTRUCTION_CATEGORY_ICONS[selectedCat.name] || '📋'}</span>
         <span style={{ fontWeight: 700, fontSize: 18, color: '#1e293b' }}>{selectedCat.name}</span>
@@ -11393,45 +11394,77 @@ const ConstructionAttendanceSiteLeadPage = () => {
           {supervisors.length === 0 ? (
             <div style={{ textAlign: 'center', padding: '3rem 0', color: '#94a3b8' }}>
               <div style={{ fontSize: 32, marginBottom: 8 }}>👷</div>
-              <div>No supervisors assigned to this category yet.</div>
-              <div style={{ fontSize: 12, marginTop: 4 }}>Ask Accounts to add supervisors.</div>
+              <p>No supervisors assigned to this category yet.</p>
+              <p style={{ fontSize: 12 }}>Ask Accounts to add supervisors and workers.</p>
+            </div>
+          ) : hasNoWorkers ? (
+            <div style={{ textAlign: 'center', padding: '3rem 0', color: '#94a3b8' }}>
+              <div style={{ fontSize: 32, marginBottom: 8 }}>👥</div>
+              <p>No workers added under the supervisors yet.</p>
+              <p style={{ fontSize: 12 }}>Ask Accounts to add workers under each supervisor in Labour Setup.</p>
             </div>
           ) : (
-            <div style={{ display: 'grid', gap: 12, marginBottom: 80 }}>
+            <div style={{ display: 'grid', gap: 16, marginBottom: 90 }}>
               {supervisors.map(sup => {
-                const val = attendance[sup.id];
-                const isVouchered = existing[sup.id]?.voucher_id;
+                const workers = sup.workers || [];
+                if (!workers.length) return null;
+                const supVouchered = workers.every(w => existing[w.id]?.voucher_id);
                 return (
-                  <div key={sup.id} style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 12, padding: '1rem', opacity: isVouchered ? 0.6 : 1 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                  <div key={sup.id} style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 12, overflow: 'hidden' }}>
+                    {/* Supervisor header */}
+                    <div style={{ background: '#f8fafc', padding: '10px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #e2e8f0' }}>
                       <div>
-                        <div style={{ fontWeight: 600, color: '#1e293b' }}>{sup.name}</div>
-                        <div style={{ fontSize: 12, color: '#94a3b8' }}>{sup.mobile}</div>
+                        <span style={{ fontWeight: 700, color: '#1e293b' }}>{sup.name}</span>
+                        <span style={{ fontSize: 11, color: '#94a3b8', marginLeft: 8 }}>{sup.mobile}</span>
                       </div>
-                      {val !== undefined && <span style={{ background: '#eef2ff', color: '#4338ca', fontSize: 11, fontWeight: 700, padding: '3px 8px', borderRadius: 8 }}>{CONSTRUCTION_ATTENDANCE_OPTIONS.find(o => o.value === val)?.label}</span>}
+                      <span style={{ fontSize: 11, color: '#64748b' }}>{workers.filter(w => attendance[w.id] !== undefined).length}/{workers.length} marked</span>
                     </div>
-                    {isVouchered ? (
-                      <div style={{ fontSize: 12, color: '#d97706', fontWeight: 500 }}>Already included in a payment voucher</div>
-                    ) : (
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                        {CONSTRUCTION_ATTENDANCE_OPTIONS.map(opt => (
-                          <button key={opt.value} onClick={() => setAttendance(p => { setSubmitted(false); return { ...p, [sup.id]: opt.value }; })}
-                            style={{ padding: '8px 12px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 500, background: val === opt.value ? opt.color : '#f1f5f9', color: val === opt.value ? '#fff' : '#475569', transition: 'all 0.15s' }}>
-                            {opt.label}
-                          </button>
-                        ))}
-                      </div>
-                    )}
+                    {/* Workers */}
+                    {workers.map(w => {
+                      const val = attendance[w.id];
+                      const isVouchered = existing[w.id]?.voucher_id;
+                      return (
+                        <div key={w.id} style={{ padding: '12px 14px', borderBottom: '1px solid #f1f5f9', opacity: isVouchered ? 0.55 : 1 }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: isVouchered ? 0 : 8 }}>
+                            <div>
+                              <span style={{ fontWeight: 500, color: '#1e293b' }}>{w.name}</span>
+                              {w.mobile && <span style={{ fontSize: 11, color: '#94a3b8', marginLeft: 8 }}>{w.mobile}</span>}
+                            </div>
+                            {val !== undefined && !isVouchered && (
+                              <span style={{ background: '#eef2ff', color: '#4338ca', fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 8 }}>
+                                {CONSTRUCTION_ATTENDANCE_OPTIONS.find(o => o.value === val)?.label}
+                              </span>
+                            )}
+                          </div>
+                          {isVouchered ? (
+                            <div style={{ fontSize: 11, color: '#d97706' }}>Included in payment voucher</div>
+                          ) : (
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6 }}>
+                              {CONSTRUCTION_ATTENDANCE_OPTIONS.map(opt => (
+                                <button key={opt.value}
+                                  onClick={() => { setAttendance(p => ({ ...p, [w.id]: opt.value })); setSubmitted(false); }}
+                                  style={{ padding: '6px 4px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 11, fontWeight: 500,
+                                    background: val === opt.value ? opt.color : '#f1f5f9',
+                                    color: val === opt.value ? '#fff' : '#475569' }}>
+                                  {opt.label}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 );
               })}
             </div>
           )}
-          {supervisors.length > 0 && (
+          {totalWorkers > 0 && (
             <div style={{ position: 'sticky', bottom: 16 }}>
               <button onClick={handleSubmit} disabled={saving || markedCount === 0}
-                style={{ width: '100%', background: '#4f46e5', color: '#fff', border: 'none', borderRadius: 12, padding: '14px', fontSize: 15, fontWeight: 600, cursor: markedCount === 0 ? 'not-allowed' : 'pointer', opacity: markedCount === 0 ? 0.4 : 1, boxShadow: '0 4px 12px rgba(79,70,229,0.3)' }}>
-                {saving ? 'Saving…' : `Save Attendance · ${markedCount} of ${supervisors.length}`}
+                style={{ width: '100%', background: '#4f46e5', color: '#fff', border: 'none', borderRadius: 12, padding: '14px', fontSize: 15, fontWeight: 600,
+                  cursor: markedCount === 0 ? 'not-allowed' : 'pointer', opacity: markedCount === 0 ? 0.4 : 1, boxShadow: '0 4px 12px rgba(79,70,229,0.3)' }}>
+                {saving ? 'Saving…' : `Save Attendance · ${markedCount} of ${totalWorkers}`}
               </button>
             </div>
           )}
@@ -11441,18 +11474,16 @@ const ConstructionAttendanceSiteLeadPage = () => {
   );
 };
 
-// Attendance log — Accounts/Admin read-only view
+// ── Attendance Log — Accounts/Admin ──────────────────────────────────────────
 const ConstructionAttendanceLogPage = () => {
   const { addToast } = useApp();
-  const [records, setRecords] = useState([]);
+  const [records, setRecords]       = useState([]);
   const [categories, setCategories] = useState([]);
-  const [filterCat, setFilterCat] = useState('all');
+  const [filterCat, setFilterCat]   = useState('all');
   const [filterDate, setFilterDate] = useState(TODAY_DATE);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading]       = useState(true);
 
-  useEffect(() => {
-    constructionFetch('/categories').then(setCategories).catch(() => {});
-  }, []);
+  useEffect(() => { constructionFetch('/categories').then(setCategories).catch(() => {}); }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -11460,11 +11491,8 @@ const ConstructionAttendanceLogPage = () => {
       const params = new URLSearchParams();
       if (filterDate) params.set('date', filterDate);
       if (filterCat !== 'all') params.set('category_id', filterCat);
-      const data = await constructionFetch(`/attendance?${params}`);
-      setRecords(data);
-    } catch (e) {
-      addToast('Failed to load records', 'error');
-    }
+      setRecords(await constructionFetch(`/attendance?${params}`));
+    } catch { addToast('Failed to load records', 'error'); }
     setLoading(false);
   }, [filterCat, filterDate]);
 
@@ -11485,13 +11513,13 @@ const ConstructionAttendanceLogPage = () => {
       {loading ? <div style={{ textAlign: 'center', padding: '3rem', color: '#64748b' }}>Loading…</div> : (
         <div className="card" style={{ overflowX: 'auto' }}>
           {records.length === 0 ? (
-            <div style={{ textAlign: 'center', padding: '3rem', color: '#94a3b8', fontSize: 14 }}>No attendance records for this filter.</div>
+            <div style={{ textAlign: 'center', padding: '3rem', color: '#94a3b8', fontSize: 14 }}>No records for this filter.</div>
           ) : (
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
               <thead>
                 <tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
-                  {['Date', 'Category', 'Supervisor', 'Attendance', 'Status', 'Marked By'].map(h => (
-                    <th key={h} style={{ textAlign: 'left', padding: '10px 14px', fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.5 }}>{h}</th>
+                  {['Date','Category','Supervisor','Worker','Attendance','Status'].map(h => (
+                    <th key={h} style={{ textAlign: 'left', padding: '10px 14px', fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>{h}</th>
                   ))}
                 </tr>
               </thead>
@@ -11500,13 +11528,16 @@ const ConstructionAttendanceLogPage = () => {
                   <tr key={r.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
                     <td style={{ padding: '10px 14px', color: '#475569', whiteSpace: 'nowrap' }}>{new Date(r.attendance_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</td>
                     <td style={{ padding: '10px 14px' }}>{CONSTRUCTION_CATEGORY_ICONS[r.category_name] || '📋'} {r.category_name}</td>
+                    <td style={{ padding: '10px 14px', color: '#475569' }}>{r.supervisor_name}</td>
                     <td style={{ padding: '10px 14px' }}>
-                      <div style={{ fontWeight: 500, color: '#1e293b' }}>{r.supervisor_name}</div>
-                      <div style={{ fontSize: 11, color: '#94a3b8' }}>{r.supervisor_mobile}</div>
+                      <div style={{ fontWeight: 500, color: '#1e293b' }}>{r.worker_name || '—'}</div>
+                      {r.worker_mobile && <div style={{ fontSize: 11, color: '#94a3b8' }}>{r.worker_mobile}</div>}
                     </td>
                     <td style={{ padding: '10px 14px' }}><span style={{ background: '#f1f5f9', color: '#475569', padding: '2px 8px', borderRadius: 20, fontSize: 12, fontWeight: 600 }}>{attLabel(r.attendance_value)}</span></td>
-                    <td style={{ padding: '10px 14px' }}>{r.voucher_id ? <span style={{ background: '#dbeafe', color: '#1d4ed8', padding: '2px 8px', borderRadius: 20, fontSize: 12, fontWeight: 600 }}>Vouchered</span> : <span style={{ background: '#fef3c7', color: '#92400e', padding: '2px 8px', borderRadius: 20, fontSize: 12, fontWeight: 600 }}>Unpaid</span>}</td>
-                    <td style={{ padding: '10px 14px', fontSize: 12, color: '#64748b' }}>{r.marked_by_name || '—'}</td>
+                    <td style={{ padding: '10px 14px' }}>{r.voucher_id
+                      ? <span style={{ background: '#dbeafe', color: '#1d4ed8', padding: '2px 8px', borderRadius: 20, fontSize: 12, fontWeight: 600 }}>Vouchered</span>
+                      : <span style={{ background: '#fef3c7', color: '#92400e', padding: '2px 8px', borderRadius: 20, fontSize: 12, fontWeight: 600 }}>Unpaid</span>}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -11518,32 +11549,25 @@ const ConstructionAttendanceLogPage = () => {
   );
 };
 
-// Dues & Voucher creation — Accounts
+// ── Dues & Voucher creation — Accounts ───────────────────────────────────────
 const ConstructionDuesPage = () => {
   const { user, addToast } = useApp();
-  const [categories, setCategories] = useState([]);
+  const [categories, setCategories]   = useState([]);
   const [selectedCat, setSelectedCat] = useState('');
-  const [dues, setDues] = useState([]);
-  const [selected, setSelected] = useState({});
-  const [loading, setLoading] = useState(false);
-  const [creating, setCreating] = useState(false);
-  const [vouchers, setVouchers] = useState([]);
+  const [dues, setDues]               = useState([]);
+  const [selected, setSelected]       = useState({});
+  const [loading, setLoading]         = useState(false);
+  const [creating, setCreating]       = useState(false);
+  const [vouchers, setVouchers]       = useState([]);
   const [showVouchers, setShowVouchers] = useState(false);
 
-  useEffect(() => {
-    constructionFetch('/categories').then(setCategories).catch(() => {});
-  }, []);
+  useEffect(() => { constructionFetch('/categories').then(setCategories).catch(() => {}); }, []);
 
   const loadDues = useCallback(async () => {
     if (!selectedCat) return;
-    setLoading(true);
-    setSelected({});
-    try {
-      const data = await constructionFetch(`/dues?category_id=${selectedCat}`);
-      setDues(data);
-    } catch (e) {
-      addToast('Failed to load dues', 'error');
-    }
+    setLoading(true); setSelected({});
+    try { setDues(await constructionFetch(`/dues?category_id=${selectedCat}`)); }
+    catch { addToast('Failed to load dues', 'error'); }
     setLoading(false);
   }, [selectedCat]);
 
@@ -11551,12 +11575,8 @@ const ConstructionDuesPage = () => {
 
   const loadVouchers = async () => {
     if (!selectedCat) return;
-    try {
-      const data = await constructionFetch(`/vouchers?category_id=${selectedCat}`);
-      setVouchers(data);
-    } catch {}
+    try { setVouchers(await constructionFetch(`/vouchers?category_id=${selectedCat}`)); } catch {}
   };
-
   useEffect(() => { if (selectedCat) loadVouchers(); }, [selectedCat]);
 
   const toggle = id => setSelected(p => ({ ...p, [id]: !p[id] }));
@@ -11564,24 +11584,18 @@ const ConstructionDuesPage = () => {
     const allSel = dues.every(d => selected[d.supervisor_id]);
     const next = {}; dues.forEach(d => { next[d.supervisor_id] = !allSel; }); setSelected(next);
   };
-
-  const selectedDues = dues.filter(d => selected[d.supervisor_id]);
-  const totalSelected = selectedDues.reduce((s, d) => s + (d.total_dues || 0), 0);
+  const selectedDues  = dues.filter(d => selected[d.supervisor_id]);
+  const totalSelected = selectedDues.reduce((s, d) => s + (parseFloat(d.total_dues) || 0), 0);
 
   const createVoucher = async () => {
     if (!selectedDues.length) { addToast('Select at least one supervisor', 'error'); return; }
-    const missing = selectedDues.filter(d => !d.approved_rate);
-    if (missing.length) { addToast(`No approved rate for: ${missing.map(d => d.supervisor_name).join(', ')}`, 'error'); return; }
+    if (selectedDues.some(d => !d.approved_rate)) { addToast(`Missing approved rate for some supervisors`, 'error'); return; }
     setCreating(true);
     try {
-      const result = await constructionFetch('/vouchers', { method: 'POST', body: JSON.stringify({ category_id: selectedCat, supervisor_ids: selectedDues.map(d => d.supervisor_id) }) });
+      const result = await constructionFetch('/vouchers', { method: 'POST', body: JSON.stringify({ category_id: selectedCat, supervisor_ids: selectedDues.map(d => d.supervisor_id), requestedBy: user.id }) });
       addToast(`Voucher ${result.voucher_number} created — ${formatRupees(result.total_amount)}`);
-      loadDues();
-      loadVouchers();
-      setShowVouchers(true);
-    } catch (e) {
-      addToast('Failed: ' + e.message, 'error');
-    }
+      loadDues(); loadVouchers(); setShowVouchers(true);
+    } catch (e) { addToast('Failed: ' + e.message, 'error'); }
     setCreating(false);
   };
 
@@ -11595,7 +11609,6 @@ const ConstructionDuesPage = () => {
           {categories.map(c => <option key={c.id} value={c.id}>{CONSTRUCTION_CATEGORY_ICONS[c.name]} {c.name}</option>)}
         </select>
       </div>
-
       {!selectedCat ? (
         <div style={{ textAlign: 'center', padding: '4rem 0', color: '#94a3b8', fontSize: 14 }}>Select a category to view unpaid dues.</div>
       ) : loading ? <div style={{ textAlign: 'center', padding: '3rem', color: '#64748b' }}>Loading…</div> : (
@@ -11604,12 +11617,12 @@ const ConstructionDuesPage = () => {
             <div className="card" style={{ textAlign: 'center', padding: '3rem', color: '#94a3b8', fontSize: 14 }}>No unpaid dues for this category.</div>
           ) : (
             <div className="card" style={{ marginBottom: 16, overflow: 'hidden' }}>
-              <div style={{ padding: '10px 16px', borderBottom: '1px solid #f1f5f9', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 14, fontWeight: 500, color: '#334155' }}>
+              <div style={{ padding: '10px 16px', borderBottom: '1px solid #f1f5f9', display: 'flex', justifyContent: 'space-between' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 14, fontWeight: 500 }}>
                   <input type="checkbox" onChange={toggleAll} checked={dues.length > 0 && dues.every(d => selected[d.supervisor_id])} />
                   Select All · {dues.length} supervisors
                 </label>
-                <span style={{ fontSize: 12, color: '#94a3b8' }}>Unpaid up to today</span>
+                <span style={{ fontSize: 12, color: '#94a3b8' }}>Worker-days unpaid</span>
               </div>
               {dues.map(d => (
                 <div key={d.supervisor_id} onClick={() => toggle(d.supervisor_id)}
@@ -11620,8 +11633,8 @@ const ConstructionDuesPage = () => {
                     <div style={{ fontSize: 12, color: '#94a3b8' }}>{d.mobile} · UPI: {d.upi_id}</div>
                   </div>
                   <div style={{ textAlign: 'right', fontSize: 13 }}>
-                    <div style={{ fontWeight: 600, color: '#1e293b' }}>{formatRupees(d.total_dues)}</div>
-                    <div style={{ fontSize: 12, color: '#94a3b8' }}>{d.total_days} days × {d.approved_rate ? formatRupees(d.approved_rate) : <span style={{ color: '#ef4444' }}>No rate!</span>}</div>
+                    <div style={{ fontWeight: 600 }}>{formatRupees(d.total_dues)}</div>
+                    <div style={{ fontSize: 12, color: '#94a3b8' }}>{d.total_days} worker-days × {d.approved_rate ? formatRupees(d.approved_rate) : <span style={{ color: '#ef4444' }}>No rate!</span>}</div>
                     <div style={{ fontSize: 11, color: '#94a3b8' }}>{d.earliest_date} – {d.latest_date}</div>
                   </div>
                 </div>
@@ -11629,20 +11642,17 @@ const ConstructionDuesPage = () => {
               {selectedDues.length > 0 && (
                 <div style={{ background: '#eef2ff', padding: '14px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                   <div>
-                    <div style={{ fontWeight: 600, color: '#3730a3', fontSize: 14 }}>{selectedDues.length} supervisor(s) selected</div>
-                    <div style={{ fontSize: 12, color: '#4f46e5' }}>Total: {formatRupees(totalSelected)}</div>
+                    <div style={{ fontWeight: 600, color: '#3730a3', fontSize: 14 }}>{selectedDues.length} supervisor(s) · {formatRupees(totalSelected)}</div>
                   </div>
-                  <button onClick={createVoucher} disabled={creating} className="btn btn-primary" style={{ opacity: creating ? 0.5 : 1 }}>
-                    {creating ? 'Creating…' : 'Create Voucher →'}
-                  </button>
+                  <button onClick={createVoucher} disabled={creating} className="btn btn-primary">{creating ? 'Creating…' : 'Create Voucher →'}</button>
                 </div>
               )}
             </div>
           )}
-
           <div>
-            <button onClick={() => { setShowVouchers(!showVouchers); if (!showVouchers) loadVouchers(); }} style={{ background: 'none', border: 'none', color: '#4f46e5', cursor: 'pointer', fontSize: 14, fontWeight: 500, marginBottom: 10, display: 'flex', alignItems: 'center', gap: 4 }}>
-              {showVouchers ? '▾' : '▸'} Past Vouchers for this Category
+            <button onClick={() => { setShowVouchers(v => !v); if (!showVouchers) loadVouchers(); }}
+              style={{ background: 'none', border: 'none', color: '#4f46e5', cursor: 'pointer', fontSize: 14, fontWeight: 500, marginBottom: 10 }}>
+              {showVouchers ? '▾' : '▸'} Past Vouchers
             </button>
             {showVouchers && (
               <div style={{ display: 'grid', gap: 10 }}>
@@ -11651,11 +11661,11 @@ const ConstructionDuesPage = () => {
                   <div key={v.id} className="card" style={{ padding: '1rem' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
                       <div>
-                        <div style={{ fontWeight: 600, color: '#1e293b' }}>{v.voucher_number}</div>
+                        <div style={{ fontWeight: 600 }}>{v.voucher_number}</div>
                         <div style={{ fontSize: 12, color: '#94a3b8' }}>{v.period_from} – {v.period_to}</div>
                       </div>
                       <div style={{ textAlign: 'right' }}>
-                        <div style={{ fontWeight: 700, color: '#1e293b' }}>{formatRupees(v.total_amount)}</div>
+                        <div style={{ fontWeight: 700 }}>{formatRupees(v.total_amount)}</div>
                         <span style={{ background: statusColors[v.status] || '#e2e8f0', color: '#fff', fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 20 }}>{(v.status || '').toUpperCase()}</span>
                       </div>
                     </div>
@@ -11676,17 +11686,22 @@ const ConstructionDuesPage = () => {
   );
 };
 
-// Setup — Accounts manages supervisors & assignments
+// ── Setup — Accounts manages supervisors, assignments & workers ───────────────
 const ConstructionSetupPage = () => {
   const { user, addToast } = useApp();
-  const [supervisors, setSupervisors] = useState([]);
-  const [categories, setCategories] = useState([]);
-  const [catSups, setCatSups] = useState([]);
-  const [showAddSup, setShowAddSup] = useState(false);
-  const [showAssign, setShowAssign] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [newSup, setNewSup] = useState({ name: '', mobile: '', upi_id: '', notes: '' });
+  const [tab, setTab]           = useState('supervisors'); // 'supervisors' | 'workers'
+  const [supervisors, setSupervisors]   = useState([]);
+  const [categories, setCategories]     = useState([]);
+  const [catSups, setCatSups]           = useState([]);    // assignments
+  const [workers, setWorkers]           = useState([]);    // workers for selected assignment
+  const [selectedCatSup, setSelectedCatSup] = useState('');
+  const [showAddSup, setShowAddSup]     = useState(false);
+  const [showAssign, setShowAssign]     = useState(false);
+  const [showAddWorker, setShowAddWorker] = useState(false);
+  const [saving, setSaving]             = useState(false);
+  const [newSup, setNewSup]     = useState({ name: '', mobile: '', upi_id: '', notes: '' });
   const [assignment, setAssignment] = useState({ supervisor_id: '', category_id: '' });
+  const [newWorker, setNewWorker]   = useState({ name: '', mobile: '', notes: '' });
 
   const load = useCallback(async () => {
     try {
@@ -11695,24 +11710,25 @@ const ConstructionSetupPage = () => {
         constructionFetch('/categories'),
         constructionFetch('/category-supervisors'),
       ]);
-      setSupervisors(sups);
-      setCategories(cats);
-      setCatSups(cs);
+      setSupervisors(sups); setCategories(cats); setCatSups(cs);
     } catch {}
   }, []);
-
   useEffect(() => { load(); }, [load]);
+
+  const loadWorkers = useCallback(async () => {
+    if (!selectedCatSup) { setWorkers([]); return; }
+    try { setWorkers(await constructionFetch(`/workers?category_supervisor_id=${selectedCatSup}`)); } catch {}
+  }, [selectedCatSup]);
+  useEffect(() => { loadWorkers(); }, [loadWorkers]);
 
   const addSupervisor = async () => {
     if (!newSup.name || !newSup.mobile || !newSup.upi_id) { addToast('Name, Mobile and UPI ID are required', 'error'); return; }
     if (!/^[6-9][0-9]{9}$/.test(newSup.mobile)) { addToast('Enter a valid 10-digit Indian mobile number', 'error'); return; }
     setSaving(true);
     try {
-      await constructionFetch('/supervisors', { method: 'POST', body: JSON.stringify(newSup) });
+      await constructionFetch('/supervisors', { method: 'POST', body: JSON.stringify({ ...newSup, requestedBy: user.id }) });
       addToast('Supervisor added.');
-      setNewSup({ name: '', mobile: '', upi_id: '', notes: '' });
-      setShowAddSup(false);
-      load();
+      setNewSup({ name: '', mobile: '', upi_id: '', notes: '' }); setShowAddSup(false); load();
     } catch (e) { addToast('Error: ' + e.message, 'error'); }
     setSaving(false);
   };
@@ -11721,132 +11737,221 @@ const ConstructionSetupPage = () => {
     if (!assignment.supervisor_id || !assignment.category_id) { addToast('Select both supervisor and category', 'error'); return; }
     setSaving(true);
     try {
-      await constructionFetch('/assign', { method: 'POST', body: JSON.stringify(assignment) });
-      addToast('Supervisor assigned to category.');
-      setAssignment({ supervisor_id: '', category_id: '' });
-      setShowAssign(false);
-      load();
-    } catch (e) { addToast(e.message.includes('duplicate') || e.message.includes('unique') ? 'Already assigned to this category.' : e.message, 'error'); }
+      await constructionFetch('/assign', { method: 'POST', body: JSON.stringify({ ...assignment, requestedBy: user.id }) });
+      addToast('Supervisor assigned.'); setAssignment({ supervisor_id: '', category_id: '' }); setShowAssign(false); load();
+    } catch (e) { addToast(e.message.includes('duplicate') || e.message.includes('unique') ? 'Already assigned.' : e.message, 'error'); }
     setSaving(false);
   };
 
+  const addWorker = async () => {
+    if (!newWorker.name) { addToast('Worker name is required', 'error'); return; }
+    if (!selectedCatSup) { addToast('Select a supervisor first', 'error'); return; }
+    setSaving(true);
+    try {
+      await constructionFetch('/workers', { method: 'POST', body: JSON.stringify({ ...newWorker, category_supervisor_id: selectedCatSup, requestedBy: user.id }) });
+      addToast('Worker added.'); setNewWorker({ name: '', mobile: '', notes: '' }); setShowAddWorker(false); loadWorkers();
+    } catch (e) { addToast('Error: ' + e.message, 'error'); }
+    setSaving(false);
+  };
+
+  const toggleWorker = async (w) => {
+    try {
+      await constructionFetch(`/workers/${w.id}`, { method: 'PUT', body: JSON.stringify({ is_active: !w.is_active, requestedBy: user.id }) });
+      loadWorkers();
+    } catch (e) { addToast('Error: ' + e.message, 'error'); }
+  };
+
   const inputStyle = { width: '100%', padding: '8px 12px', border: '1px solid #e2e8f0', borderRadius: 8, fontSize: 14, boxSizing: 'border-box' };
+  const tabStyle = active => ({ padding: '8px 18px', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 600, fontSize: 13, background: active ? '#4f46e5' : '#f1f5f9', color: active ? '#fff' : '#475569' });
 
   return (
     <div>
-      <div style={{ display: 'flex', gap: 10, marginBottom: 20 }}>
-        <button onClick={() => { setShowAddSup(!showAddSup); setShowAssign(false); }} className="btn btn-primary">+ Add Supervisor</button>
-        <button onClick={() => { setShowAssign(!showAssign); setShowAddSup(false); }} className="btn btn-secondary">Assign to Category</button>
+      {/* Sub-tabs */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
+        <button style={tabStyle(tab === 'supervisors')} onClick={() => setTab('supervisors')}>👷 Supervisors</button>
+        <button style={tabStyle(tab === 'workers')} onClick={() => setTab('workers')}>👥 Workers</button>
       </div>
 
-      {showAddSup && (
-        <div className="card" style={{ padding: '1.25rem', marginBottom: 16 }}>
-          <div style={{ fontWeight: 600, marginBottom: 16, color: '#1e293b' }}>New Supervisor</div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            {[{ key: 'name', label: 'Full Name *', placeholder: 'e.g. Rajan K' }, { key: 'mobile', label: 'Mobile *', placeholder: '10-digit mobile' }, { key: 'upi_id', label: 'UPI ID *', placeholder: 'e.g. rajan@upi' }].map(f => (
-              <div key={f.key}>
-                <label style={{ display: 'block', fontSize: 12, fontWeight: 500, color: '#64748b', marginBottom: 4 }}>{f.label}</label>
-                <input type="text" placeholder={f.placeholder} value={newSup[f.key]} onChange={e => setNewSup(p => ({ ...p, [f.key]: e.target.value }))} style={inputStyle} />
-              </div>
-            ))}
-            <div>
-              <label style={{ display: 'block', fontSize: 12, fontWeight: 500, color: '#64748b', marginBottom: 4 }}>Notes</label>
-              <input type="text" placeholder="Optional" value={newSup.notes} onChange={e => setNewSup(p => ({ ...p, notes: e.target.value }))} style={inputStyle} />
-            </div>
+      {tab === 'supervisors' && (
+        <div>
+          <div style={{ display: 'flex', gap: 10, marginBottom: 20 }}>
+            <button onClick={() => { setShowAddSup(!showAddSup); setShowAssign(false); }} className="btn btn-primary">+ Add Supervisor</button>
+            <button onClick={() => { setShowAssign(!showAssign); setShowAddSup(false); }} className="btn btn-secondary">Assign to Category</button>
           </div>
-          <div style={{ display: 'flex', gap: 10, marginTop: 14 }}>
-            <button onClick={addSupervisor} disabled={saving} className="btn btn-primary">{saving ? 'Saving…' : 'Save Supervisor'}</button>
-            <button onClick={() => setShowAddSup(false)} className="btn btn-secondary">Cancel</button>
-          </div>
-        </div>
-      )}
 
-      {showAssign && (
-        <div className="card" style={{ padding: '1.25rem', marginBottom: 16 }}>
-          <div style={{ fontWeight: 600, marginBottom: 16, color: '#1e293b' }}>Assign Supervisor to Category</div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            <div>
-              <label style={{ display: 'block', fontSize: 12, fontWeight: 500, color: '#64748b', marginBottom: 4 }}>Supervisor *</label>
-              <select value={assignment.supervisor_id} onChange={e => setAssignment(p => ({ ...p, supervisor_id: e.target.value }))} style={inputStyle}>
-                <option value="">— Select —</option>
-                {supervisors.filter(s => s.is_active).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-              </select>
-            </div>
-            <div>
-              <label style={{ display: 'block', fontSize: 12, fontWeight: 500, color: '#64748b', marginBottom: 4 }}>Category *</label>
-              <select value={assignment.category_id} onChange={e => setAssignment(p => ({ ...p, category_id: e.target.value }))} style={inputStyle}>
-                <option value="">— Select —</option>
-                {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
-            </div>
-          </div>
-          <div style={{ fontSize: 12, color: '#d97706', marginTop: 10 }}>⚠ Rate must be proposed and approved separately via Rate Approvals before payments can be made.</div>
-          <div style={{ display: 'flex', gap: 10, marginTop: 14 }}>
-            <button onClick={assignSupervisor} disabled={saving} className="btn btn-secondary">{saving ? 'Saving…' : 'Assign'}</button>
-            <button onClick={() => setShowAssign(false)} className="btn btn-secondary">Cancel</button>
-          </div>
-        </div>
-      )}
-
-      <div className="card" style={{ overflow: 'hidden' }}>
-        <div style={{ padding: '10px 16px', borderBottom: '1px solid #f1f5f9', fontWeight: 600, fontSize: 14, color: '#475569' }}>All Supervisors ({supervisors.length})</div>
-        {supervisors.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: '2.5rem', color: '#94a3b8', fontSize: 14 }}>No supervisors added yet.</div>
-        ) : (
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
-            <thead>
-              <tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
-                {['Name', 'Mobile', 'UPI ID', 'Status'].map(h => (
-                  <th key={h} style={{ textAlign: 'left', padding: '9px 14px', fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>{h}</th>
+          {showAddSup && (
+            <div className="card" style={{ padding: '1.25rem', marginBottom: 16 }}>
+              <div style={{ fontWeight: 600, marginBottom: 12 }}>New Supervisor (Gang Leader)</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                {[{ key: 'name', label: 'Full Name *', ph: 'e.g. Rajan K' }, { key: 'mobile', label: 'Mobile *', ph: '10-digit' }, { key: 'upi_id', label: 'UPI ID *', ph: 'e.g. rajan@upi' }, { key: 'notes', label: 'Notes', ph: 'Optional' }].map(f => (
+                  <div key={f.key}>
+                    <label style={{ display: 'block', fontSize: 12, fontWeight: 500, color: '#64748b', marginBottom: 4 }}>{f.label}</label>
+                    <input type="text" placeholder={f.ph} value={newSup[f.key]} onChange={e => setNewSup(p => ({ ...p, [f.key]: e.target.value }))} style={inputStyle} />
+                  </div>
                 ))}
-              </tr>
-            </thead>
-            <tbody>
-              {supervisors.map(s => (
-                <tr key={s.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                  <td style={{ padding: '10px 14px', fontWeight: 500, color: '#1e293b' }}>{s.name}</td>
-                  <td style={{ padding: '10px 14px', color: '#475569' }}>{s.mobile}</td>
-                  <td style={{ padding: '10px 14px', color: '#475569', fontFamily: 'monospace', fontSize: 12 }}>{s.upi_id}</td>
-                  <td style={{ padding: '10px 14px' }}><span style={{ background: s.is_active ? '#d1fae5' : '#f1f5f9', color: s.is_active ? '#065f46' : '#64748b', padding: '2px 8px', borderRadius: 20, fontSize: 12, fontWeight: 600 }}>{s.is_active ? 'Active' : 'Inactive'}</span></td>
-                </tr>
+              </div>
+              <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
+                <button onClick={addSupervisor} disabled={saving} className="btn btn-primary">{saving ? 'Saving…' : 'Save'}</button>
+                <button onClick={() => setShowAddSup(false)} className="btn btn-secondary">Cancel</button>
+              </div>
+            </div>
+          )}
+
+          {showAssign && (
+            <div className="card" style={{ padding: '1.25rem', marginBottom: 16 }}>
+              <div style={{ fontWeight: 600, marginBottom: 12 }}>Assign Supervisor to Category</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: 12, fontWeight: 500, color: '#64748b', marginBottom: 4 }}>Supervisor *</label>
+                  <select value={assignment.supervisor_id} onChange={e => setAssignment(p => ({ ...p, supervisor_id: e.target.value }))} style={inputStyle}>
+                    <option value="">— Select —</option>
+                    {supervisors.filter(s => s.is_active).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: 12, fontWeight: 500, color: '#64748b', marginBottom: 4 }}>Category *</label>
+                  <select value={assignment.category_id} onChange={e => setAssignment(p => ({ ...p, category_id: e.target.value }))} style={inputStyle}>
+                    <option value="">— Select —</option>
+                    {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div style={{ fontSize: 12, color: '#d97706', marginTop: 8 }}>⚠ Propose a rate via Rate Approvals after assigning.</div>
+              <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
+                <button onClick={assignSupervisor} disabled={saving} className="btn btn-secondary">{saving ? 'Saving…' : 'Assign'}</button>
+                <button onClick={() => setShowAssign(false)} className="btn btn-secondary">Cancel</button>
+              </div>
+            </div>
+          )}
+
+          <div className="card" style={{ overflow: 'hidden' }}>
+            <div style={{ padding: '10px 16px', borderBottom: '1px solid #f1f5f9', fontWeight: 600, fontSize: 14, color: '#475569' }}>All Supervisors ({supervisors.length})</div>
+            {supervisors.length === 0 ? <div style={{ textAlign: 'center', padding: '2.5rem', color: '#94a3b8', fontSize: 14 }}>No supervisors yet.</div> : (
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
+                <thead><tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
+                  {['Name','Mobile','UPI ID','Status'].map(h => <th key={h} style={{ textAlign: 'left', padding: '9px 14px', fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>{h}</th>)}
+                </tr></thead>
+                <tbody>
+                  {supervisors.map(s => (
+                    <tr key={s.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                      <td style={{ padding: '10px 14px', fontWeight: 500 }}>{s.name}</td>
+                      <td style={{ padding: '10px 14px', color: '#475569' }}>{s.mobile}</td>
+                      <td style={{ padding: '10px 14px', fontFamily: 'monospace', fontSize: 12 }}>{s.upi_id}</td>
+                      <td style={{ padding: '10px 14px' }}><span style={{ background: s.is_active ? '#d1fae5' : '#f1f5f9', color: s.is_active ? '#065f46' : '#64748b', padding: '2px 8px', borderRadius: 20, fontSize: 12, fontWeight: 600 }}>{s.is_active ? 'Active' : 'Inactive'}</span></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      )}
+
+      {tab === 'workers' && (
+        <div>
+          <div style={{ display: 'flex', gap: 12, marginBottom: 16, alignItems: 'center', flexWrap: 'wrap' }}>
+            <select value={selectedCatSup} onChange={e => setSelectedCatSup(e.target.value)} className="form-input" style={{ width: 'auto', flex: 1, minWidth: 200 }}>
+              <option value="">— Select Supervisor · Category —</option>
+              {catSups.map(cs => (
+                <option key={cs.id} value={cs.id}>
+                  {cs.construction_supervisors?.name} · {cs.construction_categories?.name}
+                </option>
               ))}
-            </tbody>
-          </table>
-        )}
-      </div>
+            </select>
+            {selectedCatSup && (
+              <button onClick={() => setShowAddWorker(!showAddWorker)} className="btn btn-primary">+ Add Worker</button>
+            )}
+          </div>
+
+          {!selectedCatSup ? (
+            <div style={{ textAlign: 'center', padding: '3rem', color: '#94a3b8', fontSize: 14 }}>
+              <div style={{ fontSize: 32, marginBottom: 8 }}>👥</div>
+              Select a Supervisor · Category above to manage their workers.
+            </div>
+          ) : (
+            <>
+              {showAddWorker && (
+                <div className="card" style={{ padding: '1.25rem', marginBottom: 16 }}>
+                  <div style={{ fontWeight: 600, marginBottom: 12 }}>Add Worker</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                    <div>
+                      <label style={{ display: 'block', fontSize: 12, fontWeight: 500, color: '#64748b', marginBottom: 4 }}>Full Name *</label>
+                      <input type="text" placeholder="e.g. Suresh P" value={newWorker.name} onChange={e => setNewWorker(p => ({ ...p, name: e.target.value }))} style={inputStyle} />
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: 12, fontWeight: 500, color: '#64748b', marginBottom: 4 }}>Mobile (optional)</label>
+                      <input type="text" placeholder="10-digit" value={newWorker.mobile} onChange={e => setNewWorker(p => ({ ...p, mobile: e.target.value }))} style={inputStyle} />
+                    </div>
+                    <div style={{ gridColumn: '1/-1' }}>
+                      <label style={{ display: 'block', fontSize: 12, fontWeight: 500, color: '#64748b', marginBottom: 4 }}>Notes (optional)</label>
+                      <input type="text" placeholder="e.g. Mason, North block" value={newWorker.notes} onChange={e => setNewWorker(p => ({ ...p, notes: e.target.value }))} style={inputStyle} />
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
+                    <button onClick={addWorker} disabled={saving} className="btn btn-primary">{saving ? 'Saving…' : 'Add Worker'}</button>
+                    <button onClick={() => setShowAddWorker(false)} className="btn btn-secondary">Cancel</button>
+                  </div>
+                </div>
+              )}
+
+              <div className="card" style={{ overflow: 'hidden' }}>
+                <div style={{ padding: '10px 16px', borderBottom: '1px solid #f1f5f9', fontWeight: 600, fontSize: 14, color: '#475569' }}>Workers ({workers.filter(w => w.is_active).length} active)</div>
+                {workers.length === 0 ? (
+                  <div style={{ textAlign: 'center', padding: '2.5rem', color: '#94a3b8', fontSize: 14 }}>No workers added yet. Click + Add Worker above.</div>
+                ) : (
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
+                    <thead><tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
+                      {['Name','Mobile','Notes','Status'].map(h => <th key={h} style={{ textAlign: 'left', padding: '9px 14px', fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>{h}</th>)}
+                    </tr></thead>
+                    <tbody>
+                      {workers.map(w => (
+                        <tr key={w.id} style={{ borderBottom: '1px solid #f1f5f9', opacity: w.is_active ? 1 : 0.5 }}>
+                          <td style={{ padding: '10px 14px', fontWeight: 500 }}>{w.name}</td>
+                          <td style={{ padding: '10px 14px', color: '#475569' }}>{w.mobile || '—'}</td>
+                          <td style={{ padding: '10px 14px', color: '#64748b', fontSize: 12 }}>{w.notes || '—'}</td>
+                          <td style={{ padding: '10px 14px' }}>
+                            <button onClick={() => toggleWorker(w)} style={{ background: 'none', border: `1px solid ${w.is_active ? '#d1d5db' : '#6ee7b7'}`, borderRadius: 6, padding: '2px 10px', fontSize: 12, cursor: 'pointer', color: w.is_active ? '#6b7280' : '#065f46' }}>
+                              {w.is_active ? 'Deactivate' : 'Reactivate'}
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 };
 
-// Rate Approvals — Admin
+// ── Rate Approvals — Admin ────────────────────────────────────────────────────
 const ConstructionRateApprovalsPage = () => {
   const { user, addToast } = useApp();
   const [proposals, setProposals] = useState([]);
-  const [catSups, setCatSups] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [catSups, setCatSups]     = useState([]);
+  const [loading, setLoading]     = useState(true);
   const [processing, setProcessing] = useState(null);
   const [showPropose, setShowPropose] = useState(false);
-  const [proposal, setProposal] = useState({ category_supervisor_id: '', proposed_rate: '' });
-  const [saving, setSaving] = useState(false);
+  const [proposal, setProposal]   = useState({ category_supervisor_id: '', proposed_rate: '' });
+  const [saving, setSaving]       = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     try { setProposals(await constructionFetch('/rates/proposals')); } catch {}
     setLoading(false);
   }, []);
-
   useEffect(() => { load(); }, [load]);
-
-  useEffect(() => {
-    if (showPropose) constructionFetch('/category-supervisors').then(setCatSups).catch(() => {});
-  }, [showPropose]);
+  useEffect(() => { if (showPropose) constructionFetch('/category-supervisors').then(setCatSups).catch(() => {}); }, [showPropose]);
 
   const decide = async (p, action) => {
     setProcessing(p.id);
     try {
-      await constructionFetch(`/rates/${p.id}/decide`, { method: 'POST', body: JSON.stringify({ action }) });
-      addToast(action === 'approve' ? 'Rate approved and applied.' : 'Rate proposal rejected.');
-      load();
+      await constructionFetch(`/rates/${p.id}/decide`, { method: 'POST', body: JSON.stringify({ action, requestedBy: user.id }) });
+      addToast(action === 'approve' ? 'Rate approved.' : 'Rate rejected.'); load();
     } catch (e) { addToast('Error: ' + e.message, 'error'); }
     setProcessing(null);
   };
@@ -11855,18 +11960,14 @@ const ConstructionRateApprovalsPage = () => {
     if (!proposal.category_supervisor_id || !proposal.proposed_rate) { addToast('Fill all fields', 'error'); return; }
     setSaving(true);
     try {
-      await constructionFetch('/rates/propose', { method: 'POST', body: JSON.stringify({ ...proposal, proposed_rate: parseFloat(proposal.proposed_rate) }) });
-      addToast('Rate proposal submitted for admin approval.');
-      setProposal({ category_supervisor_id: '', proposed_rate: '' });
-      setShowPropose(false);
-      load();
+      await constructionFetch('/rates/propose', { method: 'POST', body: JSON.stringify({ ...proposal, proposed_rate: parseFloat(proposal.proposed_rate), requestedBy: user.id }) });
+      addToast('Rate proposal submitted.'); setProposal({ category_supervisor_id: '', proposed_rate: '' }); setShowPropose(false); load();
     } catch (e) { addToast('Error: ' + e.message, 'error'); }
     setSaving(false);
   };
 
-  const pending = proposals.filter(p => p.status === 'pending');
+  const pending  = proposals.filter(p => p.status === 'pending');
   const reviewed = proposals.filter(p => p.status !== 'pending');
-
   const inputStyle = { width: '100%', padding: '8px 12px', border: '1px solid #e2e8f0', borderRadius: 8, fontSize: 14, boxSizing: 'border-box' };
 
   return (
@@ -11874,31 +11975,31 @@ const ConstructionRateApprovalsPage = () => {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
         <div>
           <div style={{ fontWeight: 600, fontSize: 16, color: '#1e293b' }}>Rate Approvals</div>
-          {pending.length > 0 && <div style={{ fontSize: 12, color: '#d97706', marginTop: 2 }}>{pending.length} pending approval{pending.length > 1 ? 's' : ''}</div>}
+          {pending.length > 0 && <div style={{ fontSize: 12, color: '#d97706', marginTop: 2 }}>{pending.length} pending</div>}
         </div>
         <button onClick={() => setShowPropose(!showPropose)} className="btn btn-primary">+ Propose Rate</button>
       </div>
 
       {showPropose && (
         <div className="card" style={{ padding: '1.25rem', marginBottom: 16 }}>
-          <div style={{ fontWeight: 600, marginBottom: 16, color: '#1e293b' }}>Propose Daily Rate</div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div style={{ fontWeight: 600, marginBottom: 12 }}>Propose Daily Rate</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
             <div>
               <label style={{ display: 'block', fontSize: 12, fontWeight: 500, color: '#64748b', marginBottom: 4 }}>Supervisor · Category *</label>
               <select value={proposal.category_supervisor_id} onChange={e => setProposal(p => ({ ...p, category_supervisor_id: e.target.value }))} style={inputStyle}>
                 <option value="">— Select —</option>
                 {catSups.map(cs => (
-                  <option key={cs.id} value={cs.id}>{cs.construction_supervisors?.name || cs.supervisor_name} · {cs.construction_categories?.name || cs.category_name}{cs.approved_rate ? ` (current: ₹${cs.approved_rate})` : ' (no rate yet)'}</option>
+                  <option key={cs.id} value={cs.id}>{cs.construction_supervisors?.name} · {cs.construction_categories?.name}{cs.approved_rate ? ` (current: ₹${cs.approved_rate})` : ' (no rate)'}</option>
                 ))}
               </select>
             </div>
             <div>
-              <label style={{ display: 'block', fontSize: 12, fontWeight: 500, color: '#64748b', marginBottom: 4 }}>Proposed Daily Rate (₹) *</label>
+              <label style={{ display: 'block', fontSize: 12, fontWeight: 500, color: '#64748b', marginBottom: 4 }}>Daily Rate per Worker-Day (₹) *</label>
               <input type="number" min="0" step="0.01" placeholder="e.g. 750" value={proposal.proposed_rate} onChange={e => setProposal(p => ({ ...p, proposed_rate: e.target.value }))} style={inputStyle} />
             </div>
           </div>
-          <div style={{ display: 'flex', gap: 10, marginTop: 14 }}>
-            <button onClick={submitProposal} disabled={saving} className="btn btn-primary">{saving ? 'Submitting…' : 'Submit for Approval'}</button>
+          <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
+            <button onClick={submitProposal} disabled={saving} className="btn btn-primary">{saving ? 'Submitting…' : 'Submit'}</button>
             <button onClick={() => setShowPropose(false)} className="btn btn-secondary">Cancel</button>
           </div>
         </div>
@@ -11908,13 +12009,12 @@ const ConstructionRateApprovalsPage = () => {
         <>
           {pending.length > 0 && (
             <div style={{ marginBottom: 20 }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: '#d97706', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 10 }}>Pending Approval</div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: '#d97706', textTransform: 'uppercase', marginBottom: 8 }}>Pending Approval</div>
               {pending.map(p => (
                 <div key={p.id} style={{ background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 12, padding: '1rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
                   <div>
-                    <div style={{ fontWeight: 600, color: '#1e293b' }}>{p.category_supervisor?.construction_supervisors?.name} · {p.category_supervisor?.construction_categories?.name}</div>
-                    <div style={{ fontSize: 13, color: '#475569', marginTop: 2 }}>Proposed: <strong>₹{p.proposed_rate}/day</strong>{p.category_supervisor?.approved_rate && <span style={{ color: '#94a3b8' }}> (current: ₹{p.category_supervisor.approved_rate})</span>}</div>
-                    <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>{p.proposed_at ? new Date(p.proposed_at).toLocaleDateString('en-IN') : ''}</div>
+                    <div style={{ fontWeight: 600 }}>{p.category_supervisor?.construction_supervisors?.name} · {p.category_supervisor?.construction_categories?.name}</div>
+                    <div style={{ fontSize: 13, marginTop: 2 }}>Proposed: <strong>₹{p.proposed_rate}/worker-day</strong>{p.category_supervisor?.approved_rate && <span style={{ color: '#94a3b8' }}> (current: ₹{p.category_supervisor.approved_rate})</span>}</div>
                   </div>
                   <div style={{ display: 'flex', gap: 8 }}>
                     <button onClick={() => decide(p, 'approve')} disabled={processing === p.id} className="btn btn-primary" style={{ fontSize: 13 }}>{processing === p.id ? '…' : 'Approve'}</button>
@@ -11924,28 +12024,23 @@ const ConstructionRateApprovalsPage = () => {
               ))}
             </div>
           )}
-
           {reviewed.length > 0 && (
             <div>
-              <div style={{ fontSize: 11, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 10 }}>History</div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', marginBottom: 8 }}>History</div>
               <div className="card" style={{ overflow: 'hidden' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
-                  <thead>
-                    <tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
-                      {['Supervisor · Category', 'Rate', 'Status', 'Date'].map(h => (
-                        <th key={h} style={{ textAlign: 'left', padding: '9px 14px', fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
+                  <thead><tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
+                    {['Supervisor · Category','Rate','Status','Date'].map(h => <th key={h} style={{ textAlign: 'left', padding: '9px 14px', fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>{h}</th>)}
+                  </tr></thead>
                   <tbody>
                     {reviewed.map(p => (
                       <tr key={p.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
                         <td style={{ padding: '10px 14px' }}>
-                          <div style={{ fontWeight: 500, color: '#1e293b' }}>{p.category_supervisor?.construction_supervisors?.name}</div>
+                          <div style={{ fontWeight: 500 }}>{p.category_supervisor?.construction_supervisors?.name}</div>
                           <div style={{ fontSize: 11, color: '#94a3b8' }}>{p.category_supervisor?.construction_categories?.name}</div>
                         </td>
-                        <td style={{ padding: '10px 14px', fontWeight: 600, color: '#334155' }}>₹{p.proposed_rate}/day</td>
-                        <td style={{ padding: '10px 14px' }}><span style={{ background: p.status === 'approved' ? '#d1fae5' : '#fee2e2', color: p.status === 'approved' ? '#065f46' : '#991b1b', padding: '2px 8px', borderRadius: 20, fontSize: 11, fontWeight: 700 }}>{(p.status || '').toUpperCase()}</span></td>
+                        <td style={{ padding: '10px 14px', fontWeight: 600 }}>₹{p.proposed_rate}/day</td>
+                        <td style={{ padding: '10px 14px' }}><span style={{ background: p.status === 'approved' ? '#d1fae5' : '#fee2e2', color: p.status === 'approved' ? '#065f46' : '#991b1b', padding: '2px 8px', borderRadius: 20, fontSize: 11, fontWeight: 700 }}>{(p.status||'').toUpperCase()}</span></td>
                         <td style={{ padding: '10px 14px', fontSize: 12, color: '#94a3b8' }}>{p.reviewed_at ? new Date(p.reviewed_at).toLocaleDateString('en-IN') : '—'}</td>
                       </tr>
                     ))}
@@ -11954,7 +12049,6 @@ const ConstructionRateApprovalsPage = () => {
               </div>
             </div>
           )}
-
           {proposals.length === 0 && <div style={{ textAlign: 'center', padding: '3rem', color: '#94a3b8', fontSize: 14 }}>No rate proposals yet.</div>}
         </>
       )}
@@ -11962,7 +12056,7 @@ const ConstructionRateApprovalsPage = () => {
   );
 };
 
-// Main App
+
 const App = () => {
   const [user, setUser] = useState(() => {
     try {
