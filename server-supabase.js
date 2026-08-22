@@ -7240,6 +7240,309 @@ app.post('/api/receipts/deposit-unassigned', async (req, res) => {
 // Called every 4 minutes by vercel.json cron; also hit by the client polling loop.
 app.get('/api/_warm', (req, res) => res.json({ ok: true, t: Date.now() }));
 
+// ─── Construction Labour Attendance ──────────────────────────────────────────
+
+app.get('/api/construction/categories', async (req, res) => {
+  const { data, error } = await supabase.from('construction_categories')
+    .select('id, name, description').eq('is_active', true).order('name');
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// Supervisors for a category, including their workers
+app.get('/api/construction/categories/:categoryId/supervisors', async (req, res) => {
+  const { data, error } = await supabase
+    .from('construction_category_supervisors')
+    .select(`
+      id, approved_rate,
+      construction_supervisors(id, name, mobile, upi_id),
+      construction_workers(id, name, mobile, is_active)
+    `)
+    .eq('category_id', req.params.categoryId)
+    .eq('is_active', true);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data.map(r => ({
+    ...r.construction_supervisors,
+    category_supervisor_id: r.id,
+    approved_rate: r.approved_rate,
+    workers: (r.construction_workers || []).filter(w => w.is_active),
+  })));
+});
+
+// Attendance GET — category_id required; date optional (omit for log view)
+app.get('/api/construction/attendance', async (req, res) => {
+  const { category_id, date } = req.query;
+  if (!category_id) return res.status(400).json({ error: 'category_id required' });
+  let q = supabase.from('construction_attendance')
+    .select(`
+      id, attendance_date, attendance_value, voucher_id,
+      supervisor_id, worker_id,
+      construction_workers(name, mobile),
+      construction_supervisors(name),
+      construction_categories(name)
+    `)
+    .eq('category_id', category_id)
+    .order('attendance_date', { ascending: false });
+  if (date) q = q.eq('attendance_date', date);
+  const { data, error } = await q.limit(500);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data.map(r => ({
+    ...r,
+    worker_name:    r.construction_workers?.name,
+    worker_mobile:  r.construction_workers?.mobile,
+    supervisor_name: r.construction_supervisors?.name,
+    category_name:  r.construction_categories?.name,
+  })));
+});
+
+// Attendance POST — upsert per-worker records
+app.post('/api/construction/attendance', async (req, res) => {
+  const { records, requestedBy } = req.body;
+  if (!records?.length) return res.status(400).json({ error: 'No records provided' });
+  const actor = await getActorRole(requestedBy);
+  if (!actor.role) return res.status(403).json({ error: 'Not authenticated' });
+  const allowedRoles = ['staff_lead', 'accounts', 'admin', 'super_admin'];
+  if (!allowedRoles.includes(actor.role) && !actor.is_super_admin) {
+    return res.status(403).json({ error: 'Not authorised' });
+  }
+  const today = new Date().toISOString().split('T')[0];
+  const upserts = records.map(r => ({
+    attendance_date:  today,
+    category_id:      r.category_id,
+    supervisor_id:    r.supervisor_id,
+    worker_id:        r.worker_id,
+    attendance_value: r.attendance_value,
+    marked_by:        requestedBy,
+    last_edited_by:   requestedBy,
+    last_edited_at:   new Date().toISOString(),
+    notes:            r.notes || null,
+  }));
+  const { data, error } = await supabase
+    .from('construction_attendance')
+    .upsert(upserts, { onConflict: 'attendance_date,category_id,supervisor_id,worker_id' })
+    .select('id, worker_id, attendance_value');
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ saved: data.length, records: data });
+});
+
+// Unpaid dues per supervisor (aggregated from worker attendance)
+app.get('/api/construction/dues', async (req, res) => {
+  const { category_id } = req.query;
+  let query = supabase.from('v_unpaid_attendance').select('*');
+  if (category_id) query = query.eq('category_id', category_id);
+  const { data, error } = await query.order('supervisor_name');
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// Create payment voucher for selected supervisors
+app.post('/api/construction/vouchers', async (req, res) => {
+  const { category_id, supervisor_ids, requestedBy } = req.body;
+  const actor = await getActorRole(requestedBy);
+  const allowed = ['accounts', 'admin', 'super_admin'];
+  if (!allowed.includes(actor.role) && !actor.is_super_admin) {
+    return res.status(403).json({ error: 'Not authorised' });
+  }
+  if (!category_id || !supervisor_ids?.length) {
+    return res.status(400).json({ error: 'category_id and supervisor_ids required' });
+  }
+  const { data: dues, error: dErr } = await supabase
+    .from('v_unpaid_attendance').select('*')
+    .eq('category_id', category_id).in('supervisor_id', supervisor_ids);
+  if (dErr) return res.status(500).json({ error: dErr.message });
+  const missing = dues.filter(d => !d.approved_rate);
+  if (missing.length) {
+    return res.status(400).json({ error: `No approved rate for: ${missing.map(d => d.supervisor_name).join(', ')}` });
+  }
+  const totalAmount = dues.reduce((s, d) => s + (parseFloat(d.total_dues) || 0), 0);
+  const allDates = dues.flatMap(d => [d.earliest_date, d.latest_date]).filter(Boolean).sort();
+  const { data: voucher, error: vErr } = await supabase
+    .from('construction_vouchers')
+    .insert({ category_id, period_from: allDates[0], period_to: allDates[allDates.length - 1],
+              total_amount: totalAmount, status: 'draft', created_by: requestedBy })
+    .select().single();
+  if (vErr) return res.status(500).json({ error: vErr.message });
+  const lines = dues.map(d => ({
+    voucher_id: voucher.id, supervisor_id: d.supervisor_id,
+    days_count: d.total_days, rate_applied: d.approved_rate,
+    amount: d.total_dues, upi_id_snapshot: d.upi_id,
+  }));
+  const { error: lErr } = await supabase.from('construction_voucher_lines').insert(lines);
+  if (lErr) return res.status(500).json({ error: lErr.message });
+  // Mark attendance records as vouchered
+  const { data: attRows } = await supabase.from('construction_attendance')
+    .select('id').eq('category_id', category_id)
+    .in('supervisor_id', supervisor_ids).is('voucher_id', null);
+  if (attRows?.length) {
+    await supabase.from('construction_attendance')
+      .update({ voucher_id: voucher.id }).in('id', attRows.map(r => r.id));
+  }
+  res.json({ voucher_number: voucher.voucher_number, id: voucher.id, total_amount: totalAmount });
+});
+
+// Past vouchers for a category
+app.get('/api/construction/vouchers', async (req, res) => {
+  const { category_id } = req.query;
+  if (!category_id) return res.status(400).json({ error: 'category_id required' });
+  const { data, error } = await supabase
+    .from('construction_vouchers')
+    .select(`*, construction_voucher_lines(id, days_count, rate_applied, amount, construction_supervisors(name))`)
+    .eq('category_id', category_id)
+    .order('created_at', { ascending: false }).limit(20);
+  if (error) return res.status(500).json({ error: error.message });
+  // Flatten line data for frontend
+  res.json(data.map(v => ({
+    ...v,
+    lines: (v.construction_voucher_lines || []).map(l => ({
+      ...l, supervisor_name: l.construction_supervisors?.name,
+    })),
+  })));
+});
+
+// List all supervisors
+app.get('/api/construction/supervisors', async (req, res) => {
+  const { data, error } = await supabase
+    .from('construction_supervisors').select('*').order('name');
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// Add a supervisor
+app.post('/api/construction/supervisors', async (req, res) => {
+  const { name, mobile, upi_id, notes, requestedBy } = req.body;
+  const actor = await getActorRole(requestedBy);
+  if (!['accounts','admin','super_admin'].includes(actor.role) && !actor.is_super_admin) {
+    return res.status(403).json({ error: 'Not authorised' });
+  }
+  if (!name || !mobile || !upi_id) return res.status(400).json({ error: 'name, mobile, upi_id required' });
+  const { data, error } = await supabase.from('construction_supervisors')
+    .insert({ name, mobile, upi_id, notes: notes || null, created_by: requestedBy })
+    .select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// Assign supervisor to category
+app.post('/api/construction/assign', async (req, res) => {
+  const { category_id, supervisor_id, requestedBy } = req.body;
+  const actor = await getActorRole(requestedBy);
+  if (!['accounts','admin','super_admin'].includes(actor.role) && !actor.is_super_admin) {
+    return res.status(403).json({ error: 'Not authorised' });
+  }
+  const { data, error } = await supabase.from('construction_category_supervisors')
+    .insert({ category_id, supervisor_id, created_by: requestedBy })
+    .select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// All active category-supervisor assignments (for rate proposal dropdowns)
+app.get('/api/construction/category-supervisors', async (req, res) => {
+  const { data, error } = await supabase
+    .from('construction_category_supervisors')
+    .select('id, approved_rate, construction_categories(name), construction_supervisors(name)')
+    .eq('is_active', true);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// Workers for a category-supervisor assignment
+app.get('/api/construction/workers', async (req, res) => {
+  const { category_supervisor_id } = req.query;
+  if (!category_supervisor_id) return res.status(400).json({ error: 'category_supervisor_id required' });
+  const { data, error } = await supabase
+    .from('construction_workers')
+    .select('id, name, mobile, is_active, notes')
+    .eq('category_supervisor_id', category_supervisor_id)
+    .order('name');
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// Add a worker
+app.post('/api/construction/workers', async (req, res) => {
+  const { category_supervisor_id, name, mobile, notes, requestedBy } = req.body;
+  const actor = await getActorRole(requestedBy);
+  if (!['accounts','admin','super_admin'].includes(actor.role) && !actor.is_super_admin) {
+    return res.status(403).json({ error: 'Not authorised' });
+  }
+  if (!category_supervisor_id || !name) return res.status(400).json({ error: 'category_supervisor_id and name required' });
+  const { data, error } = await supabase.from('construction_workers')
+    .insert({ category_supervisor_id, name, mobile: mobile || null, notes: notes || null, created_by: requestedBy })
+    .select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// Toggle worker active/inactive
+app.put('/api/construction/workers/:id', async (req, res) => {
+  const { is_active, requestedBy } = req.body;
+  const actor = await getActorRole(requestedBy);
+  if (!['accounts','admin','super_admin'].includes(actor.role) && !actor.is_super_admin) {
+    return res.status(403).json({ error: 'Not authorised' });
+  }
+  const { data, error } = await supabase.from('construction_workers')
+    .update({ is_active }).eq('id', req.params.id).select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// Propose a daily rate
+app.post('/api/construction/rates/propose', async (req, res) => {
+  const { category_supervisor_id, proposed_rate, requestedBy } = req.body;
+  if (!category_supervisor_id || !proposed_rate) {
+    return res.status(400).json({ error: 'category_supervisor_id and proposed_rate required' });
+  }
+  const { data, error } = await supabase.from('construction_rate_proposals')
+    .insert({ category_supervisor_id, proposed_rate, proposed_by: requestedBy })
+    .select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// List rate proposals
+app.get('/api/construction/rates/proposals', async (req, res) => {
+  const { data, error } = await supabase
+    .from('construction_rate_proposals')
+    .select(`*, category_supervisor:construction_category_supervisors(
+      id, approved_rate,
+      construction_categories(name),
+      construction_supervisors(name)
+    )`)
+    .order('proposed_at', { ascending: false }).limit(50);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// Approve or reject a rate proposal
+app.post('/api/construction/rates/:id/decide', async (req, res) => {
+  const { action, requestedBy } = req.body;
+  const actor = await getActorRole(requestedBy);
+  if (!['admin','super_admin'].includes(actor.role) && !actor.is_super_admin) {
+    return res.status(403).json({ error: 'Admin only' });
+  }
+  const isApprove = action === 'approve';
+  const { data: prop, error: pErr } = await supabase
+    .from('construction_rate_proposals')
+    .select('category_supervisor_id, proposed_rate').eq('id', req.params.id).single();
+  if (pErr) return res.status(404).json({ error: 'Proposal not found' });
+  await supabase.from('construction_rate_proposals').update({
+    status: isApprove ? 'approved' : 'rejected',
+    reviewed_by: requestedBy, reviewed_at: new Date().toISOString(),
+    ...(isApprove ? { effective_from: new Date().toISOString() } : {}),
+  }).eq('id', req.params.id);
+  if (isApprove) {
+    await supabase.from('construction_category_supervisors').update({
+      approved_rate: prop.proposed_rate,
+      rate_approved_at: new Date().toISOString(),
+      rate_approved_by: requestedBy,
+    }).eq('id', prop.category_supervisor_id);
+  }
+  res.json({ status: isApprove ? 'approved' : 'rejected' });
+});
+
+// ─── End Construction Labour Attendance ──────────────────────────────────────
+
 // Export the Express app for Vercel serverless deployment
 module.exports = app;
 module.exports._testHelpers = { extractVchNumbers, extractBatchRefs, parseDbSerialSeq, parseDbBatchSeq, alphanumOnly, _extractPdfText, _extractImageText, _parseVchCapture };
