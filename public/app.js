@@ -5289,7 +5289,7 @@ const UsersManagement = () => {
                     <td>{u.mobile?.replace(/\d(?=\d{4})/g, '*')}</td>
                     <td>
                       <span className={`status-badge ${u.role === 'admin' ? 'status-approved' : u.role === 'auditor' ? 'status-completed' : 'status-pending'}`}>
-                        {u.role === 'admin' ? '🛡 Admin' : u.role === 'auditor' ? '🔍 Auditor' : u.role === 'staff' ? '👤 Staff' : '👤 Accounts'}
+                        {u.role === 'admin' ? '🛡 Admin' : u.role === 'auditor' ? '🔍 Auditor' : u.role === 'staff' ? '👤 Staff' : u.role === 'staff_lead' ? '👷 Staff Lead' : '👤 Accounts'}
                       </span>
                     </td>
                     <td>
@@ -5671,7 +5671,7 @@ const UsersManagement = () => {
                 <div>
                   <label style={{display: 'block', fontSize: '0.85rem', color: '#666', marginBottom: '0.25rem'}}>Role</label>
                   <span className={`status-badge ${selectedUser.role === 'admin' ? 'status-approved' : selectedUser.role === 'auditor' ? 'status-completed' : 'status-pending'}`}>
-                    {selectedUser.role === 'admin' ? '🛡 Admin' : selectedUser.role === 'auditor' ? '🔍 Auditor' : selectedUser.role === 'staff' ? '👤 Staff' : '👤 Accounts'}
+                    {selectedUser.role === 'admin' ? '🛡 Admin' : selectedUser.role === 'auditor' ? '🔍 Auditor' : selectedUser.role === 'staff' ? '👤 Staff' : selectedUser.role === 'staff_lead' ? '👷 Staff Lead' : '👤 Accounts'}
                   </span>
                 </div>
                 
