@@ -125,6 +125,7 @@ const MSG91_AUTH_KEY = process.env.MSG91_AUTH_KEY;
 const MSG91_OTP_TEMPLATE_ID = process.env.MSG91_OTP_TEMPLATE_ID; // DLT-registered OTP template ID
 const MSG91_SENDER_ID = process.env.MSG91_SENDER_ID || 'RHHF';
 const MSG91_FLOW_ID = process.env.MSG91_FLOW_ID || '6a856298c46183266e086f33';
+const MSG91_WHATSAPP_NUMBER = process.env.MSG91_WHATSAPP_NUMBER;
 const MSG91_BASE_URL = 'https://api.msg91.com/api/v5';
 
 // WebAuthn (Passkey) Configuration
@@ -279,6 +280,41 @@ const sendMsg91Sms = async (mobile, message) => {
     return { success: data.type === 'success', data };
   } catch (error) {
     console.log(`   SMS Error: ${error.message}`);
+    return { success: false, error: error.message };
+  }
+};
+
+// Send WhatsApp template message via MSG91 — positional params map to {{1}}, {{2}}, ...
+const sendWhatsApp = async (mobile, templateName, ...params) => {
+  if (!mobile) return { success: false, error: 'No mobile number provided' };
+  const to = formatMobile(mobile);
+  console.log(`\n📲 WhatsApp [${templateName}] → ${to}`);
+  try {
+    const response = await fetch(`${MSG91_BASE_URL}/whatsapp/whatsapp-outbound-message/bulk/`, {
+      method: 'POST',
+      headers: { authkey: MSG91_AUTH_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        integrated_number: MSG91_WHATSAPP_NUMBER,
+        content_type: 'template',
+        payload: {
+          messaging_product: 'whatsapp',
+          to,
+          type: 'template',
+          template: {
+            name: templateName,
+            language: { code: 'en' },
+            components: [{ type: 'body', parameters: params.map(text => ({ type: 'text', text: String(text) })) }]
+          }
+        }
+      })
+    });
+    const data = await response.json();
+    console.log(`   WA Response: ${JSON.stringify(data)}`);
+    const success = data.type === 'success';
+    if (success) console.log(`   ✅ Delivered`); else console.log(`   ❌ Failed: ${JSON.stringify(data)}`);
+    return { success, data };
+  } catch (error) {
+    console.log(`   WA Error: ${error.message}`);
     return { success: false, error: error.message };
   }
 };
@@ -3504,8 +3540,7 @@ app.post('/api/suspense-vouchers/:id/verify-advance-otp', async (req, res) => {
 
     const baseUrl = process.env.APP_BASE_URL || `${req.protocol}://${req.get('host')}`;
     const settlementUrl = `${baseUrl}/settlement/${settlementToken}`;
-    const smsMessage = `Your settlement form for suspense voucher ${sv.serial_number} is ready. Open it here: ${settlementUrl}`;
-    const smsSent = await sendMsg91Sms(payee.mobile, smsMessage);
+    const smsSent = await sendWhatsApp(payee.mobile, 'pramaana_settlement_link', payee.name, parseFloat(sv.advance_amount).toFixed(2), settlementUrl);
 
     // Notify creator + payee (if a system user)
     const { data: verifier } = await supabase.from('users').select('name').eq('id', verifiedBy).single();
@@ -3652,13 +3687,12 @@ app.post('/api/suspense-vouchers/:id/resend-settlement-link', async (req, res) =
 
     const baseUrl = process.env.APP_BASE_URL || `${req.protocol}://${req.get('host')}`;
     const settlementUrl = `${baseUrl}/settlement/${settlementToken}`;
-    const smsMessage = `Your settlement form for suspense voucher ${sv.serial_number} is ready. Open it here: ${settlementUrl}`;
-    const smsResult = await sendMsg91Sms(payee.mobile, smsMessage);
+    const smsResult = await sendWhatsApp(payee.mobile, 'pramaana_settlement_link', payee.name, parseFloat(sv.advance_amount).toFixed(2), settlementUrl);
 
     res.json({
       success: true,
       smsSent: smsResult.success === true,
-      smsError: smsResult.success ? undefined : (smsResult.error || smsResult.data?.Details || 'SMS delivery failed'),
+      smsError: smsResult.success ? undefined : (smsResult.error || smsResult.data?.message || 'WhatsApp delivery failed'),
       settlementUrl,
       session
     });
@@ -4454,16 +4488,6 @@ app.post('/api/suspense-settlements/:settlementId/approve-topup', async (req, re
       .update({ balance_amount: balance, status: newStatus, ...(reopened ? { closed_at: null } : {}) })
       .eq('id', sv.id);
 
-    // Notify staff via SMS
-    if (sv.staff_payee_id) {
-      const { data: payee } = await supabase.from('payees').select('name, mobile').eq('id', sv.staff_payee_id).single();
-      if (payee?.mobile) {
-        const { data: approver } = await supabase.from('users').select('name').eq('id', approvedBy).single();
-        const smsMessage = `Hi ${payee.name}, your suspense account ${sv.serial_number} has been topped up by ₹${parseFloat(settlement.amount).toFixed(2)}. New balance: ₹${balance.toFixed(2)}. - ${approver?.name || 'Admin'}`;
-        await sendMsg91Sms(payee.mobile, smsMessage);
-      }
-    }
-
     // Notify voucher creator and the Accounts user who requested the top-up
     const { data: approver } = await supabase.from('users').select('name').eq('id', approvedBy).single();
     const notifyUsers = [...new Set([sv.created_by, settlement.submitted_by].filter(Boolean))];
@@ -4974,7 +4998,7 @@ app.post('/api/vouchers/:voucherId/mark-paid', async (req, res) => {
       return res.status(403).json({ error: 'Only Accounts users can confirm payment' });
 
     const { data: voucher, error: vErr } = await supabase.from('vouchers')
-      .select('*, preparer:users!vouchers_prepared_by_fkey(name)')
+      .select('*, preparer:users!vouchers_prepared_by_fkey(name), payee:payees(name, mobile)')
       .eq('id', req.params.voucherId).single();
 
     if (vErr || !voucher) return res.status(404).json({ error: 'Voucher not found' });
@@ -5039,6 +5063,10 @@ app.post('/api/vouchers/:voucherId/mark-paid', async (req, res) => {
       `Voucher ${voucher.serial_number} paid.${paymentReference ? ` UTR: ${paymentReference}` : ''}`,
       '/'
     );
+
+    if (voucher.payee?.mobile) {
+      await sendWhatsApp(voucher.payee.mobile, 'pramaana_payment_confirmed', parseFloat(voucher.amount).toFixed(2), voucher.serial_number);
+    }
 
     console.log(`   ✅ Voucher ${voucher.serial_number} marked paid by ${paidBy} — UTR: ${paymentReference || 'N/A'} | Receipt: ${receiptUrl ? 'uploaded' : 'none'}`);
     res.json({ success: true, message: 'Voucher marked as paid.' });
@@ -5190,6 +5218,11 @@ app.post('/api/suspense-vouchers/:id/mark-advance-paid', async (req, res) => {
       type: 'completed'
     });
 
+    if (sv.staff_payee_id) {
+      const { data: payee } = await supabase.from('payees').select('mobile').eq('id', sv.staff_payee_id).single();
+      if (payee?.mobile) await sendWhatsApp(payee.mobile, 'pramaana_payment_confirmed', parseFloat(sv.advance_amount).toFixed(2), sv.serial_number);
+    }
+
     console.log(`   ✅ Advance for ${sv.serial_number} marked paid by ${paidBy} — UTR: ${paymentReference || 'N/A'} | Receipt: ${receiptUrl ? 'uploaded' : 'none'}`);
     res.json({ success: true });
   } catch (error) {
@@ -5212,7 +5245,7 @@ app.post('/api/suspense-settlements/:id/mark-topup-paid', async (req, res) => {
 
     const { data: settlement, error: sErr } = await supabase
       .from('suspense_settlements')
-      .select('*, suspense:suspense_vouchers!suspense_id(id,serial_number,company_id,created_by,payment_mode)')
+      .select('*, suspense:suspense_vouchers!suspense_id(id,serial_number,company_id,created_by,payment_mode,staff_payee_id)')
       .eq('id', req.params.id)
       .single();
     if (sErr || !settlement) return res.status(404).json({ error: 'Settlement entry not found' });
@@ -5267,6 +5300,11 @@ app.post('/api/suspense-settlements/:id/mark-topup-paid', async (req, res) => {
         message: `₹${parseFloat(settlement.amount).toFixed(2)} top-up for ${sv.serial_number} paid by ${payer?.name || 'Admin'}.${paymentReference ? ` UTR: ${paymentReference}` : ''}`,
         type: 'completed'
       });
+    }
+
+    if (sv.staff_payee_id) {
+      const { data: payee } = await supabase.from('payees').select('mobile').eq('id', sv.staff_payee_id).single();
+      if (payee?.mobile) await sendWhatsApp(payee.mobile, 'pramaana_payment_confirmed', parseFloat(settlement.amount).toFixed(2), sv.serial_number);
     }
 
     console.log(`   ✅ Top-up ${req.params.id} for ${sv.serial_number} marked paid by ${paidBy} — UTR: ${paymentReference || 'N/A'} | Receipt: ${receiptUrl ? 'uploaded' : 'none'}`);
