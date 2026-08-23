@@ -699,11 +699,11 @@ const MobileLockScreen = ({ savedUser, onUnlock, onSignOut }) => {
                 width:'80px',height:'80px',fontSize:'2.2rem',cursor:'pointer',margin:'1.5rem auto',
                 display:'flex',alignItems:'center',justifyContent:'center',
                 boxShadow:'0 0 0 8px rgba(245,132,31,0.18)',transition:'transform 0.1s'}}
-              title="Unlock with Face / Fingerprint">
+              title="Unlock with Face ID, Fingerprint, or device PIN/Pattern">
               {bioLoading ? '⏳' : '🔐'}
             </button>
             <p style={{fontSize:'0.85rem',color:'#888',marginBottom:'0.5rem'}}>
-              {bioLoading ? 'Waiting for biometric…' : 'Tap to unlock with Face / Fingerprint'}
+              {bioLoading ? 'Waiting for device unlock…' : 'Tap to unlock with Face ID / Fingerprint / PIN'}
             </p>
             {error && <div className="alert alert-error" style={{fontSize:'0.82rem',marginBottom:'0.75rem'}}>{error}</div>}
             {hasPin && (
@@ -720,7 +720,7 @@ const MobileLockScreen = ({ savedUser, onUnlock, onSignOut }) => {
             <div style={{marginTop:'1.25rem'}}><PinNumpad value={pin} onChange={handlePinChange} disabled={attempts>=5}/></div>
             {hasBio && (
               <button className="lock-screen-signout" style={{color:'var(--relish-orange)',marginTop:'0.75rem'}} onClick={() => { setMode('bio'); setError(''); setPin(''); attemptBio(); }}>
-                Use Face / Fingerprint instead
+                Use Device Lock instead
               </button>
             )}
           </div>
@@ -828,10 +828,10 @@ const DeviceLockPromptModal = ({ user, onDone }) => {
         <div style={{ fontSize: '60px', marginBottom: '16px' }}>🔐</div>
         <h3 style={{ fontWeight: 700, fontSize: '20px', marginBottom: '8px' }}>Set Up Device Lock?</h3>
         <p style={{ color: '#374151', marginBottom: '8px', lineHeight: 1.5 }}>
-          Log in with your <strong>fingerprint, Face ID, or device PIN</strong> — no password needed next time.
+          Log in with your <strong>fingerprint, Face ID, PIN, or Pattern</strong> — no password needed next time.
         </p>
         <p style={{ color: '#9ca3af', fontSize: '13px', marginBottom: '24px', lineHeight: 1.5 }}>
-          Credentials are stored securely in the cloud. Works even after reinstalling the app or clearing browser data.
+          Uses your device's screen lock — whatever you have set (biometric or PIN/Pattern). Credentials stored securely in the cloud.
         </p>
         {status === 'error' && <div className="alert alert-error" style={{ marginBottom: '16px', textAlign: 'left' }}>{errorMsg}</div>}
         <button
@@ -4854,8 +4854,8 @@ const UsersManagement = () => {
   const [showVerifyModal, setShowVerifyModal] = useState(false);
   const [selectedUser, setSelectedUser] = useState(null);
   const [submitting, setSubmitting] = useState(false);
-  const [newUser, setNewUser] = useState({ name: '', mobile: '', aadhar: '', role: 'accounts', companyAccess: [] });
-  const [editUser, setEditUser] = useState({ name: '', mobile: '', aadhar: '', role: 'accounts', companyAccess: [] });
+  const [newUser, setNewUser] = useState({ name: '', mobile: '', role: 'accounts', companyAccess: [] });
+  const [editUser, setEditUser] = useState({ name: '', mobile: '', role: 'accounts', companyAccess: [] });
   const [loadingCompanyAccess, setLoadingCompanyAccess] = useState(false);
   const [onboardStep, setOnboardStep] = useState(1); // 1=form, 2=otp, 3=success
   const [otp, setOtp] = useState('');
@@ -4936,7 +4936,7 @@ const UsersManagement = () => {
   };
   
   const handleOnboardSubmit = async () => {
-    if (!newUser.name?.trim() || !newUser.mobile?.trim() || (newUser.role !== 'auditor' && newUser.role !== 'staff' && newUser.role !== 'staff_lead' && !newUser.aadhar?.trim())) {
+    if (!newUser.name?.trim() || !newUser.mobile?.trim()) {
       addToast('All fields are required', 'error');
       console.log('Validation failed:', newUser);
       return;
@@ -4956,7 +4956,6 @@ const UsersManagement = () => {
       companyId: primaryCompany.companyId,
       name: newUser.name.trim(),
       mobile: newUser.mobile.trim(),
-      aadhar: newUser.aadhar.trim(),
       role: primaryCompany.role,
       companyAccess: newUser.companyAccess.map(ca => ({
         companyId: ca.companyId,
@@ -5021,7 +5020,6 @@ const UsersManagement = () => {
     setNewUser({ 
       name: '', 
       mobile: '', 
-      aadhar: '', 
       role: 'accounts',
       companyAccess: allCompanies.map((company, index) => ({
         companyId: company.id,
@@ -5162,7 +5160,7 @@ const UsersManagement = () => {
   };
   
   const handleUpdateUser = async () => {
-    if (!editUser.name?.trim() || !editUser.mobile?.trim() || (editUser.role !== 'auditor' && editUser.role !== 'staff' && editUser.role !== 'staff_lead' && !editUser.aadhar?.trim())) {
+    if (!editUser.name?.trim() || !editUser.mobile?.trim()) {
       addToast('All fields are required', 'error');
       return;
     }
@@ -5178,7 +5176,6 @@ const UsersManagement = () => {
       const result = await api.updateUser(selectedUser.id, {
         name: editUser.name,
         mobile: editUser.mobile,
-        aadhar: editUser.aadhar,
         role: editUser.role,
         requesterId: user.id
       });
@@ -5372,19 +5369,6 @@ const UsersManagement = () => {
                     <small style={{color: '#666', fontSize: '0.85rem'}}>User will receive OTP on this number</small>
                   </div>
                   
-                  {newUser.role !== 'auditor' && (
-                  <div className="form-group">
-                    <label className="form-label">Aadhar Number *</label>
-                    <input 
-                      type="text" 
-                      className="form-input" 
-                      placeholder="e.g., 1234 5678 9012"
-                      value={newUser.aadhar} 
-                      onChange={(e) => setNewUser({ ...newUser, aadhar: e.target.value })} 
-                    />
-                  </div>
-                  )}
-
                   <div className="form-group">
                     <label className="form-label">Role *</label>
                     <select
@@ -5539,18 +5523,6 @@ const UsersManagement = () => {
                 />
               </div>
               
-              {editUser.role !== 'auditor' && (
-              <div className="form-group">
-                <label className="form-label">Aadhar Number *</label>
-                <input 
-                  type="text" 
-                  className="form-input" 
-                  value={editUser.aadhar} 
-                  onChange={(e) => setEditUser({ ...editUser, aadhar: e.target.value })} 
-                />
-              </div>
-              )}
-
               <div className="form-group">
                 <label className="form-label">Role *</label>
                 <select
@@ -11298,12 +11270,15 @@ const ConstructionAttendanceSiteLeadPage = () => {
   const { user, addToast } = useApp();
   const [categories, setCategories]   = useState([]);
   const [selectedCat, setSelectedCat] = useState(null);
-  const [supervisors, setSupervisors] = useState([]);   // [{id, name, workers:[…], …}]
-  const [attendance, setAttendance]   = useState({});   // worker_id → value
-  const [existing, setExisting]       = useState({});   // worker_id → record
+  const [supervisors, setSupervisors] = useState([]);
+  // workerState: worker_id → { type: 'full'|'half'|'partial', hours: string }
+  const [workerState, setWorkerState] = useState({});
+  const [existing, setExisting]       = useState({});  // worker_id → DB record
   const [loading, setLoading]         = useState(false);
   const [saving, setSaving]           = useState(false);
   const [submitted, setSubmitted]     = useState(false);
+
+  const todayDisplay = new Date().toLocaleDateString('en-IN', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' });
 
   useEffect(() => {
     constructionFetch('/categories')
@@ -11311,10 +11286,17 @@ const ConstructionAttendanceSiteLeadPage = () => {
       .catch(() => addToast('Failed to load categories', 'error'));
   }, []);
 
+  const valueToState = (v) => {
+    if (v === 1.0)  return { type: 'full',    hours: '' };
+    if (v === 0.5)  return { type: 'half',    hours: '' };
+    // legacy 0.75 / 0.25 or any custom partial value
+    return           { type: 'partial', hours: String(+(v * 8).toFixed(2)) };
+  };
+
   const loadCategory = async (cat) => {
     setSelectedCat(cat);
     setLoading(true);
-    setAttendance({});
+    setWorkerState({});
     setSubmitted(false);
     try {
       const [sups, attData] = await Promise.all([
@@ -11322,25 +11304,58 @@ const ConstructionAttendanceSiteLeadPage = () => {
         constructionFetch(`/attendance?category_id=${cat.id}&date=${TODAY_DATE}`),
       ]);
       setSupervisors(sups);
-      const existingMap = {}, attMap = {};
-      attData.forEach(r => { existingMap[r.worker_id] = r; attMap[r.worker_id] = r.attendance_value; });
+      const existingMap = {}, stateMap = {};
+      attData.forEach(r => { existingMap[r.worker_id] = r; stateMap[r.worker_id] = valueToState(r.attendance_value); });
       setExisting(existingMap);
-      setAttendance(attMap);
+      setWorkerState(stateMap);
       if (attData.length > 0) setSubmitted(true);
     } catch (e) { addToast('Failed to load: ' + e.message, 'error'); }
     setLoading(false);
   };
 
+  const computeValue = (ws) => {
+    if (!ws) return null;
+    if (ws.type === 'full') return 1.0;
+    if (ws.type === 'half') return 0.5;
+    const h = parseFloat(ws.hours);
+    if (isNaN(h) || h <= 0 || h >= 8) return null;
+    return +(h / 8).toFixed(4);
+  };
+
+  const toggleWorker = (workerId, checked) => {
+    setWorkerState(p => {
+      const next = { ...p };
+      if (checked) next[workerId] = { type: 'full', hours: '' };
+      else delete next[workerId];
+      return next;
+    });
+    setSubmitted(false);
+  };
+
+  const setType = (workerId, type) => {
+    setWorkerState(p => ({ ...p, [workerId]: { type, hours: p[workerId]?.hours || '' } }));
+    setSubmitted(false);
+  };
+
+  const setHours = (workerId, hours) => {
+    setWorkerState(p => ({ ...p, [workerId]: { ...p[workerId], hours } }));
+    setSubmitted(false);
+  };
+
   const handleSubmit = async () => {
     const records = [];
+    let hasError = false;
     supervisors.forEach(sup => {
       (sup.workers || []).forEach(w => {
-        if (attendance[w.id] !== undefined) {
-          records.push({ category_id: selectedCat.id, supervisor_id: sup.id, worker_id: w.id, attendance_value: attendance[w.id] });
-        }
+        const ws = workerState[w.id];
+        if (!ws) return;
+        const val = computeValue(ws);
+        if (val === null) { addToast(`Enter valid hours (0.5 – 7.5) for ${w.name}`, 'error'); hasError = true; return; }
+        records.push({ category_id: selectedCat.id, supervisor_id: sup.id, worker_id: w.id, attendance_value: val });
       });
     });
-    if (!records.length) { addToast('Mark at least one worker before saving.', 'error'); return; }
+    if (hasError) return;
+    if (!records.length) { addToast('Select at least one worker before saving.', 'error'); return; }
     setSaving(true);
     try {
       await constructionFetch('/attendance', { method: 'POST', body: JSON.stringify({ records, requestedBy: user.id }) });
@@ -11351,20 +11366,26 @@ const ConstructionAttendanceSiteLeadPage = () => {
     setSaving(false);
   };
 
-  const totalWorkers  = supervisors.reduce((s, sup) => s + (sup.workers || []).length, 0);
-  const markedCount   = supervisors.reduce((s, sup) => s + (sup.workers || []).filter(w => attendance[w.id] !== undefined).length, 0);
-  const hasNoWorkers  = totalWorkers === 0 && supervisors.length > 0;
+  const totalWorkers = supervisors.reduce((s, sup) => s + (sup.workers || []).length, 0);
+  const markedCount  = supervisors.reduce((s, sup) => s + (sup.workers || []).filter(w => workerState[w.id] !== undefined).length, 0);
+  const hasNoWorkers = totalWorkers === 0 && supervisors.length > 0;
+
+  const DateBadge = () => (
+    <div style={{ background: '#eef2ff', color: '#4338ca', fontSize: 12, fontWeight: 600, padding: '5px 12px', borderRadius: 20, display: 'inline-flex', alignItems: 'center', gap: 6, marginBottom: 16 }}>
+      📅 {todayDisplay}
+    </div>
+  );
 
   if (!selectedCat) {
     return (
       <div style={{ maxWidth: 480, margin: '0 auto', padding: '1.5rem 1rem' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
-          <div style={{ width: 36, height: 36, background: '#4f46e5', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 700, fontSize: 14 }}>B</div>
-          <div>
-            <div style={{ fontWeight: 600, color: '#1e293b' }}>{user.name} · Staff Lead</div>
-            <div style={{ fontSize: 12, color: '#94a3b8' }}>{new Date(TODAY_DATE).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
+          <div style={{ width: 36, height: 36, background: '#4f46e5', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 700, fontSize: 16 }}>
+            {user.name.charAt(0).toUpperCase()}
           </div>
+          <div style={{ fontWeight: 600, color: '#1e293b' }}>{user.name} · Staff Lead</div>
         </div>
+        <DateBadge />
         <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 12 }}>Select Category</div>
         {categories.length === 0 && <div style={{ textAlign: 'center', padding: '3rem', color: '#94a3b8', fontSize: 14 }}>No categories set up yet. Contact Accounts.</div>}
         {categories.map(cat => (
@@ -11383,7 +11404,8 @@ const ConstructionAttendanceSiteLeadPage = () => {
 
   return (
     <div style={{ maxWidth: 480, margin: '0 auto', padding: '1.5rem 1rem' }}>
-      <button onClick={() => setSelectedCat(null)} style={{ background: 'none', border: 'none', color: '#4f46e5', cursor: 'pointer', fontSize: 14, marginBottom: 16 }}>← Categories</button>
+      <button onClick={() => setSelectedCat(null)} style={{ background: 'none', border: 'none', color: '#4f46e5', cursor: 'pointer', fontSize: 14, marginBottom: 8 }}>← Categories</button>
+      <DateBadge />
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
         <span style={{ fontSize: 24 }}>{CONSTRUCTION_CATEGORY_ICONS[selectedCat.name] || '📋'}</span>
         <span style={{ fontWeight: 700, fontSize: 18, color: '#1e293b' }}>{selectedCat.name}</span>
@@ -11408,7 +11430,6 @@ const ConstructionAttendanceSiteLeadPage = () => {
               {supervisors.map(sup => {
                 const workers = sup.workers || [];
                 if (!workers.length) return null;
-                const supVouchered = workers.every(w => existing[w.id]?.voucher_id);
                 return (
                   <div key={sup.id} style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 12, overflow: 'hidden' }}>
                     {/* Supervisor header */}
@@ -11417,39 +11438,65 @@ const ConstructionAttendanceSiteLeadPage = () => {
                         <span style={{ fontWeight: 700, color: '#1e293b' }}>{sup.name}</span>
                         <span style={{ fontSize: 11, color: '#94a3b8', marginLeft: 8 }}>{sup.mobile}</span>
                       </div>
-                      <span style={{ fontSize: 11, color: '#64748b' }}>{workers.filter(w => attendance[w.id] !== undefined).length}/{workers.length} marked</span>
+                      <span style={{ fontSize: 11, color: '#64748b' }}>{workers.filter(w => workerState[w.id] !== undefined).length}/{workers.length} marked</span>
                     </div>
                     {/* Workers */}
                     {workers.map(w => {
-                      const val = attendance[w.id];
-                      const isVouchered = existing[w.id]?.voucher_id;
+                      const isVouchered = !!existing[w.id]?.voucher_id;
+                      const ws = workerState[w.id];
+                      const isPresent = !!ws;
                       return (
                         <div key={w.id} style={{ padding: '12px 14px', borderBottom: '1px solid #f1f5f9', opacity: isVouchered ? 0.55 : 1 }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: isVouchered ? 0 : 8 }}>
-                            <div>
+                          {/* Row 1: checkbox + worker name */}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: isPresent && !isVouchered ? 10 : 0 }}>
+                            <input
+                              type="checkbox"
+                              checked={isPresent}
+                              disabled={isVouchered}
+                              onChange={e => !isVouchered && toggleWorker(w.id, e.target.checked)}
+                              style={{ width: 18, height: 18, accentColor: '#4f46e5', flexShrink: 0, cursor: isVouchered ? 'not-allowed' : 'pointer' }}
+                            />
+                            <div style={{ flex: 1 }}>
                               <span style={{ fontWeight: 500, color: '#1e293b' }}>{w.name}</span>
                               {w.mobile && <span style={{ fontSize: 11, color: '#94a3b8', marginLeft: 8 }}>{w.mobile}</span>}
                             </div>
-                            {val !== undefined && !isVouchered && (
-                              <span style={{ background: '#eef2ff', color: '#4338ca', fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 8 }}>
-                                {CONSTRUCTION_ATTENDANCE_OPTIONS.find(o => o.value === val)?.label}
-                              </span>
-                            )}
+                            {isVouchered && <span style={{ fontSize: 11, color: '#d97706', whiteSpace: 'nowrap' }}>Vouchered</span>}
                           </div>
-                          {isVouchered ? (
-                            <div style={{ fontSize: 11, color: '#d97706' }}>Included in payment voucher</div>
-                          ) : (
-                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6 }}>
-                              {CONSTRUCTION_ATTENDANCE_OPTIONS.map(opt => (
-                                <button key={opt.value}
-                                  onClick={() => { setAttendance(p => ({ ...p, [w.id]: opt.value })); setSubmitted(false); }}
-                                  style={{ padding: '6px 4px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 11, fontWeight: 500,
-                                    background: val === opt.value ? opt.color : '#f1f5f9',
-                                    color: val === opt.value ? '#fff' : '#475569' }}>
-                                  {opt.label}
-                                </button>
-                              ))}
+                          {/* Row 2: duration buttons (only when checked and not vouchered) */}
+                          {isPresent && !isVouchered && (
+                            <div style={{ marginLeft: 28 }}>
+                              <div style={{ display: 'flex', gap: 6, marginBottom: ws.type === 'partial' ? 8 : 0 }}>
+                                {[
+                                  { key: 'full',    label: 'Full Day', color: '#10b981' },
+                                  { key: 'half',    label: 'Half Day', color: '#f59e0b' },
+                                  { key: 'partial', label: 'Partial',  color: '#6366f1' },
+                                ].map(opt => (
+                                  <button key={opt.key} onClick={() => setType(w.id, opt.key)}
+                                    style={{ flex: 1, padding: '6px 4px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 11, fontWeight: 600,
+                                      background: ws.type === opt.key ? opt.color : '#f1f5f9',
+                                      color: ws.type === opt.key ? '#fff' : '#475569' }}>
+                                    {opt.label}
+                                  </button>
+                                ))}
+                              </div>
+                              {/* Partial hours input */}
+                              {ws.type === 'partial' && (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                  <label style={{ fontSize: 12, color: '#64748b', whiteSpace: 'nowrap' }}>Hours worked:</label>
+                                  <input
+                                    type="number" min="0.5" max="7.5" step="0.5"
+                                    value={ws.hours}
+                                    placeholder="e.g. 3"
+                                    onChange={e => setHours(w.id, e.target.value)}
+                                    style={{ width: 72, padding: '4px 8px', border: '1px solid #cbd5e1', borderRadius: 6, fontSize: 13 }}
+                                  />
+                                  <span style={{ fontSize: 11, color: '#94a3b8' }}>/ 8 hrs</span>
+                                </div>
+                              )}
                             </div>
+                          )}
+                          {isVouchered && isPresent && (
+                            <div style={{ fontSize: 11, color: '#94a3b8', marginLeft: 28 }}>Included in payment voucher — cannot re-mark</div>
                           )}
                         </div>
                       );
