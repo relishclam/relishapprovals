@@ -1,0 +1,13012 @@
+const { useState, useEffect, createContext, useContext, useCallback } = React;
+
+// Register protocol handler so the installed PWA can be launched via web+relishapprovals://
+if ('registerProtocolHandler' in navigator) {
+  navigator.registerProtocolHandler('web+relishapprovals', '/?from=%s');
+}
+
+const API_BASE = '/api';
+const APP_VERSION = 'v12'; // Version marker for cache debugging
+console.log('[Relish App] Version:', APP_VERSION);
+
+// ── ClamFlow Wave Loader ─────────────────────────────────────────────────────
+// Unique IDs per instance, hardcoded teal palette, self-injecting keyframes.
+// Usage: <ClamFlowLoader width={200} label="Loading" />
+let _cfCounter = 0;
+const CF_PATHS = [
+  'M300.0 61.0L230.0 79.0L164.0 111.0L118.0 143.0L38.0 209.0L12.0 227.0L9.0 230.0L9.0 236.0L12.0 239.0L20.0 241.0L34.0 239.0L58.0 231.0L82.0 219.0L174.0 155.0L230.0 127.0L276.0 115.0L330.0 115.0L364.0 123.0L432.0 155.0L536.0 219.0L568.0 235.0L610.0 249.0L664.0 257.0L694.0 255.0L734.0 245.0L760.0 233.0L765.0 228.0L762.0 223.0L692.0 219.0L646.0 207.0L572.0 171.0L478.0 113.0L416.0 81.0L382.0 69.0L354.0 63.0L302.0 61.0Z',
+  'M408.0 9.0L372.0 15.0L340.0 25.0L333.0 34.0L334.0 51.0L339.0 48.0L344.0 37.0L352.0 35.0L398.0 39.0L436.0 51.0L492.0 79.0L578.0 135.0L624.0 161.0L670.0 179.0L756.0 197.0L802.0 197.0L864.0 183.0L888.0 173.0L918.0 153.0L939.0 134.0L936.0 127.0L920.0 125.0L890.0 143.0L850.0 153.0L830.0 153.0L828.0 155.0L776.0 153.0L754.0 147.0L716.0 131.0L664.0 101.0L590.0 53.0L532.0 25.0L498.0 15.0L464.0 9.0L410.0 9.0Z',
+  'M306.0 141.0L262.0 149.0L212.0 169.0L170.0 193.0L120.0 227.0L109.0 238.0L110.0 247.0L156.0 245.0L182.0 237.0L212.0 223.0L280.0 181.0L312.0 165.0L354.0 155.0L355.0 150.0L346.0 143.0L308.0 141.0Z'
+];
+const ClamFlowLoader = ({ width = 200, label = 'Loading' }) => {
+  const [uid] = useState(() => `cf${++_cfCounter}`);
+  const w = typeof width === 'number' ? width : (parseInt(width) || 200);
+  const h = Math.round(w * 267 / 950);
+  useEffect(() => {
+    if (document.getElementById('clamflow-keyframes')) return;
+    const s = document.createElement('style');
+    s.id = 'clamflow-keyframes';
+    s.textContent = '@keyframes cf-form{0%{width:0%;opacity:1}20%{width:100%;opacity:1}80%{width:100%;opacity:1}95%{width:100%;opacity:0}100%{width:0%;opacity:0}}@keyframes cf-sweep{0%{transform:translateX(-320px) skewX(-12deg)}100%{transform:translateX(1070px) skewX(-12deg)}}@media(prefers-reduced-motion:reduce){.cf-wave-wrap{animation:none;width:100%;opacity:1}.cf-wave-streak{display:none}}';
+    document.head.appendChild(s);
+  }, []);
+  return (
+    <span style={{display:'inline-block',width:w,height:h,lineHeight:0,verticalAlign:'middle',flexShrink:0,position:'relative'}}>
+      <span className="cf-wave-wrap" style={{display:'block',position:'absolute',left:0,top:0,height:h,width:0,overflow:'hidden',
+        animation:'cf-form 3s ease-out infinite'}}>
+        <svg width={w} height={h} viewBox="0 0 950 267" role="img" aria-label={label}
+          style={{display:'block'}}>
+        <defs>
+          <linearGradient id={uid+'-f'} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stopColor="#58d3c1"/>
+            <stop offset="1" stopColor="#16656f"/>
+          </linearGradient>
+          <linearGradient id={uid+'-g'} x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0" stopColor="#fff" stopOpacity="0"/>
+            <stop offset=".5" stopColor="#fff" stopOpacity="1"/>
+            <stop offset="1" stopColor="#fff" stopOpacity="0"/>
+          </linearGradient>
+          <clipPath id={uid+'-c'}>
+            {CF_PATHS.map((d,i) => <path key={i} d={d}/>)}
+          </clipPath>
+        </defs>
+        <g>{CF_PATHS.map((d,i) => <path key={i} d={d} fill={`url(#${uid}-f)`}/>)}</g>
+        <g clipPath={`url(#${uid}-c)`}>
+          <rect className="cf-wave-streak" x="0" y="-60" width="240" height="387"
+            fill={`url(#${uid}-g)`}
+            style={{mixBlendMode:'screen',animation:'cf-sweep 1.7s cubic-bezier(.5,0,.3,1) infinite'}}/>
+        </g>
+      </svg>
+      </span>
+    </span>
+  );
+};
+
+// Simple SVG Icons
+const Icons = {
+  building: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 22V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v18Z"/><path d="M6 12H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2"/><path d="M18 9h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2"/></svg>,
+  fileText: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>,
+  bell: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>,
+  bellOff: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M8.7 3A6 6 0 0 1 18 8c0 2.6.7 4.8 1.7 6.5"/><path d="M6 17H3s3-2 3-9a4.6 4.6 0 0 1 .3-1.7"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/><path d="M17 17H6"/><line x1="2" x2="22" y1="2" y2="22"/></svg>,
+  logOut: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></svg>,
+  plus: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M5 12h14"/><path d="M12 5v14"/></svg>,
+  check: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 6 9 17l-5-5"/></svg>,
+  x: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>,
+  clock: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>,
+  checkCircle: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></svg>,
+  eye: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>,
+  smartphone: <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><path d="M12 18h.01"/></svg>,
+  shield: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10"/></svg>,
+  home: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>,
+  user: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>,
+  users: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>,
+  loader: null, // overridden below by Icons.loader = <ClamFlowLoader/>; see line after Icons object
+  refresh: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>,
+  send: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>,
+  download: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>,
+  printer: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect width="12" height="8" x="6" y="14"/></svg>,
+  calendar: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect width="18" height="18" x="3" y="4" rx="2" ry="2"/><line x1="16" x2="16" y1="2" y2="6"/><line x1="8" x2="8" y1="2" y2="6"/><line x1="3" x2="21" y1="10" y2="10"/></svg>,
+  menu: <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="3" x2="21" y1="12" y2="12"/><line x1="3" x2="21" y1="6" y2="6"/><line x1="3" x2="21" y1="18" y2="18"/></svg>,
+  upload: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>,
+  camera: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg>,
+  image: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>,
+  fileCheck: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><path d="m9 15 2 2 4-4"/></svg>,
+  lock: <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>,
+  fingerprint: <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M2 12C2 6.5 6.5 2 12 2a10 10 0 0 1 8 4"/><path d="M5 19.5C5.5 18 6 15 6 12c0-.7.12-1.37.34-2"/><path d="M17.29 21.02c.12-.6.43-2.3.5-3.02"/><path d="M12 10a2 2 0 0 0-2 2c0 1.02-.1 2.51-.26 4"/><path d="M8.65 22c.21-.66.45-1.32.57-2"/><path d="M14 13.12c0 2.38 0 6.38-1 8.88"/><path d="M2 16h.01"/><path d="M21.8 16c.2-2 .131-5.354 0-6"/><path d="M9 6.8a6 6 0 0 1 9 5.2c0 .47 0 1.17-.02 2"/></svg>,
+  unlock: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg>,
+  wallet: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><path d="M18 12a2 2 0 0 0 0 4h4v-4Z"/></svg>,
+  paperclip: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>,
+  receiptCheck: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 2v20l2-1 2 1 2-1 2 1 2-1 2 1 2-1 2 1V2l-2 1-2-1-2 1-2-1-2 1-2-1-2 1-2-1Z"/><path d="m9 12 2 2 4-4"/></svg>,
+  qrCode: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect width="5" height="5" x="3" y="3" rx="1"/><rect width="5" height="5" x="16" y="3" rx="1"/><rect width="5" height="5" x="3" y="16" rx="1"/><path d="M21 16h-3a2 2 0 0 0-2 2v3"/><path d="M21 21v.01"/><path d="M12 7v3a2 2 0 0 1-2 2H7"/><path d="M3 12h.01"/><path d="M12 3h.01"/><path d="M12 16v.01"/><path d="M16 12h1"/><path d="M21 12v.01"/><path d="M12 21v-1"/></svg>,
+};
+// Override Icons.loader with proper ClamFlowLoader (unique IDs, hardcoded teal colours)
+Icons.loader = <ClamFlowLoader width={56}/>;
+
+// WebView-safe clipboard helper.
+// navigator.clipboard.writeText is not available in all Android WebViews
+// (particularly older Chrome WebView versions).  Falls back to the legacy
+// document.execCommand approach when the Clipboard API is absent or throws.
+const copyToClipboard = (text) => {
+  if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+    return navigator.clipboard.writeText(text).catch(() => {
+      // Clipboard API rejected (e.g. permissions, focus) — try legacy fallback
+      legacyCopy(text);
+    });
+  }
+  legacyCopy(text);
+  return Promise.resolve();
+};
+const legacyCopy = (text) => {
+  const ta = document.createElement('textarea');
+  ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+  document.body.appendChild(ta); ta.focus(); ta.select();
+  try { document.execCommand('copy'); } catch {}
+  document.body.removeChild(ta);
+};
+
+// Generate a bank-safe alphanumeric reference key for a batch's transfer remarks.
+// CPAY-2026-27-00001 → "CPAY1"
+const computeCpayKey = (batchReference) => {
+  if (!batchReference) return null;
+  const parts = batchReference.split(/[-\s]+/);
+  const seq = parseInt(parts[parts.length - 1], 10);
+  if (isNaN(seq)) return null;
+  return `CPAY${seq}`;
+};
+
+// Generate a bank-safe alphanumeric reference key for a voucher's transfer remarks.
+// Banks reject dashes and other special characters in notes/remarks fields.
+// VCH-2026-27-00437 → "VCH437"  |  VCH-2025-26-00001 → "VCH1"
+const computeVchKey = (serialNumber) => {
+  if (!serialNumber) return null;
+  const parts = serialNumber.split(/[-\s]+/);
+  const seq = parseInt(parts[parts.length - 1], 10);
+  if (isNaN(seq)) return null;
+  return `VCH${seq}`;
+};
+
+// Download a composite QR card (QR + payee/amount details) as a PNG.
+// Used by all three Pay Now modals so users can upload to GPay → Scan from Gallery.
+async function downloadQrCard({ qrSrc, serial, payeeName, amount, upiId, label }) {
+  const W = 360;
+  const amtStr = '\u20B9' + parseFloat(amount).toLocaleString('en-IN', { minimumFractionDigits: 2 });
+
+  // Fetch QR image as a blob so the canvas is never CORS-tainted
+  let qrImg;
+  try {
+    const blob = await fetch(qrSrc).then(r => { if (!r.ok) throw new Error('fetch'); return r.blob(); });
+    qrImg = await new Promise((res, rej) => {
+      const i = new Image();
+      i.onload = () => res(i);
+      i.onerror = rej;
+      i.src = URL.createObjectURL(blob);
+    });
+  } catch {
+    // CORS or network failure — open image URL so user can long-press save
+    window.open(qrSrc, '_blank');
+    return;
+  }
+
+  const QR = 220, headerH = 58, PAD = 20;
+  const H = headerH + 58 + QR + 72;
+  const canvas = document.createElement('canvas');
+  canvas.width = W;
+  canvas.height = H;
+  const ctx = canvas.getContext('2d');
+
+  // White background
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, W, H);
+
+  // Green header bar
+  ctx.fillStyle = '#16a34a';
+  ctx.fillRect(0, 0, W, headerH);
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 16px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText((label || 'Pay Now') + ' \u2014 ' + serial, W / 2, headerH / 2);
+
+  // Payee name
+  ctx.fillStyle = '#111827';
+  ctx.font = 'bold 15px sans-serif';
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillText(payeeName, W / 2, headerH + 28);
+
+  // Amount
+  ctx.fillStyle = '#16a34a';
+  ctx.font = 'bold 24px sans-serif';
+  ctx.fillText(amtStr, W / 2, headerH + 54);
+
+  // QR image
+  const qrX = (W - QR) / 2;
+  const qrY = headerH + 64;
+  // Light border rect behind QR
+  ctx.strokeStyle = '#e5e7eb';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(qrX - 1, qrY - 1, QR + 2, QR + 2);
+  ctx.drawImage(qrImg, qrX, qrY, QR, QR);
+
+  // UPI ID
+  ctx.fillStyle = '#6b7280';
+  ctx.font = '12px monospace';
+  ctx.fillText(upiId, W / 2, qrY + QR + 22);
+
+  // GPay usage hint
+  ctx.fillStyle = '#9ca3af';
+  ctx.font = '11px sans-serif';
+  ctx.fillText('GPay \u2192 Pay \u2192 Scan QR from Gallery', W / 2, qrY + QR + 44);
+  ctx.fillText('(For payments under \u20B92,000 only)', W / 2, qrY + QR + 60);
+
+  // Outer border
+  ctx.strokeStyle = '#d1d5db';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(0.5, 0.5, W - 1, H - 1);
+
+  const a = document.createElement('a');
+  a.download = 'pay-' + serial.replace(/[\/\\]/g, '-') + '.png';
+  a.href = canvas.toDataURL('image/png');
+  a.click();
+}
+
+// Number to Words Converter for Indian Rupees
+const numberToWordsIndian = (num) => {
+  if (num === undefined || num === null || isNaN(num)) return '';
+  if (num === 0) return 'Rupees Zero Only';
+  
+  const ones = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine'];
+  const tens = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
+  const teens = ['Ten', 'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen', 'Seventeen', 'Eighteen', 'Nineteen'];
+  
+  const convertLessThan100 = (n) => {
+    if (n < 10) return ones[n];
+    if (n >= 10 && n < 20) return teens[n - 10];
+    return tens[Math.floor(n / 10)] + (n % 10 !== 0 ? ' ' + ones[n % 10] : '');
+  };
+  
+  const convertLessThan1000 = (n) => {
+    if (n < 100) return convertLessThan100(n);
+    return ones[Math.floor(n / 100)] + ' Hundred' + (n % 100 !== 0 ? ' ' + convertLessThan100(n % 100) : '');
+  };
+  
+  const [rupeesStr, paiseStr] = num.toFixed(2).split('.');
+  let remainingRupees = parseInt(rupeesStr, 10);
+  const paise = parseInt(paiseStr, 10);
+  let words = '';
+  
+  if (remainingRupees >= 10000000) {
+    const crores = Math.floor(remainingRupees / 10000000);
+    words += convertLessThan1000(crores) + ' Crore ';
+    remainingRupees %= 10000000;
+  }
+  
+  if (remainingRupees >= 100000) {
+    const lakhs = Math.floor(remainingRupees / 100000);
+    words += convertLessThan1000(lakhs) + ' Lakh ';
+    remainingRupees %= 100000;
+  }
+  
+  if (remainingRupees >= 1000) {
+    const thousands = Math.floor(remainingRupees / 1000);
+    words += convertLessThan1000(thousands) + ' Thousand ';
+    remainingRupees %= 1000;
+  }
+  
+  if (remainingRupees > 0) {
+    words += convertLessThan1000(remainingRupees);
+  }
+  
+  words = 'Rupees ' + words.trim();
+  
+  if (paise > 0) {
+    words += ' and ' + convertLessThan100(paise) + ' Paise';
+  }
+  
+  return words.trim() + ' Only';
+};
+
+// API Functions
+const api = {
+  getCompanies: () => fetch(`${API_BASE}/companies`).then(r => r.json()),
+  registerUser: (data) => fetch(`${API_BASE}/users/register`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
+  verifyUserMobile: (userId) => fetch(`${API_BASE}/users/${userId}/verify-mobile`, { method: 'POST' }).then(r => r.json()),
+  login: (data) => fetch(`${API_BASE}/users/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
+  switchCompany: (userId, companyId) => fetch(`${API_BASE}/users/${userId}/switch-company`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ companyId }) }).then(r => r.json()),
+  refreshSession: (userId) => fetch(`${API_BASE}/users/${userId}/session`).then(r => r.json()),
+  getCompanyUsers: (companyId) => fetch(`${API_BASE}/companies/${companyId}/users`).then(r => r.json()),
+  onboardUser: (data) => fetch(`${API_BASE}/admin/onboard-user`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
+  updateUser: (userId, data) => fetch(`${API_BASE}/users/${userId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
+  getUserCompanies: (userId) => fetch(`${API_BASE}/users/${userId}/companies`).then(r => r.json()),
+  updateUserCompanies: (userId, companyAccess, requesterId) => fetch(`${API_BASE}/users/${userId}/companies`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ companyAccess, requesterId }) }).then(r => r.json()),
+  deleteUser: (userId, requesterId) => fetch(`${API_BASE}/users/${userId}`, { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ requesterId }) }).then(r => r.json()),
+  sendOtp: (mobile, purpose) => fetch(`${API_BASE}/otp/send`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mobile, purpose }) }).then(r => r.json()),
+  verifyOtp: (mobile, code) => fetch(`${API_BASE}/otp/verify`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mobile, code }) }).then(r => r.json()),
+  addPayee: (data) => fetch(`${API_BASE}/payees`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
+  createPayee: (data) => fetch(`${API_BASE}/payees`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
+  getPayees: (companyId) => fetch(`${API_BASE}/companies/${companyId}/payees`).then(r => r.json()),
+  updatePayee: (payeeId, data) => fetch(`${API_BASE}/payees/${payeeId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
+  deletePayee: (payeeId) => fetch(`${API_BASE}/payees/${payeeId}`, { method: 'DELETE' }).then(r => r.json()),
+  createStaffLogin: (payeeId, requesterId, aadhar) => fetch(`${API_BASE}/payees/${payeeId}/create-staff-login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ requesterId, aadhar }) }).then(async r => { const d = await r.json(); if (!r.ok) throw new Error(d.error || d.details || 'Request failed'); return d; }),
+  getSettlementEntries: (token) => fetch(`${API_BASE}/settlement-sessions/${token}/entries`).then(r => r.json()),
+  createVoucher: (data) => fetch(`${API_BASE}/vouchers`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
+  getVouchers: (companyId) => fetch(`${API_BASE}/companies/${companyId}/vouchers`).then(r => r.json()),
+  getVoucher: (voucherId) => fetch(`${API_BASE}/vouchers/${voucherId}`).then(r => r.json()),
+  approveVoucher: (voucherId, approvedBy) => fetch(`${API_BASE}/vouchers/${voucherId}/approve`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ approvedBy }) }).then(r => r.json()),
+  rejectVoucher: (voucherId, rejectedBy, reason) => fetch(`${API_BASE}/vouchers/${voucherId}/reject`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rejectedBy, reason }) }).then(r => r.json()),
+  completeVoucher: (voucherId, otp) => fetch(`${API_BASE}/vouchers/${voucherId}/complete`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ otp }) }).then(r => r.json()),
+  resendPayeeOtp: (voucherId) => fetch(`${API_BASE}/vouchers/${voucherId}/resend-otp`, { method: 'POST' }).then(r => r.json()),
+  deleteVoucher: (voucherId, deletedBy) => fetch(`${API_BASE}/vouchers/${voucherId}`, { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ deletedBy }) }).then(r => r.json()),
+  updateVoucher: (voucherId, data) => fetch(`${API_BASE}/vouchers/${voucherId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
+  submitVoucher: (voucherId) => fetch(`${API_BASE}/vouchers/${voucherId}/submit`, { method: 'POST' }).then(r => r.json()),
+  // Document verification APIs
+  uploadVoucherDocument: (voucherId, documentData, mimeType, uploadedBy) => fetch(`${API_BASE}/vouchers/${voucherId}/upload-document`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ documentData, mimeType, uploadedBy }) }).then(r => r.json()),
+  approveWithAttestation: (voucherId, approvedBy, attestationNotes) => fetch(`${API_BASE}/vouchers/${voucherId}/approve-with-attestation`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ approvedBy, attestationNotes }) }).then(r => r.json()),
+  getVoucherDocument: (voucherId) => fetch(`${API_BASE}/vouchers/${voucherId}/document`).then(r => r.json()),
+  // Payment tracking APIs (Phase-2)
+  markAwaitingPayment: (voucherId, markedBy) => fetch(`${API_BASE}/vouchers/${voucherId}/mark-awaiting-payment`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ markedBy }) }).then(r => r.json()),
+  markPaid: (voucherId, paidBy, paymentReference, paymentNotes, receiptData, receiptMimeType) => fetch(`${API_BASE}/vouchers/${voucherId}/mark-paid`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ paidBy, paymentReference, paymentNotes, receiptData: receiptData || undefined, receiptMimeType: receiptMimeType || undefined }) }).then(r => r.json()),
+  dequeuePayment: (voucherId, dequeuedBy) => fetch(`${API_BASE}/vouchers/${voucherId}/dequeue-payment`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dequeuedBy }) }).then(r => r.json()),
+  getNotifications: (userId) => fetch(`${API_BASE}/users/${userId}/notifications`).then(r => r.json()),
+  markAllNotificationsRead: (userId) => fetch(`${API_BASE}/users/${userId}/notifications/read-all`, { method: 'POST' }).then(r => r.json()),
+  getHeadsOfAccount: (companyId) => fetch(`${API_BASE}/heads-of-account?companyId=${companyId}`).then(r => r.json()),
+  addHeadOfAccount: (companyId, name, isGlobal) => fetch(`${API_BASE}/heads-of-account`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ companyId, name, isGlobal }) }).then(r => r.json()),
+  updateHeadOfAccount: (id, name, isGlobal) => fetch(`${API_BASE}/heads-of-account/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, isGlobal }) }).then(r => r.json()),
+  deleteHeadOfAccount: (id) => fetch(`${API_BASE}/heads-of-account/${id}`, { method: 'DELETE' }).then(r => r.json()),
+  // Payment accounts (Paid From)
+  getPaymentAccounts: (companyId) => fetch(`${API_BASE}/companies/${companyId}/payment-accounts`).then(r => r.json()),
+  addPaymentAccount: (data) => fetch(`${API_BASE}/payment-accounts`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
+  deletePaymentAccount: (id) => fetch(`${API_BASE}/payment-accounts/${id}`, { method: 'DELETE' }).then(r => r.json()),
+  importHeadsOfAccount: (companyId, names) => fetch(`${API_BASE}/heads-of-account/import`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ companyId, names }) }).then(r => r.json()),
+  // Sub-heads of account
+  getSubHeadsOfAccount: (headId) => fetch(`${API_BASE}/sub-heads-of-account?headId=${headId}`).then(r => r.json()),
+  getSubHeadsByCompany: (companyId) => fetch(`${API_BASE}/sub-heads-of-account?companyId=${companyId}`).then(r => r.json()),
+  getGroupedSubHeads: (companyId) => fetch(`${API_BASE}/sub-heads-of-account/grouped?companyId=${companyId}`).then(r => r.json()),
+  addSubHeadOfAccount: (headId, companyId, name) => fetch(`${API_BASE}/sub-heads-of-account`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ headId, companyId, name }) }).then(r => r.json()),
+  updateSubHeadOfAccount: (id, name) => fetch(`${API_BASE}/sub-heads-of-account/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) }).then(r => r.json()),
+  deleteSubHeadOfAccount: (id) => fetch(`${API_BASE}/sub-heads-of-account/${id}`, { method: 'DELETE' }).then(r => r.json()),
+  // Suspense vouchers
+  getSuspenseVouchers: (companyId, params) => { const q = new URLSearchParams(params || {}).toString(); return fetch(`${API_BASE}/companies/${companyId}/suspense-vouchers${q ? '?' + q : ''}`).then(r => r.json()); },
+  getPendingTopUps: (companyId) => fetch(`${API_BASE}/companies/${companyId}/pending-topups`).then(r => r.json()),
+  createSuspenseVoucher: (data) => fetch(`${API_BASE}/suspense-vouchers`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
+  getSuspenseVoucher: (id) => fetch(`${API_BASE}/suspense-vouchers/${id}`).then(r => r.json()),
+  approveSuspenseVoucher: (id, approvedBy) => fetch(`${API_BASE}/suspense-vouchers/${id}/approve`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ approvedBy }) }).then(r => r.json()),
+  verifyAdvanceOtp: (id, otp, verifiedBy) => fetch(`${API_BASE}/suspense-vouchers/${id}/verify-advance-otp`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ otp, verifiedBy }) }).then(r => r.json()),
+  resendAdvanceOtp: (id, requestedBy) => fetch(`${API_BASE}/suspense-vouchers/${id}/resend-advance-otp`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ requestedBy }) }).then(r => r.json()),
+  rejectSuspenseVoucher: (id, rejectedBy, reason) => fetch(`${API_BASE}/suspense-vouchers/${id}/reject`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rejectedBy, reason }) }).then(r => r.json()),
+  addSuspenseSettlement: (suspenseId, data) => fetch(`${API_BASE}/suspense-vouchers/${suspenseId}/settlements`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
+  getSuspenseSettlements: (suspenseId) => fetch(`${API_BASE}/suspense-vouchers/${suspenseId}/settlements`).then(r => r.json()),
+  getSettlementSession: (token) => fetch(`${API_BASE}/settlement-sessions/${token}`).then(r => r.json()),
+  submitSettlementSession: (token, data) => fetch(`${API_BASE}/settlement-sessions/${token}/settlements`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
+  approveSettlementEntry: (settlementId, data) => fetch(`${API_BASE}/suspense-settlements/${settlementId}/approve`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
+  combineSettlements: (suspenseId, data) => fetch(`${API_BASE}/suspense-vouchers/${suspenseId}/combine-settlements`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
+  resendSettlementLink: (suspenseId, requestedBy) => fetch(`${API_BASE}/suspense-vouchers/${suspenseId}/resend-settlement-link`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ requestedBy }) }).then(r => r.json()),
+  topUpSuspenseVoucher: (suspenseId, data) => fetch(`${API_BASE}/suspense-vouchers/${suspenseId}/topup`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
+  approveTopUp: (settlementId, approvedBy) => fetch(`${API_BASE}/suspense-settlements/${settlementId}/approve-topup`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ approvedBy }) }).then(r => r.json()),
+  rejectTopUp: (settlementId, rejectedBy, reason) => fetch(`${API_BASE}/suspense-settlements/${settlementId}/reject-topup`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rejectedBy, reason }) }).then(r => r.json()),
+  markTopupPaid: (settlementId, paidBy, paymentReference, paymentNotes, receiptData, receiptMimeType) => fetch(`${API_BASE}/suspense-settlements/${settlementId}/mark-topup-paid`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ paidBy, paymentReference, paymentNotes, receiptData: receiptData || undefined, receiptMimeType: receiptMimeType || undefined }) }).then(r => r.json()),
+  markAdvancePaid: (suspenseId, paidBy, paymentReference, paymentNotes, receiptData, receiptMimeType) => fetch(`${API_BASE}/suspense-vouchers/${suspenseId}/mark-advance-paid`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ paidBy, paymentReference, paymentNotes, receiptData: receiptData || undefined, receiptMimeType: receiptMimeType || undefined }) }).then(r => r.json()),
+  // Cross-device receipt routing: Pay Now modal writes context to server so a receipt
+  // shared from the Admin’s phone can route back to the correct confirmation modal
+  // regardless of which device originally displayed the Pay Now QR (Migration 033).
+  setPendingShareContext: (userId, ctx) => fetch(`${API_BASE}/users/${userId}/pending-share-context`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(ctx) }).then(r => r.json()),
+  consumePendingShareContext: (userId) => fetch(`${API_BASE}/users/${userId}/pending-share-context`).then(r => r.json()),
+  clearPendingShareContext: (userId) => fetch(`${API_BASE}/users/${userId}/pending-share-context`, { method: 'DELETE' }).then(r => r.json()),
+  closeSuspenseVoucher: (suspenseId, closedBy, closeHoa, closeSubHoa, closeNotes) => fetch(`${API_BASE}/suspense-vouchers/${suspenseId}/close`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ closedBy, closeHoa, closeSubHoa, closeNotes }) }).then(r => r.json()),
+  approveSuspenseClose: (suspenseId, approvedBy) => fetch(`${API_BASE}/suspense-vouchers/${suspenseId}/approve-close`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ approvedBy }) }).then(r => r.json()),
+  rejectSuspenseClose: (suspenseId, rejectedBy, reason) => fetch(`${API_BASE}/suspense-vouchers/${suspenseId}/reject-close`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rejectedBy, reason }) }).then(r => r.json()),
+  getPendingCloseRequests: (companyId) => fetch(`${API_BASE}/companies/${companyId}/pending-close-requests`).then(r => r.json()),
+  recalculateSuspenseBalance: (suspenseId, requestedBy) => fetch(`${API_BASE}/suspense-vouchers/${suspenseId}/recalculate-balance`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ requestedBy }) }).then(r => r.json()),
+  // Attachments
+  matchReceiptToVoucher: (data) => fetch(`${API_BASE}/receipts/match-voucher`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
+    .then(async r => { const json = await r.json(); if (!r.ok) throw new Error(json.message || json.error || 'Match request failed'); return json; }),
+  autoCompleteReceipt: (data) => fetch(`${API_BASE}/receipts/auto-complete`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
+    .then(async r => { const json = await r.json(); if (!r.ok) throw new Error(json.message || json.error || 'Auto-complete failed'); return json; }),
+  depositUnassigned: (data) => fetch(`${API_BASE}/receipts/deposit-unassigned`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
+    .then(async r => r.json()).catch(() => ({})),
+  getUnassignedReceipts: (companyId, requestedBy) => fetch(`${API_BASE}/companies/${companyId}/unassigned-receipts?requestedBy=${requestedBy}`).then(r => r.json()),
+  assignUnassignedReceipt: (id, data) => fetch(`${API_BASE}/unassigned-receipts/${id}/assign`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
+  dismissUnassignedReceipt: (id, data) => fetch(`${API_BASE}/unassigned-receipts/${id}/dismiss`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
+  retrospectiveScan: (companyId, data) => fetch(`${API_BASE}/companies/${companyId}/retrospective-payment-scan`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
+    .then(async r => { const json = await r.json(); if (!r.ok) throw new Error(json.message || json.error || 'Scan failed'); return json; }),
+  // Payment batches (Migration 032)
+  getPendingBatches: (companyId) => fetch(`${API_BASE}/companies/${companyId}/batches`).then(r => r.json()),
+  createBatch: (data) => fetch(`${API_BASE}/batches`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
+    .then(async r => { const json = await r.json(); if (!r.ok) throw new Error(json.error || 'Create batch failed'); return json; }),
+  cancelBatch: (batchId, data) => fetch(`${API_BASE}/batches/${batchId}/cancel`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
+    .then(async r => { const json = await r.json(); if (!r.ok) throw new Error(json.error || 'Cancel batch failed'); return json; }),
+  markBatchPaid: (batchId, data) => fetch(`${API_BASE}/batches/${batchId}/mark-paid`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
+    .then(async r => { const json = await r.json(); if (!r.ok) throw new Error(json.error || 'Mark batch paid failed'); return json; }),
+  getBatchReceipts: (batchId) => fetch(`${API_BASE}/batches/${batchId}/receipts`).then(async r => { const json = await r.json(); if (!r.ok) throw new Error(json.error || 'Failed to load receipts'); return json; }),
+  getBatch: (batchId) => fetch(`${API_BASE}/batches/${batchId}`).then(async r => { const json = await r.json(); if (!r.ok) throw new Error(json.error || 'Failed to load batch'); return json; }),
+  getBatchRegister: (companyId) => fetch(`${API_BASE}/companies/${companyId}/batch-register`).then(async r => { const json = await r.json(); if (!r.ok) throw new Error(json.error || 'Failed to load batch register'); return json; }),
+  addBatchReceipt: (batchId, data) => fetch(`${API_BASE}/batches/${batchId}/receipts`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(async r => { const json = await r.json(); if (!r.ok) throw new Error(json.error || 'Upload failed'); return json; }),
+  uploadAttachment: (data) => fetch(`${API_BASE}/attachments/upload`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
+  getAttachments: (params) => fetch(`${API_BASE}/attachments?${new URLSearchParams(params)}`).then(r => r.json()),
+  deleteAttachment: (id, deletedBy) => fetch(`${API_BASE}/attachments/${id}`, { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ deletedBy }) }).then(r => r.json()),
+  // Capture sessions
+  createCaptureSession: (data) => fetch(`${API_BASE}/capture-sessions`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
+  getCaptureSession: (id) => fetch(`${API_BASE}/capture-sessions/${id}`).then(r => r.json()),
+  uploadToCapture: (id, data) => fetch(`${API_BASE}/capture-sessions/${id}/upload`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
+  // HOA Correction Proposals
+  proposeHoaCorrection: (voucherId, data) => fetch(`${API_BASE}/vouchers/${voucherId}/hoa-corrections`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
+  getHoaCorrections: (companyId, status) => fetch(`${API_BASE}/companies/${companyId}/hoa-corrections${status ? '?status=' + status : ''}`).then(r => r.json()),
+  batchApproveHoaCorrections: (companyId, ids, approvedBy) => fetch(`${API_BASE}/companies/${companyId}/hoa-corrections/batch-approve`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids, approvedBy }) }).then(r => r.json()),
+  rejectHoaCorrection: (proposalId, rejectedBy, rejectionReason) => fetch(`${API_BASE}/hoa-corrections/${proposalId}/reject`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rejectedBy, rejectionReason }) }).then(r => r.json()),
+  // Password & WebAuthn
+  setPassword: (userId, newPassword, setupToken, currentPassword) => fetch(`${API_BASE}/users/${userId}/set-password`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ newPassword, setupToken, currentPassword }) }).then(r => r.json()),
+  forgotPassword: (username, otp) => fetch(`${API_BASE}/auth/forgot-password`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, otp }) }).then(r => r.json()),
+  adminResetPassword: (userId, requesterId) => fetch(`${API_BASE}/users/${userId}/password`, { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ requesterId }) }).then(r => r.json()),
+  webauthnRegisterOptions: (userId) => fetch(`${API_BASE}/auth/webauthn/register/options`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId }) }).then(r => r.json()),
+  webauthnRegisterVerify: (userId, response, deviceName) => fetch(`${API_BASE}/auth/webauthn/register/verify`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId, response, deviceName }) }).then(r => r.json()),
+  webauthnLoginOptions: (username) => fetch(`${API_BASE}/auth/webauthn/login/options`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username }) }).then(r => r.json()),
+  webauthnLoginVerify: (username, response, companyId) => fetch(`${API_BASE}/auth/webauthn/login/verify`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, response, companyId }) }).then(r => r.json()),
+  getWebAuthnCredentials: (userId) => fetch(`${API_BASE}/users/${userId}/webauthn-credentials`).then(r => r.json()),
+  deleteWebAuthnCredential: (userId, credentialId) => fetch(`${API_BASE}/users/${userId}/webauthn-credentials/${credentialId}`, { method: 'DELETE' }).then(r => r.json()),
+};
+
+// Format number in Indian style with commas (without Unicode NBSP gaps)
+const formatIndianNumber = (num, decimals = 2) => {
+  if (num === null || num === undefined || isNaN(num)) return '0.00';
+  const fixed = parseFloat(num).toFixed(decimals);
+  const [intPart, decPart] = fixed.split('.');
+  // Indian number system: last 3 digits, then groups of 2
+  let result = '';
+  const len = intPart.length;
+  for (let i = 0; i < len; i++) {
+    if (i > 0 && (len - i) === 3) result += ',';
+    else if (i > 0 && (len - i) > 3 && (len - i) % 2 === 1) result += ',';
+    result += intPart[i];
+  }
+  return decimals > 0 ? result + '.' + decPart : result;
+};
+
+// Format currency with ₹ symbol
+const formatRupees = (num, decimals = 2) => '₹' + formatIndianNumber(num, decimals);
+
+// Context
+const AppContext = createContext(null);
+const useApp = () => useContext(AppContext);
+
+// Toast Component
+const Toast = ({ toasts }) => (
+  <div className="toast-container">
+    {toasts.map(t => (
+      <div key={t.id} className={`toast ${t.type}`}>
+        <span>{t.message}</span>
+      </div>
+    ))}
+  </div>
+);
+
+// PWA Install Prompt
+const PWAInstallPrompt = () => {
+  const [deferredPrompt, setDeferredPrompt] = useState(null);
+  const [showPrompt, setShowPrompt] = useState(false);
+
+  useEffect(() => {
+    const handler = (e) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+      // Check if user dismissed before
+      if (!localStorage.getItem('pwa-install-dismissed')) {
+        setShowPrompt(true);
+      }
+    };
+    
+    window.addEventListener('beforeinstallprompt', handler);
+    
+    // Check if already installed
+    if (window.matchMedia('(display-mode: standalone)').matches) {
+      setShowPrompt(false);
+    }
+    
+    return () => window.removeEventListener('beforeinstallprompt', handler);
+  }, []);
+
+  const handleInstall = async () => {
+    if (!deferredPrompt) return;
+    
+    deferredPrompt.prompt();
+    const { outcome } = await deferredPrompt.userChoice;
+    
+    console.log(`User response to install prompt: ${outcome}`);
+    setDeferredPrompt(null);
+    setShowPrompt(false);
+  };
+
+  const handleDismiss = () => {
+    localStorage.setItem('pwa-install-dismissed', Date.now());
+    setShowPrompt(false);
+  };
+
+  if (!showPrompt) return null;
+
+  return (
+    <div className="pwa-install-banner">
+      <div className="pwa-install-content">
+        <div className="pwa-install-icon">{Icons.download}</div>
+        <div>
+          <div className="pwa-install-title">Install App</div>
+          <div className="pwa-install-text">Add to home screen for quick access</div>
+        </div>
+      </div>
+      <div className="pwa-install-actions">
+        <button className="btn btn-sm btn-secondary" onClick={handleDismiss}>Later</button>
+        <button className="btn btn-sm btn-primary" onClick={handleInstall}>Install</button>
+      </div>
+    </div>
+  );
+};
+
+// ─── Mobile device detection ─────────────────────────────────────────────────
+const isMobileDevice = () => {
+  const ua = navigator.userAgent;
+  // Only match genuine mobile user agents — desktop PWA installs have desktop UA strings
+  return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(ua);
+};
+
+// ─── Simple PIN hash (salted, non-reversible) ────────────────────────────────
+const hashPin = (pin) => {
+  let hash = 0;
+  const str = 'relish_salt_' + pin + '_2026';
+  for (let i = 0; i < str.length; i++) {
+    hash = ((hash << 5) - hash) + str.charCodeAt(i);
+    hash |= 0;
+  }
+  return 'p_' + Math.abs(hash).toString(36);
+};
+
+// ─── Shared numpad used by both SetPinModal and MobileLockScreen ─────────────
+const PinNumpad = ({ value, onChange, disabled }) => {
+  const handle = (key) => {
+    if (disabled) return;
+    if (key === '⌫') { onChange(value.slice(0, -1)); return; }
+    if (value.length < 4) onChange(value + key);
+  };
+
+  // Accept keyboard input (digits + Backspace)
+  useEffect(() => {
+    const onKey = (e) => {
+      if (disabled) return;
+      if (e.key === 'Backspace') { e.preventDefault(); handle('⌫'); }
+      else if (/^[0-9]$/.test(e.key)) { e.preventDefault(); handle(e.key); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [value, disabled]);
+
+  return (
+    <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'10px',maxWidth:'252px',margin:'0 auto'}}>
+      {[1,2,3,4,5,6,7,8,9,'',0,'⌫'].map((k,i) => (
+        <button key={i} type="button" disabled={k===''||disabled}
+          onPointerDown={(e) => { e.preventDefault(); handle(String(k)); }}
+          style={{height:'54px',border:k===''?'none':'1.5px solid #ddd',borderRadius:'14px',
+            background:k===''?'transparent':'#fafafa',fontSize:k==='⌫'?'1.2rem':'1.4rem',
+            fontWeight:600,cursor:k===''?'default':'pointer',fontFamily:'inherit',color:'#222',
+            WebkitTapHighlightColor:'transparent',touchAction:'manipulation'}}>
+          {k}
+        </button>
+      ))}
+    </div>
+  );
+};
+
+// ─── PIN dots display ────────────────────────────────────────────────────────
+const PinDots = ({ length, filled, shake }) => (
+  <div className={`pin-dots${shake?' pin-shake':''}`}>
+    {Array.from({length},(_,i)=>(
+      <div key={i} className={`pin-dot${i<filled?' filled':''}`}/>
+    ))}
+  </div>
+);
+
+// ─── Set PIN modal (shown once after first mobile login) ─────────────────────
+const SetPinModal = ({ onPinSet, onSkip }) => {
+  const [step, setStep] = useState(1);
+  const [pin, setPin] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [error, setError] = useState('');
+  const [shake, setShake] = useState(false);
+
+  const handlePin = (v) => {
+    setPin(v); setError('');
+    if (v.length === 4) setTimeout(() => setStep(2), 280);
+  };
+  const handleConfirm = (v) => {
+    setConfirm(v); setError('');
+    if (v.length === 4) {
+      if (v === pin) { onPinSet(v); }
+      else {
+        setError('PINs do not match — try again');
+        setShake(true); setTimeout(() => setShake(false), 500);
+        setConfirm(''); setStep(1); setPin('');
+      }
+    }
+  };
+
+  const cur = step === 1 ? pin : confirm;
+  return (
+    <div className="modal-overlay">
+      <div className="modal" style={{maxWidth:'360px'}}>
+        <div className="modal-header"><h3 className="modal-title">🔒 Set App PIN</h3></div>
+        <div className="modal-body" style={{textAlign:'center',padding:'1.5rem'}}>
+          <p style={{fontSize:'0.88rem',color:'#555',marginBottom:'1.25rem'}}>
+            {step===1 ? 'Enter a 4-digit PIN to lock this app when not in use.' : 'Re-enter your PIN to confirm.'}
+          </p>
+          {error && <div className="alert alert-error" style={{marginBottom:'1rem',fontSize:'0.82rem'}}>{error}</div>}
+          <PinDots length={4} filled={cur.length} shake={shake}/>
+          <div style={{marginTop:'1.25rem'}}>
+            <PinNumpad value={cur} onChange={step===1?handlePin:handleConfirm}/>
+          </div>
+          <p style={{fontSize:'0.75rem',color:'#aaa',marginTop:'1rem'}}>Step {step} of 2</p>
+        </div>
+        <div className="modal-footer" style={{justifyContent:'center'}}>
+          <button className="btn btn-secondary" style={{fontSize:'0.82rem'}} onClick={onSkip}>Skip for now</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ─── Mobile Lock Screen (biometric first → PIN fallback) ─────────────────────
+const MobileLockScreen = ({ savedUser, onUnlock, onSignOut }) => {
+  const hasPin   = !!localStorage.getItem('relish_mobile_pin_' + savedUser.id);
+  const hasBio   = !!localStorage.getItem('relish_mobile_bio_id_' + savedUser.id);
+  const [mode, setMode]     = useState(hasBio ? 'bio' : 'pin');
+  const [pin, setPin]       = useState('');
+  const [error, setError]   = useState('');
+  const [attempts, setAttempts] = useState(0);
+  const [shake, setShake]   = useState(false);
+  const [bioLoading, setBioLoading] = useState(false);
+
+  // Auto-trigger biometric on mount
+  useEffect(() => { if (mode === 'bio') attemptBio(); }, []);
+
+  const attemptBio = async () => {
+    setBioLoading(true); setError('');
+    try {
+      const credIdB64 = localStorage.getItem('relish_mobile_bio_id_' + savedUser.id);
+      const challenge = crypto.getRandomValues(new Uint8Array(32));
+      const credIdBytes = Uint8Array.from(atob(credIdB64), c => c.charCodeAt(0));
+      await navigator.credentials.get({
+        publicKey: {
+          challenge,
+          allowCredentials: [{ id: credIdBytes, type: 'public-key', transports: ['internal'] }],
+          userVerification: 'required',
+          timeout: 60000
+        }
+      });
+      onUnlock(savedUser);
+    } catch (e) {
+      setBioLoading(false);
+      if (e.name === 'NotAllowedError') setError('Biometric cancelled. Try again or use PIN.');
+      else { setError('Biometric unavailable. Use PIN.'); setMode('pin'); }
+    }
+  };
+
+  const handlePinChange = (v) => {
+    setPin(v); setError('');
+    if (v.length === 4) {
+      const stored = localStorage.getItem('relish_mobile_pin_' + savedUser.id);
+      if (stored && hashPin(v) === stored) {
+        onUnlock(savedUser);
+      } else {
+        const att = attempts + 1;
+        setAttempts(att);
+        setShake(true); setTimeout(() => setShake(false), 500);
+        setPin('');
+        if (att >= 5) {
+          setError('Too many attempts — please sign in again.');
+          setTimeout(() => { localStorage.removeItem('relish_session'); localStorage.removeItem('relish_mobile_pin_' + savedUser.id); localStorage.removeItem('relish_mobile_bio_id_' + savedUser.id); localStorage.removeItem('relish_page'); onSignOut(); }, 2000);
+        } else {
+          setError(`Incorrect PIN — ${5-att} attempt${5-att===1?'':'s'} left`);
+        }
+      }
+    }
+  };
+
+  return (
+    <div className="lock-screen-container">
+      <div className="lock-screen-card">
+        <div className="lock-screen-avatar">{savedUser.name ? savedUser.name[0].toUpperCase() : '?'}</div>
+        <h2 className="lock-screen-name">{savedUser.name}</h2>
+        <p className="lock-screen-company">{savedUser.company?.name || ''}</p>
+
+        {mode === 'bio' ? (
+          <div style={{textAlign:'center'}}>
+            <button
+              onClick={attemptBio} disabled={bioLoading}
+              style={{background:'var(--relish-orange)',border:'none',borderRadius:'50%',
+                width:'80px',height:'80px',fontSize:'2.2rem',cursor:'pointer',margin:'1.5rem auto',
+                display:'flex',alignItems:'center',justifyContent:'center',
+                boxShadow:'0 0 0 8px rgba(245,132,31,0.18)',transition:'transform 0.1s'}}
+              title="Unlock with Face ID, Fingerprint, or device PIN/Pattern">
+              {bioLoading ? '⏳' : '🔐'}
+            </button>
+            <p style={{fontSize:'0.85rem',color:'#888',marginBottom:'0.5rem'}}>
+              {bioLoading ? 'Waiting for device unlock…' : 'Tap to unlock with Face ID / Fingerprint / PIN'}
+            </p>
+            {error && <div className="alert alert-error" style={{fontSize:'0.82rem',marginBottom:'0.75rem'}}>{error}</div>}
+            {hasPin && (
+              <button className="lock-screen-signout" style={{color:'var(--relish-orange)'}} onClick={() => { setMode('pin'); setError(''); }}>
+                Use PIN instead
+              </button>
+            )}
+          </div>
+        ) : (
+          <div style={{width:'100%'}}>
+            <p className="lock-screen-subtitle">Enter your 4-digit PIN</p>
+            {error && <div className="alert alert-error" style={{fontSize:'0.82rem',marginBottom:'0.75rem'}}>{error}</div>}
+            <PinDots length={4} filled={pin.length} shake={shake}/>
+            <div style={{marginTop:'1.25rem'}}><PinNumpad value={pin} onChange={handlePinChange} disabled={attempts>=5}/></div>
+            {hasBio && (
+              <button className="lock-screen-signout" style={{color:'var(--relish-orange)',marginTop:'0.75rem'}} onClick={() => { setMode('bio'); setError(''); setPin(''); attemptBio(); }}>
+                Use Device Lock instead
+              </button>
+            )}
+          </div>
+        )}
+
+        <button className="lock-screen-signout" onClick={onSignOut}>{Icons.logOut} Sign in with a different account</button>
+      </div>
+    </div>
+  );
+};
+
+// ─── Register mobile biometric (called once after login on mobile) ────────────
+const registerMobileBiometric = async (userData) => {
+  if (!window.PublicKeyCredential) return false;
+  try {
+    const available = await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
+    if (!available) return false;
+    const challenge = crypto.getRandomValues(new Uint8Array(32));
+    const credential = await navigator.credentials.create({
+      publicKey: {
+        challenge,
+        rp: { name: 'Relish Approvals', id: location.hostname },
+        user: {
+          id: new TextEncoder().encode(String(userData.id)),
+          name: userData.username || userData.name,
+          displayName: userData.name || userData.username
+        },
+        pubKeyCredParams: [{ alg: -7, type: 'public-key' }, { alg: -257, type: 'public-key' }],
+        authenticatorSelection: {
+          authenticatorAttachment: 'platform',
+          userVerification: 'required',
+          residentKey: 'discouraged'
+        },
+        timeout: 60000,
+        attestation: 'none'
+      }
+    });
+    if (credential) {
+      const credId = btoa(String.fromCharCode(...new Uint8Array(credential.rawId)));
+      localStorage.setItem('relish_mobile_bio_id_' + userData.id, credId);
+      return true;
+    }
+  } catch (e) {
+    console.log('Mobile biometric setup skipped:', e.name);
+  }
+  return false;
+};
+
+// ─── Device Lock Setup Prompt (shown after password login) ──────────────────────
+const DeviceLockPromptModal = ({ user, onDone }) => {
+  const [status, setStatus] = useState('idle'); // 'idle'|'registering'|'success'|'error'
+  const [errorMsg, setErrorMsg] = useState('');
+
+  const handleSetup = async () => {
+    setStatus('registering'); setErrorMsg('');
+    try {
+      const optResult = await api.webauthnRegisterOptions(user.id);
+      if (optResult.error) { setErrorMsg(optResult.error); setStatus('error'); return; }
+
+      let regResponse;
+      try {
+        regResponse = await window.SimpleWebAuthnBrowser.startRegistration(optResult);
+      } catch (e) { setErrorMsg(e.message || 'Cancelled'); setStatus('error'); return; }
+
+      const ua = navigator.userAgent;
+      const deviceName = ua.includes('iPhone') ? 'iPhone' : ua.includes('iPad') ? 'iPad' :
+        ua.includes('Android') ? 'Android' : ua.includes('Mac') ? 'Mac' :
+        ua.includes('Windows') ? 'Windows PC' : 'My Device';
+
+      const verResult = await api.webauthnRegisterVerify(user.id, regResponse, deviceName);
+      if (verResult.success) {
+        // Save credential ID to localStorage so MobileLockScreen also benefits
+        try { localStorage.setItem('relish_mobile_bio_id_' + user.id, verResult.credentialId); } catch {}
+        // Mark Device Lock as registered on this device so setup modal doesn't re-appear
+        try { localStorage.setItem('relish_bio_declined_' + user.id, 'registered'); } catch {}
+        setStatus('success');
+      } else {
+        setErrorMsg(verResult.error || 'Registration failed');
+        setStatus('error');
+      }
+    } catch { setErrorMsg('Connection error'); setStatus('error'); }
+  };
+
+  const handleDecline = () => {
+    try { localStorage.setItem('relish_bio_declined_' + user.id, 'true'); } catch {}
+    onDone();
+  };
+
+  if (status === 'success') {
+    return (
+      <div className="modal-overlay">
+        <div className="modal-content" style={{ maxWidth: '360px', textAlign: 'center', padding: '40px 28px' }}>
+          <div style={{ fontSize: '60px', marginBottom: '16px' }}>✅</div>
+          <h3 style={{ fontWeight: 700, fontSize: '20px', marginBottom: '8px' }}>Device Lock Active!</h3>
+          <p style={{ color: '#6b7280', marginBottom: '28px', lineHeight: 1.5 }}>Next time you open the app, just use your biometric or device PIN — no password needed!</p>
+          <button className="btn btn-primary" style={{ width: '100%' }} onClick={onDone}>Let's Go 🚀</button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="modal-overlay">
+      <div className="modal-content" style={{ maxWidth: '360px', textAlign: 'center', padding: '40px 28px' }}>
+        <div style={{ fontSize: '60px', marginBottom: '16px' }}>🔐</div>
+        <h3 style={{ fontWeight: 700, fontSize: '20px', marginBottom: '8px' }}>Set Up Device Lock?</h3>
+        <p style={{ color: '#374151', marginBottom: '8px', lineHeight: 1.5 }}>
+          Log in with your <strong>fingerprint, Face ID, PIN, or Pattern</strong> — no password needed next time.
+        </p>
+        <p style={{ color: '#9ca3af', fontSize: '13px', marginBottom: '24px', lineHeight: 1.5 }}>
+          Uses your device's screen lock — whatever you have set (biometric or PIN/Pattern). Credentials stored securely in the cloud.
+        </p>
+        {status === 'error' && <div className="alert alert-error" style={{ marginBottom: '16px', textAlign: 'left' }}>{errorMsg}</div>}
+        <button
+          className="btn btn-primary"
+          style={{ width: '100%', marginBottom: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', fontSize: '16px', padding: '14px' }}
+          onClick={handleSetup}
+          disabled={status === 'registering'}
+        >
+          {status === 'registering' ? Icons.loader : '🔐'} Set Up Device Lock
+        </button>
+        <button
+          className="btn"
+          style={{ width: '100%', background: 'transparent', border: '1px solid #d1d5db', color: '#6b7280' }}
+          onClick={handleDecline}
+        >
+          Not On This Device
+        </button>
+      </div>
+    </div>
+  );
+};
+
+// ─── Security Modal (Change Password + Manage Devices) ───────────────────────
+const SecurityModal = ({ user, onClose }) => {
+  const [tab, setTab] = useState('password'); // 'password' | 'devices'
+  const [currentPw, setCurrentPw] = useState('');
+  const [newPw, setNewPw] = useState('');
+  const [confirmPw, setConfirmPw] = useState('');
+  const [showPw, setShowPw] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [msg, setMsg] = useState('');
+  const [msgType, setMsgType] = useState('success');
+  const [devices, setDevices] = useState([]);
+  const [devLoading, setDevLoading] = useState(false);
+  const [regLoading, setRegLoading] = useState(false);
+
+  const webAuthnSupported = !!window.PublicKeyCredential && typeof window.SimpleWebAuthnBrowser !== 'undefined';
+
+  useEffect(() => {
+    if (tab === 'devices') loadDevices();
+  }, [tab]);
+
+  const loadDevices = async () => {
+    setDevLoading(true);
+    try { const d = await api.getWebAuthnCredentials(user.id); setDevices(d || []); } catch {}
+    setDevLoading(false);
+  };
+
+  const handleChangePassword = async () => {
+    if (newPw.length < 6) { setMsg('Password must be at least 6 characters'); setMsgType('error'); return; }
+    if (newPw !== confirmPw) { setMsg('Passwords do not match'); setMsgType('error'); return; }
+    setLoading(true); setMsg('');
+    try {
+      const result = await api.setPassword(user.id, newPw, undefined, currentPw);
+      if (result.success) {
+        setMsg('Password updated successfully'); setMsgType('success');
+        setCurrentPw(''); setNewPw(''); setConfirmPw('');
+      } else { setMsg(result.error || 'Failed to update password'); setMsgType('error'); }
+    } catch { setMsg('Connection error'); setMsgType('error'); }
+    setLoading(false);
+  };
+
+  const handleRegisterDevice = async () => {
+    if (!webAuthnSupported) { setMsg('Device Lock not supported on this browser'); setMsgType('error'); return; }
+    setRegLoading(true); setMsg('');
+    try {
+      const optResult = await api.webauthnRegisterOptions(user.id);
+      if (optResult.error) { setMsg(optResult.error); setMsgType('error'); setRegLoading(false); return; }
+
+      let regResponse;
+      try { regResponse = await window.SimpleWebAuthnBrowser.startRegistration(optResult); }
+      catch (e) { setMsg(e.message || 'Device registration cancelled'); setMsgType('error'); setRegLoading(false); return; }
+
+      const deviceName = navigator.userAgent.includes('iPhone') ? 'iPhone' :
+        navigator.userAgent.includes('Android') ? 'Android' :
+        navigator.userAgent.includes('Mac') ? 'Mac' :
+        navigator.userAgent.includes('Windows') ? 'Windows PC' : 'My Device';
+
+      const verResult = await api.webauthnRegisterVerify(user.id, regResponse, deviceName);
+      if (verResult.success) {
+        // Save credential ID to localStorage so session lock screen can use the same biometric
+        try { localStorage.setItem('relish_mobile_bio_id_' + user.id, verResult.credentialId); } catch {}
+        try { localStorage.setItem('relish_bio_declined_' + user.id, 'registered'); } catch {}
+        setMsg(`Device "${verResult.deviceName}" registered for Device Lock`); setMsgType('success');
+        loadDevices();
+      } else { setMsg(verResult.error || 'Device registration failed'); setMsgType('error'); }
+    } catch { setMsg('Connection error'); setMsgType('error'); }
+    setRegLoading(false);
+  };
+
+  const handleRemoveDevice = async (credentialId, deviceName) => {
+    if (!confirm(`Remove "${deviceName}" from Device Lock?`)) return;
+    try {
+      await api.deleteWebAuthnCredential(user.id, credentialId);
+      loadDevices();
+    } catch { setMsg('Failed to remove device'); setMsgType('error'); }
+  };
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: '440px' }}>
+        <div className="modal-header">
+          <h3 className="modal-title">🔒 Security Settings</h3>
+          <button className="modal-close" onClick={onClose}>✕</button>
+        </div>
+        <div style={{ display: 'flex', gap: '2px', marginBottom: '20px', background: '#f3f4f6', borderRadius: '8px', padding: '4px' }}>
+          {['password', 'devices'].map(t => (
+            <button key={t} onClick={() => setTab(t)}
+              style={{ flex: 1, padding: '8px', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 500, fontSize: '14px',
+                background: tab === t ? 'white' : 'transparent', color: tab === t ? '#1f2937' : '#6b7280',
+                boxShadow: tab === t ? '0 1px 3px rgba(0,0,0,0.1)' : 'none' }}>
+              {t === 'password' ? '🔑 Password' : '📱 Devices'}
+            </button>
+          ))}
+        </div>
+        {msg && <div className={`alert alert-${msgType === 'error' ? 'error' : 'success'}`} style={{ marginBottom: '16px' }}>{msg}</div>}
+
+        {tab === 'password' && (
+          <div>
+            <div className="form-group">
+              <label className="form-label">Current Password</label>
+              <div style={{ position: 'relative' }}>
+                <input type={showPw ? 'text' : 'password'} className="form-input" value={currentPw} onChange={e => setCurrentPw(e.target.value)} placeholder="Current password" style={{ paddingRight: '44px' }} />
+                <button type="button" onClick={() => setShowPw(p => !p)} style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px', color: '#6b7280' }}>{showPw ? '🙈' : '👁️'}</button>
+              </div>
+            </div>
+            <div className="form-group">
+              <label className="form-label">New Password</label>
+              <input type={showPw ? 'text' : 'password'} className="form-input" value={newPw} onChange={e => setNewPw(e.target.value)} placeholder="At least 6 characters" />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Confirm New Password</label>
+              <input type={showPw ? 'text' : 'password'} className="form-input" value={confirmPw} onChange={e => setConfirmPw(e.target.value)} placeholder="Re-enter new password" onKeyDown={e => e.key === 'Enter' && handleChangePassword()} />
+            </div>
+            <button className="btn btn-primary" style={{ width: '100%' }} onClick={handleChangePassword} disabled={loading || !currentPw || !newPw || !confirmPw}>
+              {loading && Icons.loader} Update Password
+            </button>
+          </div>
+        )}
+
+        {tab === 'devices' && (
+          <div>
+            <p style={{ fontSize: '14px', color: '#6b7280', marginBottom: '16px' }}>Registered devices can log in using Face ID, fingerprint, or device PIN — no password required.</p>
+            {webAuthnSupported ? (
+              <button className="btn btn-primary" style={{ width: '100%', marginBottom: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
+                onClick={handleRegisterDevice} disabled={regLoading}>
+                {regLoading ? Icons.loader : '➕'} Register This Device
+              </button>
+            ) : (
+              <div className="alert alert-error" style={{ marginBottom: '16px' }}>Device Lock requires a modern browser with biometric/passkey support.</div>
+            )}
+            {devLoading ? <div style={{ textAlign: 'center', padding: '20px', color: '#9ca3af' }}>{Icons.loader} Loading devices...</div> : (
+              devices.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '20px', color: '#9ca3af', fontSize: '14px' }}>No devices registered yet.</div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {devices.map(d => (
+                    <div key={d.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px', border: '1px solid #e5e7eb', borderRadius: '8px' }}>
+                      <div>
+                        <div style={{ fontWeight: 600, fontSize: '14px' }}>📱 {d.device_name || 'Device'}</div>
+                        <div style={{ fontSize: '12px', color: '#9ca3af' }}>
+                          Added {new Date(d.created_at).toLocaleDateString('en-IN')}
+                          {d.last_used_at && ` · Last used ${new Date(d.last_used_at).toLocaleDateString('en-IN')}`}
+                        </div>
+                      </div>
+                      <button onClick={() => handleRemoveDevice(d.credential_id, d.device_name || 'Device')}
+                        style={{ background: 'none', border: '1px solid #fca5a5', color: '#ef4444', borderRadius: '6px', padding: '4px 10px', cursor: 'pointer', fontSize: '13px' }}>
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// OTP Input
+const OTPInput = ({ length = 6, value = '', onChange }) => {
+  const handleChange = (index, digit) => {
+    if (!/^\d*$/.test(digit)) return;
+    const newValue = value.split('');
+    newValue[index] = digit;
+    onChange(newValue.join(''));
+    if (digit && index < length - 1) document.getElementById(`otp-${index + 1}`)?.focus();
+  };
+  const handleKeyDown = (index, e) => {
+    if (e.key === 'Backspace' && !value[index] && index > 0) document.getElementById(`otp-${index - 1}`)?.focus();
+  };
+  return (
+    <div className="otp-container">
+      {Array.from({ length }, (_, i) => (
+        <input key={i} id={`otp-${i}`} type="text" maxLength={1} className="otp-input"
+          value={value[i] || ''} onChange={(e) => handleChange(i, e.target.value)} onKeyDown={(e) => handleKeyDown(i, e)} />
+      ))}
+    </div>
+  );
+};
+
+// Voucher Preview
+const VoucherPreview = ({ voucher }) => {
+  const formatDate = (d) => new Date(d).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  const formatCurrency = (a) => formatRupees(a);
+  
+  // Parse narration_items if it's a string
+  const narrationItems = typeof voucher.narration_items === 'string' 
+    ? JSON.parse(voucher.narration_items || '[]') 
+    : (voucher.narration_items || []);
+
+  // Parse deductions
+  const deductions = typeof voucher.deductions === 'string'
+    ? JSON.parse(voucher.deductions || '[]')
+    : (voucher.deductions || []);
+  const validDeductions = deductions.filter(d => d.description || d.amount);
+  const deductionTotal = validDeductions.reduce((sum, d) => sum + (parseFloat(d.amount) || 0), 0);
+  
+  // Signature block renderer
+  const SignatureBlock = ({ name, role, timestamp, label, verified }) => (
+    <div className="voucher-signature">
+      <div className="voucher-signature-line">
+        {name ? (
+          <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:'2px',fontSize:'0.75rem'}}>
+            <span style={{fontWeight:600}}>{name}</span>
+            <span style={{color:'#666',fontSize:'0.7rem'}}>{role === 'admin' ? '🛡️ Approver' : '👤 Accounts'}</span>
+            <span style={{color:'#888',fontSize:'0.65rem'}}>{timestamp ? formatDate(timestamp) : ''}</span>
+          </div>
+        ) : verified ? (
+          <span className="signature-verified">✓ OTP Verified</span>
+        ) : '-'}
+      </div>
+      <div className="voucher-signature-label">{label}</div>
+    </div>
+  );
+  
+  // Render narration items table with enhanced styling
+  const NarrationTable = () => {
+    if (!narrationItems || narrationItems.length === 0) return null;
+    
+    // Filter items that have at least a description or amount
+    const validItems = narrationItems.filter(item => item.description || item.amount);
+    if (validItems.length === 0) return null;
+    
+    // Calculate total from items
+    const total = validItems.reduce((sum, item) => sum + (parseFloat(item.amount) || 0), 0);
+    
+    return (
+      <div className="voucher-narration-table" style={{margin: '1rem 0'}}>
+        <div style={{fontSize: '0.9rem', fontWeight: 600, marginBottom: '0.75rem', color: '#333', borderBottom: '2px solid #f59e0b', paddingBottom: '0.5rem'}}>Particulars</div>
+        <table style={{width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem', border: '1px solid #ddd'}}>
+          <thead>
+            <tr style={{background: '#f59e0b', color: 'white'}}>
+              <th style={{padding: '10px 12px', textAlign: 'center', borderRight: '1px solid rgba(255,255,255,0.2)', width: '60px'}}>S.No.</th>
+              <th style={{padding: '10px 12px', textAlign: 'left', borderRight: '1px solid rgba(255,255,255,0.2)'}}>Description</th>
+              <th style={{padding: '10px 12px', textAlign: 'right', width: '140px'}}>Amount (₹)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {validItems.map((item, idx) => (
+              <tr key={idx} style={{borderBottom: '1px solid #eee', background: idx % 2 === 0 ? '#fff' : '#fafafa'}}>
+                <td style={{padding: '10px 12px', textAlign: 'center', borderRight: '1px solid #eee', fontWeight: 600, color: '#666'}}>{idx + 1}</td>
+                <td style={{padding: '10px 12px', borderRight: '1px solid #eee'}}>{item.description || '-'}</td>
+                <td style={{padding: '10px 12px', textAlign: 'right', fontWeight: 600, fontFamily: 'monospace'}}>
+                  {item.amount ? formatRupees(item.amount) : '-'}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+          {validDeductions.length === 0 && (
+            <tfoot>
+              <tr style={{background: '#fef3c7', fontWeight: 700}}>
+                <td colSpan="2" style={{padding: '12px', textAlign: 'right', fontSize: '0.95rem', borderTop: '2px solid #f59e0b'}}>TOTAL:</td>
+                <td style={{padding: '12px', textAlign: 'right', fontSize: '1rem', fontFamily: 'monospace', color: '#f59e0b', borderTop: '2px solid #f59e0b'}}>
+                  {formatRupees(total)}
+                </td>
+              </tr>
+              <tr style={{background: '#fffbeb'}}>
+                <td colSpan="3" style={{padding: '10px 12px', fontSize: '0.8rem', fontStyle: 'italic', color: '#92400e'}}>
+                  <strong>Amount in Words:</strong> {numberToWordsIndian(total)}
+                </td>
+              </tr>
+            </tfoot>
+          )}
+        </table>
+      </div>
+    );
+  };
+
+  // Render deductions table
+  const DeductionsDisplay = () => {
+    if (validDeductions.length === 0) return null;
+    return (
+      <div style={{margin: '1rem 0'}}>
+        <div style={{fontSize: '0.9rem', fontWeight: 600, marginBottom: '0.75rem', color: '#3730a3', borderBottom: '2px solid #6366f1', paddingBottom: '0.5rem'}}>Less: Advance / Part Payments Deducted</div>
+        <table style={{width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem', border: '1px solid #c7d2fe'}}>
+          <thead>
+            <tr style={{background: '#6366f1', color: 'white'}}>
+              <th style={{padding: '10px 12px', textAlign: 'center', width: '60px'}}>S.No.</th>
+              <th style={{padding: '10px 12px', textAlign: 'left'}}>Description</th>
+              <th style={{padding: '10px 12px', textAlign: 'right', width: '140px'}}>Deduction (₹)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {validDeductions.map((d, idx) => (
+              <tr key={idx} style={{borderBottom: '1px solid #e0e7ff', background: idx % 2 === 0 ? '#fff' : '#f5f3ff'}}>
+                <td style={{padding: '10px 12px', textAlign: 'center', fontWeight: 600, color: '#6366f1'}}>{idx + 1}</td>
+                <td style={{padding: '10px 12px'}}>{d.description || '-'}</td>
+                <td style={{padding: '10px 12px', textAlign: 'right', fontWeight: 600, fontFamily: 'monospace', color: '#6366f1'}}>- {formatRupees(d.amount)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <div style={{marginTop: '0.75rem', padding: '0.75rem 1rem', background: '#eef2ff', borderRadius: '8px', border: '2px solid #6366f1'}}>
+          <div style={{display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', color: '#6366f1', marginBottom: '0.3rem'}}>
+            <span>Total Deductions:</span>
+            <span style={{fontFamily: 'monospace', fontWeight: 600}}>- {formatRupees(deductionTotal)}</span>
+          </div>
+          <div style={{display: 'flex', justifyContent: 'space-between', fontWeight: 700, fontSize: '1rem', borderTop: '2px solid #6366f1', paddingTop: '0.4rem'}}>
+            <span style={{color: '#3730a3'}}>NET PAYABLE:</span>
+            <span style={{fontFamily: 'monospace', color: '#3730a3'}}>{formatCurrency(voucher.amount)}</span>
+          </div>
+          <div style={{marginTop: '0.4rem', fontSize: '0.8rem', color: '#6366f1', fontStyle: 'italic'}}>
+            <strong>In Words:</strong> {numberToWordsIndian(voucher.amount)}
+          </div>
+        </div>
+      </div>
+    );
+  };
+  
+  return (
+    <div className="voucher-preview">
+      <div className="voucher-header">
+        <div className="voucher-company">{voucher.company_name}</div>
+        <div className="voucher-address">{voucher.company_address}</div>
+        <div className="voucher-title">PAYMENT VOUCHER</div>
+        {voucher.status === 'draft' && (
+          <div style={{background: '#fef3c7', color: '#92400e', padding: '4px 12px', borderRadius: '4px', fontSize: '0.8rem', fontWeight: 600, marginTop: '8px'}}>
+            📝 DRAFT - Not Submitted
+          </div>
+        )}
+      </div>
+      <div className="voucher-meta">
+        <div className="voucher-meta-item"><span className="voucher-meta-label">Voucher No:</span><span className="voucher-meta-value">{voucher.serial_number}</span></div>
+        <div className="voucher-meta-item"><span className="voucher-meta-label">Date:</span><span className="voucher-meta-value">{formatDate(voucher.created_at)}</span></div>
+        <div className="voucher-meta-item"><span className="voucher-meta-label">Payee:</span><span className="voucher-meta-value">{voucher.payee_name} {voucher.payee_alias && `(${voucher.payee_alias})`}</span></div>
+        <div className="voucher-meta-item"><span className="voucher-meta-label">Mode:</span><span className="voucher-meta-value">{voucher.payment_mode}</span></div>
+        {voucher.paid_from_account && <div className="voucher-meta-item"><span className="voucher-meta-label">Paid From:</span><span className="voucher-meta-value">{voucher.paid_from_account}</span></div>}
+        {voucher.invoice_reference && <div className="voucher-meta-item"><span className="voucher-meta-label">Invoice Ref:</span><span className="voucher-meta-value">{voucher.invoice_reference}</span></div>}
+        {voucher.suspense_serial && <div className="voucher-meta-item" style={{background:'#fffbeb',borderRadius:'4px',padding:'2px 6px'}}><span className="voucher-meta-label">Suspense Ref:</span><span className="voucher-meta-value" style={{fontWeight:700,color:'#92400e'}}>{voucher.suspense_serial}</span></div>}
+      </div>
+      <div className="voucher-meta-item mb-1"><span className="voucher-meta-label">Head:</span><span className="voucher-meta-value">{voucher.head_of_account}{voucher.sub_head_of_account && ` → ${voucher.sub_head_of_account}`}</span></div>
+      {voucher.narration && <div className="voucher-meta-item mb-1"><span className="voucher-meta-label">Narration:</span><span className="voucher-meta-value">{voucher.narration}</span></div>}
+      <NarrationTable />
+      <DeductionsDisplay />
+      {/* Only show TOTAL section if there are no narration items AND no deductions */}
+      {(!narrationItems || narrationItems.filter(item => item.description || item.amount).length === 0) && validDeductions.length === 0 && (
+        <>
+          <div className="voucher-total">TOTAL: {formatCurrency(voucher.amount)}</div>
+          <div style={{fontSize: '0.85rem', fontStyle: 'italic', color: '#666', marginTop: '0.5rem', marginBottom: '1rem', background: '#fffbeb', padding: '0.75rem', borderRadius: '6px', border: '1px solid #fcd34d'}}>
+            <strong style={{color: '#92400e'}}>In Words:</strong> {numberToWordsIndian(voucher.amount)}
+          </div>
+        </>
+      )}
+      <div className="voucher-signatures">
+        <SignatureBlock 
+          name={voucher.preparer_name} 
+          role="accounts" 
+          timestamp={voucher.created_at} 
+          label="Prepared By" 
+        />
+        <SignatureBlock 
+          name={voucher.approver_name} 
+          role="admin" 
+          timestamp={voucher.approved_at} 
+          label="Approved By" 
+        />
+        <div className="voucher-signature">
+          <div className="voucher-signature-line">
+            {voucher.verification_type === 'document' && voucher.status === 'completed' ? (
+              <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:'2px',fontSize:'0.75rem'}}>
+                <span className="signature-verified" style={{background: '#3b82f6', color: 'white', padding: '2px 8px', borderRadius: '4px'}}>📄 Document Verified</span>
+                <span style={{color:'#888',fontSize:'0.65rem'}}>{voucher.completed_at ? formatDate(voucher.completed_at) : ''}</span>
+              </div>
+            ) : voucher.payee_otp_verified ? (
+              <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:'2px',fontSize:'0.75rem'}}>
+                <span className="signature-verified">✓ OTP Verified</span>
+                <span style={{color:'#888',fontSize:'0.65rem'}}>{voucher.completed_at ? formatDate(voucher.completed_at) : ''}</span>
+              </div>
+            ) : '-'}
+          </div>
+          <div className="voucher-signature-label">Payee</div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// Login Page
+const LoginPage = ({ onLogin }) => {
+  const [tab, setTab] = useState('login');
+  const [companies, setCompanies] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [username, setUsername] = useState('');
+  const [otp, setOtp] = useState('');
+  const [requiresOtp, setRequiresOtp] = useState(false);
+  const [requiresCompanySelection, setRequiresCompanySelection] = useState(false);
+  const [availableCompanies, setAvailableCompanies] = useState([]);
+  const [selectedCompanyId, setSelectedCompanyId] = useState('');
+  const [pendingUserId, setPendingUserId] = useState('');
+  const [pendingUserName, setPendingUserName] = useState('');
+  const [companySelectToken, setCompanySelectToken] = useState('');
+  // Password auth states
+  const [requiresPassword, setRequiresPassword] = useState(false);
+  const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [hasWebAuthn, setHasWebAuthn] = useState(false);
+  const [pendingCredentialIds, setPendingCredentialIds] = useState([]);
+  // Set-password (first time / forgot) states
+  const [requiresPasswordSetup, setRequiresPasswordSetup] = useState(false);
+  const [setupToken, setSetupToken] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [settingPassword, setSettingPassword] = useState(false);
+  // Forgot-password flow states
+  const [forgotMode, setForgotMode] = useState(false);
+  const [forgotStep, setForgotStep] = useState(1); // 1=enter username, 2=enter OTP, 3=set password
+  const [forgotOtp, setForgotOtp] = useState('');
+  const [reg, setReg] = useState({ companyId: '', name: '', mobile: '', aadhar: '', role: 'accounts', step: 1, userId: '', otp: '' });
+
+  useEffect(() => { api.getCompanies().then(setCompanies).catch(console.error); }, []);
+
+  // Detect if WebAuthn (passkey) is supported on this browser/device
+  const webAuthnSupported = typeof window !== 'undefined' && !!window.PublicKeyCredential && typeof window.SimpleWebAuthnBrowser !== 'undefined';
+
+  const resetToLogin = () => {
+    setRequiresOtp(false); setRequiresCompanySelection(false); setRequiresPassword(false);
+    setRequiresPasswordSetup(false); setForgotMode(false); setForgotStep(1);
+    setOtp(''); setPassword(''); setNewPassword(''); setConfirmPassword(''); setSetupToken('');
+    setForgotOtp(''); setHasWebAuthn(false); setPendingCredentialIds([]);
+    setSelectedCompanyId(''); setAvailableCompanies([]); setCompanySelectToken(''); setError('');
+  };
+
+  const handleLogin = async () => {
+    setLoading(true); setError('');
+    try {
+      const result = await api.login({
+        username,
+        otp: requiresOtp ? otp : undefined,
+        companyId: selectedCompanyId || undefined,
+        password: requiresPassword ? password : undefined,
+      });
+
+      if (result.requiresCompanySelection) {
+        setRequiresCompanySelection(true);
+        setAvailableCompanies(result.companies);
+        setPendingUserId(result.userId);
+        setPendingUserName(result.userName);
+        setCompanySelectToken(result.companySelectToken || '');
+      } else if (result.requiresOtp) {
+        setRequiresOtp(true);
+      } else if (result.requiresPasswordSetup) {
+        setRequiresOtp(false);
+        setPendingUserId(result.userId || pendingUserId);
+        setSetupToken(result.setupToken);
+        setRequiresPasswordSetup(true);
+      } else if (result.requiresPassword) {
+        setRequiresOtp(false);
+        setPendingUserId(result.userId);
+        setPendingUserName(result.userName || '');
+        setHasWebAuthn(result.hasWebAuthn || false);
+        setPendingCredentialIds(result.credentialIds || []);
+        setRequiresPassword(true);
+        // Auto-fire biometric prompt if this device is registered — no button tap needed
+        if (result.hasWebAuthn && webAuthnSupported) {
+          setTimeout(() => triggerWebAuthnLogin(selectedCompanyId), 150);
+        }
+      } else if (result.success) {
+        onLogin(result.user, result.settlementToken || null);
+      } else {
+        setError(result.error || 'Login failed');
+      }
+    } catch { setError('Connection error'); }
+    setLoading(false);
+  };
+
+  const handleCompanySelect = async (companyId) => {
+    setSelectedCompanyId(companyId);
+    setLoading(true); setError('');
+    try {
+      // Identity already verified — use companySelectToken, no need to re-send password
+      const result = await api.login({ companySelectToken, companyId });
+      if (result.success) {
+        onLogin(result.user, result.settlementToken || null);
+      } else {
+        setError(result.error || 'Login failed');
+      }
+    } catch { setError('Connection error'); }
+    setLoading(false);
+  };
+
+  // Complete password setup (first-time or forgot-password)
+  const handleSetPassword = async () => {
+    if (newPassword.length < 6) { setError('Password must be at least 6 characters'); return; }
+    if (newPassword !== confirmPassword) { setError('Passwords do not match'); return; }
+    setSettingPassword(true); setError('');
+    try {
+      const result = await api.setPassword(pendingUserId, newPassword, setupToken);
+      if (result.success) {
+        // Password set — now log in normally with the new password
+        const loginResult = await api.login({ username, password: newPassword, companyId: selectedCompanyId || undefined });
+        if (loginResult.requiresCompanySelection) {
+          // Multi-company user — identity proved, just needs to pick a company
+          setRequiresPasswordSetup(false);
+          setRequiresCompanySelection(true);
+          setAvailableCompanies(loginResult.companies);
+          setPendingUserName(loginResult.userName);
+          setCompanySelectToken(loginResult.companySelectToken || '');
+        } else if (loginResult.success) {
+          onLogin(loginResult.user, loginResult.settlementToken || null);
+        } else {
+          // Password set but auto-login failed — ask user to log in manually
+          setRequiresPasswordSetup(false);
+          setRequiresPassword(false);
+          setPassword('');
+          setNewPassword(''); setConfirmPassword('');
+          setError('Password set! Please sign in with your new password.');
+        }
+      } else {
+        setError(result.error || 'Failed to set password');
+      }
+    } catch { setError('Connection error'); }
+    setSettingPassword(false);
+  };
+
+  // Device Lock (WebAuthn) login — manual (button press)
+  const handleWebAuthnLogin = async () => {
+    if (!webAuthnSupported) { setError('Device Lock is not supported on this browser'); return; }
+    setLoading(true); setError('');
+    try {
+      const optionsResult = await api.webauthnLoginOptions(username);
+      if (optionsResult.error) { setError(optionsResult.error); setLoading(false); return; }
+
+      let assertionResponse;
+      try {
+        assertionResponse = await window.SimpleWebAuthnBrowser.startAuthentication(optionsResult);
+      } catch (e) {
+        setError(e.message || 'Biometric cancelled');
+        setLoading(false); return;
+      }
+
+      const verifyResult = await api.webauthnLoginVerify(username, assertionResponse, selectedCompanyId || undefined);
+      if (verifyResult.success) {
+        onLogin(verifyResult.user, verifyResult.settlementToken || null, true);
+      } else if (verifyResult.requiresCompanySelection) {
+        setRequiresPassword(false);
+        setRequiresCompanySelection(true);
+        setAvailableCompanies(verifyResult.companies);
+        setPendingUserId(verifyResult.userId);
+        setPendingUserName(verifyResult.userName || '');
+        setCompanySelectToken(verifyResult.companySelectToken || '');
+      } else {
+        setError(verifyResult.error || 'Device verification failed');
+      }
+    } catch { setError('Connection error'); }
+    setLoading(false);
+  };
+
+  // Auto-trigger WebAuthn silently after company selection (fails silently → password screen stays visible)
+  const triggerWebAuthnLogin = async (explicitCompanyId) => {
+    if (!webAuthnSupported) return;
+    try {
+      const optionsResult = await api.webauthnLoginOptions(username);
+      if (optionsResult.error) return; // no devices registered — skip
+      let assertionResponse;
+      try {
+        assertionResponse = await window.SimpleWebAuthnBrowser.startAuthentication(optionsResult);
+      } catch { return; } // user cancelled — password screen remains visible
+      setLoading(true);
+      const cid = explicitCompanyId || selectedCompanyId || undefined;
+      const verifyResult = await api.webauthnLoginVerify(username, assertionResponse, cid);
+      if (verifyResult.success) {
+        onLogin(verifyResult.user, verifyResult.settlementToken || null, true);
+      } else if (verifyResult.requiresCompanySelection) {
+        // Biometric succeeded — user just needs to pick a company (not a failure)
+        setRequiresPassword(false);
+        setRequiresCompanySelection(true);
+        setAvailableCompanies(verifyResult.companies);
+        setPendingUserId(verifyResult.userId);
+        setPendingUserName(verifyResult.userName || '');
+        setCompanySelectToken(verifyResult.companySelectToken || '');
+      } // any other failure is silent — password screen stays visible
+    } catch {} // silent fail — password screen already visible
+    setLoading(false);
+  };
+
+  // Forgot-password flow
+  const handleForgotPassword = async () => {
+    setLoading(true); setError('');
+    try {
+      if (forgotStep === 1) {
+        const result = await api.forgotPassword(username);
+        if (result.requiresOtp) { setForgotStep(2); }
+        else setError(result.error || 'Failed to send OTP');
+      } else if (forgotStep === 2) {
+        const result = await api.forgotPassword(username, forgotOtp);
+        if (result.requiresPasswordSetup) {
+          setPendingUserId(result.userId);
+          setSetupToken(result.setupToken);
+          setForgotStep(3);
+          setForgotMode(false);
+          setRequiresPasswordSetup(true);
+        } else setError(result.error || 'OTP verification failed');
+      }
+    } catch { setError('Connection error'); }
+    setLoading(false);
+  };
+
+  const handleRegister = async () => {
+    setLoading(true); setError('');
+    try {
+      if (reg.step === 1) {
+        const result = await api.registerUser({ companyId: reg.companyId, name: reg.name, mobile: reg.mobile, aadhar: reg.aadhar, role: reg.role });
+        if (result.success) { await api.sendOtp(reg.mobile, 'registration'); setReg({ ...reg, step: 2, userId: result.userId }); }
+        else setError(result.error || 'Registration failed');
+      } else {
+        const result = await api.verifyOtp(reg.mobile, reg.otp);
+        if (result.success) { await api.verifyUserMobile(reg.userId); setReg({ ...reg, step: 3 }); }
+        else setError(result.error || 'OTP verification failed');
+      }
+    } catch { setError('Connection error'); }
+    setLoading(false);
+  };
+
+  // ── Set-password screen (first-time OR forgot-password) ───────────────────
+  if (requiresPasswordSetup) {
+    const isFirstTime = !requiresPassword; // true on first login, false on forgot
+    return (
+      <div className="login-container">
+        <div className="login-card">
+          <div className="login-logo"><img src="logo.png" alt="Relish" /></div>
+          <h1 className="login-title">{isFirstTime ? 'Set Your Password' : 'Reset Password'}</h1>
+          <p className="login-subtitle">{isFirstTime ? 'Create a password to secure your account.' : 'Enter a new password for your account.'}</p>
+          {error && <div className="alert alert-error">{error}</div>}
+          <div className="form-group">
+            <label className="form-label">New Password</label>
+            <div style={{ position: 'relative' }}>
+              <input
+                type={showNewPassword ? 'text' : 'password'}
+                className="form-input"
+                placeholder="At least 6 characters"
+                value={newPassword}
+                onChange={e => setNewPassword(e.target.value)}
+                style={{ paddingRight: '44px' }}
+              />
+              <button type="button" onClick={() => setShowNewPassword(p => !p)}
+                style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', fontSize: '18px', color: '#6b7280' }}>
+                {showNewPassword ? '🙈' : '👁️'}
+              </button>
+            </div>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Confirm Password</label>
+            <input
+              type={showNewPassword ? 'text' : 'password'}
+              className="form-input"
+              placeholder="Re-enter password"
+              value={confirmPassword}
+              onChange={e => setConfirmPassword(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleSetPassword()}
+            />
+          </div>
+          <button className="btn btn-primary" style={{ width: '100%' }} onClick={handleSetPassword}
+            disabled={settingPassword || !newPassword || !confirmPassword}>
+            {settingPassword && Icons.loader} Set Password & Sign In
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Forgot-password flow screen ───────────────────────────────────────────
+  if (forgotMode) {
+    return (
+      <div className="login-container">
+        <div className="login-card">
+          <div className="login-logo"><img src="logo.png" alt="Relish" /></div>
+          <h1 className="login-title">Forgot Password</h1>
+          <p className="login-subtitle">{forgotStep === 1 ? 'Enter your username to receive an OTP.' : 'Enter the OTP sent to your registered mobile.'}</p>
+          {error && <div className="alert alert-error">{error}</div>}
+          {forgotStep === 1 && (
+            <div className="form-group">
+              <label className="form-label">Username</label>
+              <input type="text" className="form-input" placeholder="e.g., Accounts-John" value={username} onChange={e => setUsername(e.target.value)} />
+            </div>
+          )}
+          {forgotStep === 2 && (
+            <div className="form-group">
+              <label className="form-label">Enter OTP sent to your mobile</label>
+              <OTPInput value={forgotOtp} onChange={setForgotOtp} />
+            </div>
+          )}
+          <button className="btn btn-primary" style={{ width: '100%' }} onClick={handleForgotPassword}
+            disabled={loading || (forgotStep === 1 ? !username : !forgotOtp)}>
+            {loading && Icons.loader}{forgotStep === 1 ? 'Send OTP' : 'Verify OTP'}
+          </button>
+          <button className="btn" style={{ width: '100%', marginTop: '10px', background: 'transparent', border: '1px solid #ddd' }}
+            onClick={() => { setForgotMode(false); setForgotStep(1); setForgotOtp(''); setError(''); }}>
+            ← Back to Login
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Company Selection Screen ───────────────────────────────────────────────
+  if (requiresCompanySelection) {
+    return (
+      <div className="login-container">
+        <div className="login-card">
+          <div className="login-logo"><img src="logo.png" alt="Relish" /></div>
+          <h1 className="login-title">Select Company</h1>
+          <p className="login-subtitle">Welcome, {pendingUserName}! Choose which company to work with:</p>
+          {error && <div className="alert alert-error">{error}</div>}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '20px' }}>
+            {availableCompanies.map(company => (
+              <button
+                key={company.id}
+                className="btn btn-secondary"
+                style={{ width: '100%', padding: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', textAlign: 'left' }}
+                onClick={() => handleCompanySelect(company.id)}
+                disabled={loading}
+              >
+                <div>
+                  <div style={{ fontWeight: 600 }}>{company.name}</div>
+                  <div style={{ fontSize: '12px', opacity: 0.7, marginTop: '4px' }}>
+                    Role: {company.role === 'admin' ? '🛡️ Admin / Approver' : company.role === 'auditor' ? '🔍 Auditor' : '👤 Accounts'}
+                  </div>
+                </div>
+                <span style={{ fontSize: '20px' }}>→</span>
+              </button>
+            ))}
+          </div>
+          <button className="btn" style={{ width: '100%', marginTop: '20px', background: 'transparent', border: '1px solid #ddd' }}
+            onClick={() => { setRequiresCompanySelection(false); setAvailableCompanies([]); setSelectedCompanyId(''); setCompanySelectToken(''); setUsername(''); }}>
+            ← Back to Login
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Password input screen (returning user who has a password set) ──────────
+  if (requiresPassword) {
+    return (
+      <div className="login-container">
+        <div className="login-card">
+          <div className="login-logo"><img src="logo.png" alt="Relish" /></div>
+          <h1 className="login-title">Welcome Back</h1>
+          <p className="login-subtitle">{pendingUserName || username}</p>
+          {error && <div className="alert alert-error">{error}</div>}
+          <div className="form-group">
+            <label className="form-label">Password</label>
+            <div style={{ position: 'relative' }}>
+              <input
+                type={showPassword ? 'text' : 'password'}
+                className="form-input"
+                placeholder="Enter your password"
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && handleLogin()}
+                autoFocus
+                style={{ paddingRight: '44px' }}
+              />
+              <button type="button" onClick={() => setShowPassword(p => !p)}
+                style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', fontSize: '18px', color: '#6b7280' }}>
+                {showPassword ? '🙈' : '👁️'}
+              </button>
+            </div>
+          </div>
+          <button className="btn btn-primary" style={{ width: '100%' }} onClick={handleLogin} disabled={loading || !password}>
+            {loading && Icons.loader} Sign In
+          </button>
+          {hasWebAuthn && webAuthnSupported && (
+            <button className="btn" style={{ width: '100%', marginTop: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', background: 'linear-gradient(135deg,#1a1a2e,#16213e)', color: 'white', border: 'none' }}
+              onClick={handleWebAuthnLogin} disabled={loading}>
+              {loading ? Icons.loader : '🔐'} Use Device Lock
+            </button>
+          )}
+          <div style={{ textAlign: 'center', marginTop: '14px' }}>
+            <button type="button" style={{ background: 'none', border: 'none', color: '#f5841f', cursor: 'pointer', fontSize: '14px', textDecoration: 'underline' }}
+              onClick={() => { setRequiresPassword(false); setForgotMode(true); setForgotStep(1); setError(''); }}>
+              Forgot Password?
+            </button>
+          </div>
+          <button className="btn" style={{ width: '100%', marginTop: '10px', background: 'transparent', border: '1px solid #ddd' }}
+            onClick={resetToLogin}>
+            ← Back
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Main login screen ─────────────────────────────────────────────────────
+  return (
+    <div className="login-container">
+      <div className="login-card">
+        <div className="login-logo"><img src="logo.png" alt="Relish" /></div>
+        <h1 className="login-title">Payment Approval System</h1>
+        <p className="login-subtitle">Secure voucher management for Relish</p>
+        {error && <div className="alert alert-error">{error}</div>}
+        <div>
+          <div className="form-group"><label className="form-label">Username</label><input type="text" className="form-input" placeholder="e.g., Accounts-John or Approve-Jane" value={username} onChange={(e) => setUsername(e.target.value)} /></div>
+          {requiresOtp && <div className="form-group"><label className="form-label">Enter OTP sent to your mobile</label><OTPInput value={otp} onChange={setOtp} /></div>}
+          <button className="btn btn-primary" style={{ width: '100%' }} onClick={handleLogin} disabled={loading || !username}>
+            {loading && Icons.loader}{requiresOtp ? 'Verify OTP' : 'Continue'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// Dashboard
+const Dashboard = () => {
+  const { user, vouchers } = useApp();
+  const stats = {
+    draft: vouchers.filter(v => v.status === 'draft').length,
+    pending: vouchers.filter(v => v.status === 'pending').length,
+    approved: vouchers.filter(v => ['approved', 'awaiting_payee_otp'].includes(v.status)).length,
+    completed: vouchers.filter(v => v.status === 'completed').length,
+    awaitingPayment: vouchers.filter(v => v.status === 'awaiting_payment').length,
+    total: vouchers.filter(v => v.status !== 'draft').length
+  };
+  return (
+    <div>
+      <div className="page-header"><h1 className="page-title">Dashboard</h1><p className="page-subtitle">Welcome back, {user.name}</p></div>
+      <div className="stats-grid">
+        {(user.role === 'accounts' || user.isSuperAdmin) && stats.draft > 0 && (
+          <div className="stat-card" style={{borderColor: '#fcd34d', background: '#fffbeb'}}><div className="stat-icon" style={{background: '#fef3c7', color: '#92400e'}}>📝</div><div className="stat-value">{stats.draft}</div><div className="stat-label">Saved Drafts</div></div>
+        )}
+        <div className="stat-card"><div className="stat-icon orange">⏱</div><div className="stat-value">{stats.pending}</div><div className="stat-label">Pending Approval</div></div>
+        <div className="stat-card"><div className="stat-icon purple">📋</div><div className="stat-value">{stats.approved}</div><div className="stat-label">Approved / Awaiting OTP</div></div>
+        <div className="stat-card"><div className="stat-icon green">✓</div><div className="stat-value">{stats.completed}</div><div className="stat-label">OTP Verified</div></div>
+        {stats.awaitingPayment > 0 && (
+          <div className="stat-card" style={{borderColor:'#fbbf24',background:'#fffbeb'}} onClick={() => {}} title="Click sidebar to view"><div className="stat-icon" style={{background:'#fef3c7',color:'#b45309'}}>💳</div><div className="stat-value" style={{color:'#b45309'}}>{stats.awaitingPayment}</div><div className="stat-label">Awaiting Payment</div></div>
+        )}
+        <div className="stat-card"><div className="stat-icon teal">📄</div><div className="stat-value">{stats.total}</div><div className="stat-label">Total Vouchers</div></div>
+      </div>
+      <div className="card">
+        <div className="card-header"><h3 className="card-title">{Icons.fileText} Recent Vouchers</h3></div>
+        <div className="card-body" style={{ padding: 0 }}>
+          {vouchers.length === 0 ? <div className="empty-state">{Icons.fileText}<p>No vouchers yet</p></div> : (
+            <div className="table-container"><table className="table"><thead><tr><th>Serial No.</th><th>Payee</th><th>Amount</th><th>Status</th><th>Date</th></tr></thead><tbody>
+              {vouchers.slice(0, 5).map(v => (<tr key={v.id}><td className="text-mono fw-600">{v.serial_number}{v.attachment_count > 0 && <span title={`${v.attachment_count} bill attachment${v.attachment_count > 1 ? 's' : ''}`} style={{marginLeft: '6px', color: '#f5841f', verticalAlign: 'middle', display: 'inline-flex'}}>{Icons.paperclip}</span>}{v.payment_receipt_url && <span title="Payment receipt attached" style={{marginLeft: '4px', color: '#16a34a', verticalAlign: 'middle', display: 'inline-flex'}}>{Icons.receiptCheck}</span>}</td><td>{v.payee_name}</td><td className="fw-600">{formatRupees(v.amount, 0)}</td><td><span className={`status-badge status-${v.status}`}>{v.status === 'completed' ? 'OTP Verified' : v.status === 'awaiting_payment' ? 'Awaiting Payment' : v.status === 'paid' ? 'Paid' : v.status.replace(/_/g, ' ')}</span></td><td>{new Date(v.created_at).toLocaleDateString('en-IN')}</td></tr>))}
+            </tbody></table></div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// Narration Items Table Component with Sequential Entry
+const NarrationItemsTable = ({ items, onChange, disabled }) => {
+  const [currentItem, setCurrentItem] = useState({ description: '', amount: '' });
+
+  const addItem = () => {
+    if (!currentItem.description.trim() || !currentItem.amount || parseFloat(currentItem.amount) <= 0) {
+      return;
+    }
+    
+    onChange([...items, { 
+      description: currentItem.description.trim(), 
+      amount: parseFloat(currentItem.amount).toFixed(2) 
+    }]);
+    
+    setCurrentItem({ description: '', amount: '' });
+    setTimeout(() => document.getElementById('narration-desc-input')?.focus(), 100);
+  };
+
+  const removeItem = (index) => {
+    onChange(items.filter((_, i) => i !== index));
+  };
+
+  const getTotal = () => {
+    return items.reduce((sum, item) => sum + (parseFloat(item.amount) || 0), 0);
+  };
+
+  const handleKeyPress = (e, field) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (field === 'description' && currentItem.description.trim()) {
+        document.getElementById('narration-amt-input')?.focus();
+      } else if (field === 'amount' && currentItem.amount) {
+        addItem();
+      }
+    }
+  };
+
+  return (
+    <div className="narration-table-container" style={{border: '2px solid #f59e0b', borderRadius: '8px', padding: '1rem', background: '#fffbeb'}}>
+      <div style={{marginBottom: '1rem'}}>
+        <h4 style={{fontSize: '0.95rem', fontWeight: 600, color: '#92400e', marginBottom: '0.75rem'}}>📋 Add Line Items (Sequential Entry)</h4>
+        
+        {!disabled && (
+          <div style={{background: 'white', padding: '1rem', borderRadius: '6px', border: '1px solid #fcd34d', marginBottom: '1rem'}}>
+            <div className="form-group" style={{marginBottom: '0.75rem'}}>
+              <label className="form-label" style={{fontSize: '0.85rem', color: '#92400e'}}>
+                1️⃣ Description / Item Name * <span style={{fontSize: '0.75rem', fontWeight: 'normal'}}>(Press Enter to continue)</span>
+              </label>
+              <input 
+                id="narration-desc-input"
+                type="text" 
+                className="form-input" 
+                placeholder="Enter item description..."
+                value={currentItem.description} 
+                onChange={(e) => setCurrentItem({...currentItem, description: e.target.value})}
+                onKeyPress={(e) => handleKeyPress(e, 'description')}
+                disabled={disabled}
+                autoFocus
+                style={{borderColor: '#f59e0b', fontSize: '1rem'}}
+              />
+            </div>
+            
+            {currentItem.description.trim() && (
+              <div className="form-group" style={{marginBottom: '0.75rem'}}>
+                <label className="form-label" style={{fontSize: '0.85rem', color: '#92400e'}}>
+                  2️⃣ Amount (₹) * <span style={{fontSize: '0.75rem', fontWeight: 'normal'}}>(Press Enter to add)</span>
+                </label>
+                <input 
+                  id="narration-amt-input"
+                  type="number" 
+                  className="form-input" 
+                  placeholder="0.00"
+                  value={currentItem.amount} 
+                  onChange={(e) => setCurrentItem({...currentItem, amount: e.target.value})}
+                  onKeyPress={(e) => handleKeyPress(e, 'amount')}
+                  disabled={disabled}
+                  step="0.01"
+                  min="0"
+                  style={{borderColor: '#f59e0b', fontSize: '1rem'}}
+                />
+              </div>
+            )}
+            
+            {currentItem.description.trim() && currentItem.amount && (
+              <button 
+                type="button" 
+                className="btn btn-primary btn-sm" 
+                onClick={addItem}
+                style={{width: '100%', background: '#f59e0b', borderColor: '#f59e0b', padding: '0.75rem'}}
+              >
+                ➕ Add Item to List
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+
+      {items.length > 0 && (
+        <>
+          <table style={{width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem', background: 'white', borderRadius: '6px', overflow: 'hidden'}}>
+            <thead>
+              <tr style={{background: '#f59e0b', color: 'white'}}>
+                <th style={{padding: '10px 12px', textAlign: 'center', width: '60px'}}>S.No.</th>
+                <th style={{padding: '10px 12px', textAlign: 'left'}}>Description</th>
+                <th style={{padding: '10px 12px', textAlign: 'right', width: '140px'}}>Amount (₹)</th>
+                {!disabled && <th style={{padding: '10px 12px', textAlign: 'center', width: '60px'}}>Action</th>}
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((item, index) => (
+                <tr key={index} style={{borderBottom: '1px solid #fcd34d', background: index % 2 === 0 ? 'white' : '#fffbeb'}}>
+                  <td style={{padding: '10px 12px', textAlign: 'center', fontWeight: 600, color: '#92400e'}}>{index + 1}</td>
+                  <td style={{padding: '10px 12px'}}>{item.description}</td>
+                  <td style={{padding: '10px 12px', textAlign: 'right', fontWeight: 600, fontFamily: 'monospace'}}>
+                    {formatRupees(item.amount)}
+                  </td>
+                  {!disabled && (
+                    <td style={{padding: '10px 12px', textAlign: 'center'}}>
+                      <button 
+                        type="button" 
+                        className="btn btn-sm btn-danger" 
+                        onClick={() => removeItem(index)}
+                        title="Remove item"
+                        style={{padding: '4px 10px', fontSize: '0.85rem'}}
+                      >
+                        ×
+                      </button>
+                    </td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr style={{background: '#fef3c7', fontWeight: 700}}>
+                <td colSpan={!disabled ? "3" : "2"} style={{padding: '12px', textAlign: 'right', fontSize: '0.95rem'}}>TOTAL:</td>
+                <td style={{padding: '12px', textAlign: 'right', fontSize: '1rem', fontFamily: 'monospace', color: '#f59e0b'}}>
+                  {formatRupees(getTotal())}
+                </td>
+                {!disabled && <td></td>}
+              </tr>
+              <tr style={{background: '#fffbeb'}}>
+                <td colSpan={!disabled ? "4" : "3"} style={{padding: '10px 12px', fontSize: '0.8rem', fontStyle: 'italic', color: '#92400e'}}>
+                  <strong>In Words:</strong> {numberToWordsIndian(getTotal())}
+                </td>
+              </tr>
+            </tfoot>
+          </table>
+        </>
+      )}
+      
+      {items.length === 0 && disabled && (
+        <div style={{textAlign: 'center', padding: '2rem', color: '#92400e', fontSize: '0.9rem'}}>
+          No line items added
+        </div>
+      )}
+    </div>
+  );
+};
+
+// Legacy Narration Items Table Component (for backwards compatibility)
+const LegacyNarrationItemsTable = ({ items, onChange, disabled }) => {
+  const addItem = () => {
+    onChange([...items, { description: '', quantity: '', rate: '', amount: '' }]);
+  };
+
+  const removeItem = (index) => {
+    const newItems = items.filter((_, i) => i !== index);
+    onChange(newItems);
+  };
+
+  const updateItem = (index, field, value) => {
+    const newItems = [...items];
+    newItems[index] = { ...newItems[index], [field]: value };
+    
+    // Auto-calculate amount if both quantity and rate are provided
+    if (field === 'quantity' || field === 'rate') {
+      const qty = parseFloat(newItems[index].quantity) || 0;
+      const rate = parseFloat(newItems[index].rate) || 0;
+      if (qty > 0 && rate > 0) {
+        newItems[index].amount = (qty * rate).toFixed(2);
+      }
+    }
+    
+    onChange(newItems);
+  };
+
+  const getTotal = () => {
+    return items.reduce((sum, item) => sum + (parseFloat(item.amount) || 0), 0);
+  };
+
+  return (
+    <div className="narration-table-container">
+      <table className="narration-table">
+        <thead>
+          <tr>
+            <th style={{width: '40%'}}>Description / Name</th>
+            <th style={{width: '15%'}}>Quantity</th>
+            <th style={{width: '18%'}}>Rate (₹)</th>
+            <th style={{width: '18%'}}>Amount (₹)</th>
+            <th style={{width: '9%'}}></th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((item, index) => (
+            <tr key={index}>
+              <td>
+                <input 
+                  type="text" 
+                  className="form-input narration-input" 
+                  placeholder="Item or person name"
+                  value={item.description} 
+                  onChange={(e) => updateItem(index, 'description', e.target.value)}
+                  disabled={disabled}
+                />
+              </td>
+              <td>
+                <input 
+                  type="text" 
+                  className="form-input narration-input" 
+                  placeholder="e.g., 2 days"
+                  value={item.quantity} 
+                  onChange={(e) => updateItem(index, 'quantity', e.target.value)}
+                  disabled={disabled}
+                />
+              </td>
+              <td>
+                <input 
+                  type="number" 
+                  className="form-input narration-input" 
+                  placeholder="0.00"
+                  value={item.rate} 
+                  onChange={(e) => updateItem(index, 'rate', e.target.value)}
+                  disabled={disabled}
+                />
+              </td>
+              <td>
+                <input 
+                  type="number" 
+                  className="form-input narration-input" 
+                  placeholder="0.00"
+                  value={item.amount} 
+                  onChange={(e) => updateItem(index, 'amount', e.target.value)}
+                  disabled={disabled}
+                />
+              </td>
+              <td>
+                {!disabled && (
+                  <button 
+                    type="button" 
+                    className="btn btn-sm btn-danger" 
+                    onClick={() => removeItem(index)}
+                    title="Remove item"
+                    style={{padding: '4px 8px'}}
+                  >
+                    ×
+                  </button>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+        {items.length > 0 && (
+          <tfoot>
+            <tr>
+              <td colSpan="3" style={{textAlign: 'right', fontWeight: 600}}>Total:</td>
+              <td style={{fontWeight: 600}}>₹{getTotal().toLocaleString('en-IN', {minimumFractionDigits: 2})}</td>
+              <td></td>
+            </tr>
+          </tfoot>
+        )}
+      </table>
+      {!disabled && (
+        <button type="button" className="btn btn-sm btn-secondary" onClick={addItem} style={{marginTop: '0.5rem'}}>
+          + Add Line Item
+        </button>
+      )}
+    </div>
+  );
+};
+
+// Deductions Table Component (Advance / Part Payment Deductions)
+const DeductionsTable = ({ items, onChange, disabled }) => {
+  const [currentItem, setCurrentItem] = useState({ description: '', amount: '' });
+
+  const addItem = () => {
+    if (!currentItem.description.trim() || !currentItem.amount || parseFloat(currentItem.amount) <= 0) return;
+    onChange([...items, { description: currentItem.description.trim(), amount: parseFloat(currentItem.amount).toFixed(2) }]);
+    setCurrentItem({ description: '', amount: '' });
+    setTimeout(() => document.getElementById('deduction-desc-input')?.focus(), 100);
+  };
+
+  const removeItem = (index) => onChange(items.filter((_, i) => i !== index));
+  const getTotal = () => items.reduce((sum, item) => sum + (parseFloat(item.amount) || 0), 0);
+
+  const handleKeyPress = (e, field) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (field === 'description' && currentItem.description.trim()) document.getElementById('deduction-amt-input')?.focus();
+      else if (field === 'amount' && currentItem.amount) addItem();
+    }
+  };
+
+  return (
+    <div style={{border: '2px solid #6366f1', borderRadius: '8px', padding: '1rem', background: '#eef2ff'}}>
+      <h4 style={{fontSize: '0.95rem', fontWeight: 600, color: '#3730a3', marginBottom: '0.75rem'}}>💰 Advance / Part Payments to Deduct</h4>
+      {!disabled && (
+        <div style={{background: 'white', padding: '1rem', borderRadius: '6px', border: '1px solid #c7d2fe', marginBottom: '1rem'}}>
+          <div className="form-group" style={{marginBottom: '0.75rem'}}>
+            <label className="form-label" style={{fontSize: '0.85rem', color: '#3730a3'}}>
+              1️⃣ Description * <span style={{fontSize: '0.75rem', fontWeight: 'normal'}}>(e.g., Advance paid on 15-Apr-26 · Ref: VCH-2025-00042)</span>
+            </label>
+            <input id="deduction-desc-input" type="text" className="form-input" placeholder="Describe the advance / part payment..."
+              value={currentItem.description} onChange={(e) => setCurrentItem({...currentItem, description: e.target.value})}
+              onKeyPress={(e) => handleKeyPress(e, 'description')} disabled={disabled} style={{borderColor: '#6366f1'}} />
+          </div>
+          {currentItem.description.trim() && (
+            <div className="form-group" style={{marginBottom: '0.75rem'}}>
+              <label className="form-label" style={{fontSize: '0.85rem', color: '#3730a3'}}>
+                2️⃣ Amount to Deduct (₹) * <span style={{fontSize: '0.75rem', fontWeight: 'normal'}}>(Press Enter to add)</span>
+              </label>
+              <input id="deduction-amt-input" type="number" className="form-input" placeholder="0.00"
+                value={currentItem.amount} onChange={(e) => setCurrentItem({...currentItem, amount: e.target.value})}
+                onKeyPress={(e) => handleKeyPress(e, 'amount')} disabled={disabled} step="0.01" min="0"
+                style={{borderColor: '#6366f1'}} />
+            </div>
+          )}
+          {currentItem.description.trim() && currentItem.amount && (
+            <button type="button" onClick={addItem}
+              style={{width: '100%', background: '#6366f1', color: 'white', border: 'none', padding: '0.75rem', borderRadius: '6px', fontWeight: 600, cursor: 'pointer', fontSize: '0.95rem'}}>
+              ➕ Add Deduction
+            </button>
+          )}
+        </div>
+      )}
+      {items.length > 0 && (
+        <table style={{width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem', background: 'white', borderRadius: '6px', overflow: 'hidden'}}>
+          <thead>
+            <tr style={{background: '#6366f1', color: 'white'}}>
+              <th style={{padding: '10px 12px', textAlign: 'center', width: '60px'}}>S.No.</th>
+              <th style={{padding: '10px 12px', textAlign: 'left'}}>Description</th>
+              <th style={{padding: '10px 12px', textAlign: 'right', width: '150px'}}>Deduction (₹)</th>
+              {!disabled && <th style={{padding: '10px 12px', textAlign: 'center', width: '60px'}}></th>}
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((item, index) => (
+              <tr key={index} style={{borderBottom: '1px solid #e0e7ff', background: index % 2 === 0 ? 'white' : '#f5f3ff'}}>
+                <td style={{padding: '10px 12px', textAlign: 'center', fontWeight: 600, color: '#6366f1'}}>{index + 1}</td>
+                <td style={{padding: '10px 12px'}}>{item.description}</td>
+                <td style={{padding: '10px 12px', textAlign: 'right', fontWeight: 600, fontFamily: 'monospace', color: '#6366f1'}}>- {formatRupees(item.amount)}</td>
+                {!disabled && (
+                  <td style={{padding: '10px 12px', textAlign: 'center'}}>
+                    <button type="button" className="btn btn-sm btn-danger" onClick={() => removeItem(index)} title="Remove" style={{padding: '4px 10px', fontSize: '0.85rem'}}>×</button>
+                  </td>
+                )}
+              </tr>
+            ))}
+          </tbody>
+          <tfoot>
+            <tr style={{background: '#e0e7ff', fontWeight: 700}}>
+              <td colSpan={!disabled ? "3" : "2"} style={{padding: '12px', textAlign: 'right', color: '#3730a3'}}>TOTAL DEDUCTIONS:</td>
+              <td style={{padding: '12px', textAlign: 'right', fontFamily: 'monospace', color: '#6366f1'}}>- {formatRupees(getTotal())}</td>
+              {!disabled && <td></td>}
+            </tr>
+          </tfoot>
+        </table>
+      )}
+      {items.length === 0 && disabled && (
+        <div style={{textAlign: 'center', padding: '1.5rem', color: '#6366f1', fontSize: '0.9rem'}}>No deductions recorded</div>
+      )}
+    </div>
+  );
+};
+
+// Create Voucher
+const CreateVoucher = () => {
+  const { user, addToast, refreshVouchers } = useApp();
+  const [loading, setLoading] = useState(false);
+  const [createdVoucher, setCreatedVoucher] = useState(null);
+  const [payees, setPayees] = useState([]);
+  const [paymentAccounts, setPaymentAccounts] = useState([]);
+  const [heads, setHeads] = useState([]);
+  const [headsData, setHeadsData] = useState([]); // Full data with IDs
+  const [subHeads, setSubHeads] = useState([]); // Sub-heads for selected head
+  const [allSubHeads, setAllSubHeads] = useState([]); // All sub-heads by company
+  const [showPayeeModal, setShowPayeeModal] = useState(false);
+  const [showCustomAccount, setShowCustomAccount] = useState(false);
+  const [showAddSubCategory, setShowAddSubCategory] = useState(false);
+  const [showPreview, setShowPreview] = useState(false);
+  const [showDeductions, setShowDeductions] = useState(() => {
+    try { const s = localStorage.getItem('cv_draft'); return s ? (JSON.parse(s).showDeductions || false) : false; } catch { return false; }
+  });
+  const [newSubCategory, setNewSubCategory] = useState('');
+  const [customAccount, setCustomAccount] = useState('');
+  const [form, setForm] = useState(() => {
+    try {
+      const s = localStorage.getItem('cv_draft');
+      if (s) {
+        const saved = JSON.parse(s);
+        return saved.form || { headOfAccount: '', subHeadOfAccount: '', narration: '', narrationItems: [], deductions: [], payeeId: '', paymentMode: 'UPI', amount: '', invoiceReference: '', paidFromAccount: '' };
+      }
+    } catch {}
+    return { headOfAccount: '', subHeadOfAccount: '', narration: '', narrationItems: [], deductions: [], payeeId: '', paymentMode: 'UPI', amount: '', invoiceReference: '', paidFromAccount: '' };
+  });
+  const [newPayee, setNewPayee] = useState({ name: '', alias: '', mobile: '', bankAccount: '', ifsc: '', upiId: '', bankName: '' });
+  const [useNarrationTable, setUseNarrationTable] = useState(() => {
+    try { const s = localStorage.getItem('cv_draft'); return s ? (JSON.parse(s).useNarrationTable ?? true) : true; } catch { return true; }
+  });  // Default to TRUE for tabulated format
+
+  const refreshSubHeads = async () => {
+    // This now returns sub-heads for the company's own heads + sub-heads of global heads from other companies
+    const data = await api.getSubHeadsByCompany(user.company.id);
+    if (Array.isArray(data)) {
+      setAllSubHeads(data);
+    }
+  };
+
+  useEffect(() => { 
+    // Load payees for user's company
+    api.getPayees(user.company.id).then(setPayees);
+    api.getPaymentAccounts(user.company.id).then(setPaymentAccounts);
+    // Load heads from database based on user's company
+    api.getHeadsOfAccount(user.company.id).then(data => {
+      if (Array.isArray(data)) {
+        setHeadsData(data);
+        setHeads(data.map(h => h.name));
+      }
+    });
+    // Load all sub-heads for the company
+    refreshSubHeads();
+  }, [user.company.id]);
+
+  // Update sub-heads when head of account changes
+  useEffect(() => {
+    if (form.headOfAccount) {
+      const selectedHead = headsData.find(h => h.name === form.headOfAccount);
+      if (selectedHead) {
+        const filtered = allSubHeads.filter(sh => sh.head_id === selectedHead.id);
+        setSubHeads(filtered);
+      } else {
+        setSubHeads([]);
+      }
+    } else {
+      setSubHeads([]);
+    }
+  }, [form.headOfAccount, headsData, allSubHeads]);
+
+  // Clear sub-head selection when head changes (separate effect)
+  useEffect(() => {
+    setForm(f => ({ ...f, subHeadOfAccount: '' }));
+  }, [form.headOfAccount]);
+
+  // Calculate total from narration items
+  const calculateNarrationTotal = () => {
+    return form.narrationItems.reduce((sum, item) => sum + (parseFloat(item.amount) || 0), 0);
+  };
+
+  // Calculate total deductions
+  const calculateDeductionTotal = () => {
+    return form.deductions.reduce((sum, d) => sum + (parseFloat(d.amount) || 0), 0);
+  };
+
+  // Net payable = gross amount - total deductions
+  const calculateNetAmount = () => {
+    const gross = parseFloat(form.amount) || 0;
+    return Math.max(0, gross - calculateDeductionTotal());
+  };
+
+  // Auto-update amount when narration items change (if using table)
+  useEffect(() => {
+    if (useNarrationTable && form.narrationItems.length > 0) {
+      const total = calculateNarrationTotal();
+      if (total > 0) {
+        setForm(f => ({ ...f, amount: total.toFixed(2) }));
+      }
+    }
+  }, [form.narrationItems, useNarrationTable]);
+
+  // Auto-save form draft to localStorage so it survives page refresh / connection loss
+  useEffect(() => {
+    const hasData = form.headOfAccount || form.payeeId || form.amount || form.narration ||
+      form.narrationItems.some(i => i.description || i.amount) ||
+      form.deductions.some(d => d.description || d.amount) ||
+      form.invoiceReference;
+    if (hasData) {
+      try {
+        localStorage.setItem('cv_draft', JSON.stringify({ form, showDeductions, useNarrationTable }));
+      } catch {}
+    }
+  }, [form, showDeductions, useNarrationTable]);
+
+  const handleAddPayee = async () => {
+    setLoading(true);
+    try { const result = await api.addPayee({ companyId: user.company.id, ...newPayee }); if (result.success) { addToast('Payee added', 'success'); setShowPayeeModal(false); setNewPayee({ name: '', alias: '', mobile: '', bankAccount: '', ifsc: '', upiId: '', bankName: '' }); api.getPayees(user.company.id).then(setPayees); } } catch { addToast('Failed', 'error'); }
+    setLoading(false);
+  };
+
+  const handleUseCustomAccount = () => {
+    if (customAccount.trim()) {
+      setForm({ ...form, headOfAccount: customAccount.trim() });
+      setShowCustomAccount(false);
+      setCustomAccount('');
+    }
+  };
+
+  const handleAddSubCategory = async () => {
+    if (!newSubCategory.trim()) {
+      addToast('Sub-category name cannot be empty', 'error');
+      return;
+    }
+    if (!form.headOfAccount) {
+      addToast('Please select a Head of Account first', 'error');
+      return;
+    }
+    const selectedHead = headsData.find(h => h.name === form.headOfAccount);
+    if (!selectedHead) {
+      addToast('Invalid Head of Account', 'error');
+      return;
+    }
+    setLoading(true);
+    try {
+      const result = await api.addSubHeadOfAccount(selectedHead.id, user.company.id, newSubCategory.trim());
+      if (result.error) {
+        addToast(result.error, 'error');
+      } else {
+        addToast('Sub-category added successfully', 'success');
+        setNewSubCategory('');
+        setShowAddSubCategory(false);
+        // Refresh sub-heads and auto-select the new one
+        await refreshSubHeads();
+        setForm(f => ({ ...f, subHeadOfAccount: newSubCategory.trim() }));
+      }
+    } catch (error) {
+      addToast('Failed to add sub-category', 'error');
+    }
+    setLoading(false);
+  };
+
+  const handleSaveOrSubmit = async (saveAsDraft = false) => {
+    if (!form.headOfAccount || !form.payeeId || !form.amount) { 
+      addToast('Fill all required fields (Head of Account, Payee, Amount)', 'error'); 
+      return; 
+    }
+    const netAmount = calculateNetAmount();
+    if (netAmount <= 0 && !saveAsDraft) {
+      addToast('Net payable amount must be greater than zero after deductions', 'error');
+      return;
+    }
+    setLoading(true);
+    try { 
+      const result = await api.createVoucher({ 
+        companyId: user.company.id, 
+        headOfAccount: form.headOfAccount,
+        subHeadOfAccount: form.subHeadOfAccount || null,
+        narration: form.narration, 
+        narrationItems: form.narrationItems,
+        deductions: form.deductions,
+        amount: netAmount, 
+        paymentMode: form.paymentMode, 
+        payeeId: form.payeeId, 
+        preparedBy: user.id,
+        saveAsDraft: saveAsDraft,
+        invoiceReference: form.invoiceReference || null,
+        paidFromAccount: form.paidFromAccount || null
+      }); 
+      if (result.success) { 
+        addToast(saveAsDraft ? `Draft ${result.serialNumber} saved` : `Voucher ${result.serialNumber} submitted`, 'success'); 
+        localStorage.removeItem('cv_draft');
+        setForm({ headOfAccount: '', subHeadOfAccount: '', narration: '', narrationItems: [], deductions: [], payeeId: '', paymentMode: 'UPI', amount: '', invoiceReference: '', paidFromAccount: '' }); 
+        setShowDeductions(false);
+        setUseNarrationTable(false);
+        setCreatedVoucher({ id: result.voucherId, serialNumber: result.serialNumber, status: result.status || (saveAsDraft ? 'draft' : 'pending') });
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+        refreshVouchers(); 
+      } else {
+        addToast(result.error || 'Failed', 'error');
+      }
+    } catch { addToast('Failed', 'error'); }
+    setLoading(false);
+  };
+
+  return (
+    <div>
+      <div className="page-header"><h1 className="page-title">Create Payment Voucher</h1><p className="page-subtitle">Prepare a new payment voucher for approval</p></div>
+      {createdVoucher && (
+        <div className="card" style={{ marginBottom: '1rem', border: '2px solid #10b981' }}>
+          <div className="card-header" style={{ background: '#d1fae5', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <h3 className="card-title" style={{ color: '#065f46' }}>✅ {createdVoucher.status === 'draft' ? `Draft ${createdVoucher.serialNumber} saved` : `Voucher ${createdVoucher.serialNumber} submitted for approval`}</h3>
+            <button className="btn btn-sm btn-secondary" onClick={() => setCreatedVoucher(null)}>✕ New Voucher</button>
+          </div>
+          <div className="card-body">
+            <p style={{ fontSize: '0.85rem', color: '#047857', marginBottom: '0.75rem' }}>You can attach the bill or invoice now, or come back to it later from the voucher list.</p>
+            <BillAttachmentPanel voucherId={createdVoucher.id} voucherSerialNumber={createdVoucher.serialNumber} voucherType="regular" companyId={user.company.id} />
+          </div>
+        </div>
+      )}
+      {!createdVoucher && <>
+      {/* Draft restored banner */}
+      {(form.headOfAccount || form.payeeId || form.amount || form.narration || form.narrationItems.some(i => i.description || i.amount)) && (() => {
+        let hasSaved = false;
+        try { hasSaved = !!localStorage.getItem('cv_draft'); } catch {}
+        return hasSaved ? (
+          <div style={{marginBottom: '1rem', padding: '0.75rem 1rem', background: '#fffbeb', border: '1px solid #fbbf24', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem'}}>
+            <span style={{fontSize: '0.9rem', color: '#92400e'}}>⚡ <strong>Draft restored</strong> — your last unsaved voucher was recovered automatically.</span>
+            <button style={{fontSize: '0.8rem', padding: '0.3rem 0.75rem', background: 'transparent', border: '1px solid #f59e0b', borderRadius: '6px', color: '#92400e', cursor: 'pointer'}} onClick={() => {
+              localStorage.removeItem('cv_draft');
+              setForm({ headOfAccount: '', subHeadOfAccount: '', narration: '', narrationItems: [], deductions: [], payeeId: '', paymentMode: 'UPI', amount: '', invoiceReference: '', paidFromAccount: '' });
+              setShowDeductions(false);
+              setUseNarrationTable(true);
+            }}>✕ Discard Draft</button>
+          </div>
+        ) : null;
+      })()}
+      <div className="card">
+        <div className="card-header"><h3 className="card-title">{Icons.fileText} Voucher Details</h3></div>
+        <div className="card-body">
+          <div style={{marginBottom: '1.5rem', padding: '1rem', background: 'var(--relish-cream)', borderRadius: '8px', border: '2px solid var(--relish-orange)'}}>
+            <div style={{display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem'}}>
+              {Icons.building}
+              <span style={{fontSize: '1.1rem', fontWeight: 600, color: 'var(--relish-dark)'}}>{user.company.name}</span>
+            </div>
+            <div style={{fontSize: '0.85rem', color: '#666'}}>{user.company.address}</div>
+            <div style={{fontSize: '0.85rem', color: '#666'}}>GST: {user.company.gst}</div>
+          </div>
+          <div className="form-row">
+            <div className="form-group">
+              <label className="form-label form-label-row">
+                Head of Account *
+                <button className="btn btn-sm btn-secondary" onClick={() => setShowCustomAccount(true)} style={{fontSize: '0.75rem'}}>✏️ Enter Custom</button>
+              </label>
+              <select className="form-select" value={form.headOfAccount} onChange={(e) => setForm({ ...form, headOfAccount: e.target.value })}>
+                <option value="">Select</option>
+                {heads.map(h => <option key={h} value={h}>{h}</option>)}
+              </select>
+              {form.headOfAccount && !heads.includes(form.headOfAccount) && (
+                <div style={{marginTop: '0.5rem', fontSize: '0.85rem', color: 'var(--relish-orange)', fontStyle: 'italic'}}>
+                  Custom account: {form.headOfAccount}
+                </div>
+              )}
+            </div>
+            <div className="form-group">
+              <label className="form-label form-label-row">
+                Sub-Category
+                <button 
+                  className="btn btn-sm btn-secondary" 
+                  onClick={() => setShowAddSubCategory(true)} 
+                  style={{fontSize: '0.75rem'}}
+                  disabled={!form.headOfAccount}
+                  title={!form.headOfAccount ? 'Select Head of Account first' : 'Add new sub-category'}
+                >
+                  ➕ Add New
+                </button>
+              </label>
+              <select 
+                className="form-select" 
+                value={form.subHeadOfAccount} 
+                onChange={(e) => setForm({ ...form, subHeadOfAccount: e.target.value })}
+                disabled={!form.headOfAccount}
+              >
+                <option value="">{!form.headOfAccount ? 'Select Head first' : subHeads.length === 0 ? 'No sub-categories (optional)' : 'Select Sub-Category (optional)'}</option>
+                {subHeads.map(sh => <option key={sh.id} value={sh.name}>{sh.name}</option>)}
+              </select>
+            </div>
+          </div>
+          <div className="form-row">
+            <div className="form-group"><label className="form-label">Payment Mode *</label><select className="form-select" value={form.paymentMode} onChange={(e) => setForm({ ...form, paymentMode: e.target.value })}><option value="UPI">UPI</option><option value="Account Transfer">Account Transfer</option><option value="Cash">Cash</option></select></div>
+            <div className="form-group"><label className="form-label">Invoice Reference</label><input type="text" className="form-input" placeholder="e.g., INV-2026-001 (optional)" value={form.invoiceReference} onChange={(e) => setForm({ ...form, invoiceReference: e.target.value })} /></div>
+          </div>
+          <div className="form-group"><label className="form-label">Paid From Account <span style={{fontWeight:400,color:'#888',fontSize:'0.82rem'}}>(optional — which bank account / director's account)</span></label><input type="text" list="pfa-create-list" className="form-input" placeholder="e.g., HDFC Current A/C, Director Ramesh A/C" value={form.paidFromAccount} onChange={(e) => setForm({ ...form, paidFromAccount: e.target.value })} /><datalist id="pfa-create-list">{paymentAccounts.map(a => <option key={a.id} value={a.label} />)}</datalist></div>
+          <div className="form-group"><label className="form-label form-label-row">Payee *<button className="btn btn-sm btn-secondary" onClick={() => setShowPayeeModal(true)}>{Icons.plus} Add Payee</button></label><select className="form-select" value={form.payeeId} onChange={(e) => setForm({ ...form, payeeId: e.target.value })}><option value="">Select Payee</option>{payees.map(p => <option key={p.id} value={p.id}>{p.name} {p.alias && `(${p.alias})`}</option>)}</select>
+          {form.payeeId && form.paymentMode !== 'Cash' && (() => {
+            const p = payees.find(x => x.id === form.payeeId);
+            if (!p) return null;
+            if (form.paymentMode === 'UPI') {
+              return p.upi_id
+                ? <div style={{marginTop:'0.4rem',padding:'0.45rem 0.75rem',background:'#f0fdf4',border:'1px solid #86efac',borderRadius:'6px',fontSize:'0.82rem',color:'#166534'}}>✅ UPI ID: <strong style={{fontFamily:'monospace'}}>{p.upi_id}</strong></div>
+                : <div style={{marginTop:'0.4rem',padding:'0.45rem 0.75rem',background:'#fffbeb',border:'1px solid #fcd34d',borderRadius:'6px',fontSize:'0.82rem',color:'#92400e'}}>⚠️ No UPI ID on file for this payee — add it in <strong>Manage Payees</strong> before submitting.</div>;
+            }
+            if (form.paymentMode === 'Account Transfer') {
+              return p.bank_account
+                ? <div style={{marginTop:'0.4rem',padding:'0.45rem 0.75rem',background:'#f0fdf4',border:'1px solid #86efac',borderRadius:'6px',fontSize:'0.82rem',color:'#166534'}}>✅ A/C: <strong style={{fontFamily:'monospace'}}>{p.bank_account}</strong>{p.ifsc ? <> · IFSC: <strong style={{fontFamily:'monospace'}}>{p.ifsc}</strong></> : null}{p.bank_name ? <> · {p.bank_name}</> : null}</div>
+                : <div style={{marginTop:'0.4rem',padding:'0.45rem 0.75rem',background:'#fffbeb',border:'1px solid #fcd34d',borderRadius:'6px',fontSize:'0.82rem',color:'#92400e'}}>⚠️ No bank account on file for this payee — add it in <strong>Manage Payees</strong> before submitting.</div>;
+            }
+            return null;
+          })()}
+          </div>
+          
+          <div className="form-group">
+            <label className="form-label form-label-row">
+              Narration / Line Items
+              <label style={{display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem', cursor: 'pointer', background: useNarrationTable ? '#f59e0b' : '#888', color: 'white', padding: '0.35rem 0.75rem', borderRadius: '6px'}}>
+                <input 
+                  type="checkbox" 
+                  checked={useNarrationTable} 
+                  onChange={(e) => {
+                    setUseNarrationTable(e.target.checked);
+                    if (!e.target.checked) {
+                      // Switching to simple mode - clear items
+                      setForm({ ...form, narrationItems: [] });
+                    }
+                  }} 
+                />
+                {useNarrationTable ? '📋 Multiple Items Mode' : '📝 Simple Text Mode'}
+              </label>
+            </label>
+            
+            {useNarrationTable ? (
+              <NarrationItemsTable 
+                items={form.narrationItems} 
+                onChange={(items) => setForm({ ...form, narrationItems: items })}
+              />
+            ) : (
+              <textarea className="form-input" rows={2} placeholder="Enter payment description" value={form.narration} onChange={(e) => setForm({ ...form, narration: e.target.value })} />
+            )}
+          </div>
+
+          {/* Deductions Section */}
+          <div className="form-group">
+            <label className="form-label form-label-row">
+              Deductions / Advance Payments
+              <label style={{display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem', cursor: 'pointer', background: showDeductions ? '#6366f1' : '#888', color: 'white', padding: '0.35rem 0.75rem', borderRadius: '6px'}}>
+                <input type="checkbox" checked={showDeductions} onChange={(e) => {
+                  setShowDeductions(e.target.checked);
+                  if (!e.target.checked) setForm({ ...form, deductions: [] });
+                }} />
+                {showDeductions ? '💰 Deductions Active' : '➖ Add Deductions'}
+              </label>
+            </label>
+            {showDeductions && (
+              <DeductionsTable
+                items={form.deductions}
+                onChange={(items) => setForm({ ...form, deductions: items })}
+              />
+            )}
+          </div>
+          
+          <div className="form-group">
+            <label className="form-label">
+              {showDeductions && form.deductions.length > 0 ? 'Gross Amount (₹) *' : 'Amount (₹) *'}
+              {useNarrationTable && form.narrationItems.length > 0 && <span style={{color: '#f59e0b', fontWeight: 'normal', marginLeft: '0.5rem'}}>(auto-calculated from items)</span>}
+            </label>
+            <input 
+              type="number" 
+              className="form-input" 
+              placeholder="Enter amount" 
+              value={form.amount} 
+              onChange={(e) => setForm({ ...form, amount: e.target.value })} 
+              readOnly={useNarrationTable && form.narrationItems.some(i => parseFloat(i.amount) > 0)}
+              style={useNarrationTable && form.narrationItems.some(i => parseFloat(i.amount) > 0) ? {background: '#f5f5f5', fontWeight: 600, fontSize: '1.1rem'} : {}}
+            />
+            {/* Net amount breakdown when deductions are present */}
+            {showDeductions && form.deductions.length > 0 && parseFloat(form.amount) > 0 && (
+              <div style={{marginTop: '0.75rem', padding: '1rem', background: '#eef2ff', borderRadius: '8px', border: '2px solid #6366f1'}}>
+                <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: '0.4rem', fontSize: '0.9rem'}}>
+                  <span style={{color: '#374151'}}>Gross Amount:</span>
+                  <span style={{fontFamily: 'monospace', fontWeight: 600}}>{formatRupees(parseFloat(form.amount))}</span>
+                </div>
+                <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: '0.4rem', fontSize: '0.9rem', color: '#6366f1'}}>
+                  <span>Less: Deductions:</span>
+                  <span style={{fontFamily: 'monospace', fontWeight: 600}}>- {formatRupees(calculateDeductionTotal())}</span>
+                </div>
+                <div style={{borderTop: '2px solid #6366f1', paddingTop: '0.5rem', display: 'flex', justifyContent: 'space-between', fontSize: '1rem', fontWeight: 700}}>
+                  <span style={{color: '#3730a3'}}>Net Payable:</span>
+                  <span style={{fontFamily: 'monospace', color: '#3730a3'}}>{formatRupees(calculateNetAmount())}</span>
+                </div>
+                <div style={{marginTop: '0.5rem', fontSize: '0.8rem', color: '#6366f1', fontStyle: 'italic'}}>
+                  <strong>Net in Words:</strong> {numberToWordsIndian(calculateNetAmount())}
+                </div>
+              </div>
+            )}
+            {/* In words for gross (when no deductions) */}
+            {(!showDeductions || form.deductions.length === 0) && form.amount > 0 && (
+              <div style={{marginTop: '0.5rem', fontSize: '0.85rem', color: '#666', fontStyle: 'italic', background: '#fffbeb', padding: '0.75rem', borderRadius: '6px', border: '1px solid #fcd34d'}}>
+                <strong style={{color: '#92400e'}}>In Words:</strong> {numberToWordsIndian(parseFloat(form.amount))}
+              </div>
+            )}
+          </div>
+          
+          <div className="btn-group" style={{display: 'flex', gap: '1rem', flexWrap: 'wrap', marginTop: '1.5rem'}}>
+            <button className="btn btn-outline" onClick={() => setShowPreview(true)} disabled={!form.headOfAccount || !form.payeeId || !form.amount} style={{border: '2px solid #f59e0b', color: '#f59e0b'}}>
+              👁️ Preview
+            </button>
+            <button className="btn btn-secondary" onClick={() => handleSaveOrSubmit(true)} disabled={loading}>
+              {loading && Icons.loader}💾 Save as Draft
+            </button>
+            <button className="btn btn-primary" onClick={() => handleSaveOrSubmit(false)} disabled={loading}>
+              {loading && Icons.loader}{Icons.send} Submit for Approval
+            </button>
+          </div>
+          <p style={{fontSize: '0.8rem', color: '#888', marginTop: '0.75rem'}}>
+            💡 Tip: Preview your voucher before submitting. Save as Draft if the payee isn't ready to receive the OTP yet.
+          </p>
+        </div>
+      </div>
+      </>}
+      {showPayeeModal && (
+        <div className="modal-overlay" onClick={() => setShowPayeeModal(false)}><div className="modal" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-header"><h3 className="modal-title">Add New Payee</h3><button className="modal-close" onClick={() => setShowPayeeModal(false)}>×</button></div>
+          <div className="modal-body">
+            <div className="form-group"><label className="form-label">Name (as in Bank Account) *</label><input type="text" className="form-input" value={newPayee.name} onChange={(e) => setNewPayee({ ...newPayee, name: e.target.value })} /></div>
+            <div className="form-group"><label className="form-label">Alias</label><input type="text" className="form-input" value={newPayee.alias} onChange={(e) => setNewPayee({ ...newPayee, alias: e.target.value })} /></div>
+            <div className="form-group"><label className="form-label">Mobile Number *</label><input type="tel" className="form-input" value={newPayee.mobile} onChange={(e) => setNewPayee({ ...newPayee, mobile: e.target.value })} /></div>
+            <div className="form-row"><div className="form-group"><label className="form-label">Bank Account</label><input type="text" className="form-input" value={newPayee.bankAccount} onChange={(e) => setNewPayee({ ...newPayee, bankAccount: e.target.value })} /></div><div className="form-group"><label className="form-label">IFSC Code</label><input type="text" className="form-input" value={newPayee.ifsc} onChange={(e) => setNewPayee({ ...newPayee, ifsc: e.target.value })} /></div></div>
+            <div className="form-group"><label className="form-label">Bank Name</label><input type="text" className="form-input" placeholder="e.g., ICICI Bank" value={newPayee.bankName} onChange={(e) => setNewPayee({ ...newPayee, bankName: e.target.value })} /></div>
+            <div className="form-group"><label className="form-label">UPI ID</label><input type="text" className="form-input" value={newPayee.upiId} onChange={(e) => setNewPayee({ ...newPayee, upiId: e.target.value })} /></div>
+          </div>
+          <div className="modal-footer"><button className="btn btn-secondary" onClick={() => setShowPayeeModal(false)}>Cancel</button><button className="btn btn-primary" onClick={handleAddPayee} disabled={loading || !newPayee.name || !newPayee.mobile}>{loading && Icons.loader}Add Payee</button></div>
+        </div></div>
+      )}
+      {showCustomAccount && (
+        <div className="modal-overlay" onClick={() => setShowCustomAccount(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header"><h3 className="modal-title">✏️ Enter Custom Head of Account</h3><button className="modal-close" onClick={() => setShowCustomAccount(false)}>×</button></div>
+            <div className="modal-body">
+              <div className="form-group">
+                <label className="form-label">Account Name</label>
+                <input 
+                  type="text" 
+                  className="form-input" 
+                  value={customAccount} 
+                  onChange={(e) => setCustomAccount(e.target.value)}
+                  placeholder="Enter account name (e.g., Equipment Purchase)"
+                  onKeyPress={e => e.key === 'Enter' && handleUseCustomAccount()}
+                />
+              </div>
+              <p style={{fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '1rem'}}>
+                This will be used for this voucher only. To add it permanently, go to Heads of Account management.
+              </p>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setShowCustomAccount(false)}>Cancel</button>
+              <button className="btn btn-primary" onClick={handleUseCustomAccount} disabled={!customAccount.trim()}>Use This Account</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {showAddSubCategory && (
+        <div className="modal-overlay" onClick={() => setShowAddSubCategory(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header"><h3 className="modal-title">➕ Add Sub-Category</h3><button className="modal-close" onClick={() => setShowAddSubCategory(false)}>×</button></div>
+            <div className="modal-body">
+              <div style={{background: '#fef3c7', padding: '0.75rem', borderRadius: '8px', marginBottom: '1rem'}}>
+                <strong>Parent Head:</strong> {form.headOfAccount}
+              </div>
+              <div className="form-group">
+                <label className="form-label">Sub-Category Name</label>
+                <input 
+                  type="text" 
+                  className="form-input" 
+                  value={newSubCategory} 
+                  onChange={(e) => setNewSubCategory(e.target.value)}
+                  placeholder="e.g., Labour Charges - Civil Work"
+                  onKeyPress={e => e.key === 'Enter' && handleAddSubCategory()}
+                />
+              </div>
+              <p style={{fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '1rem'}}>
+                This sub-category will be saved permanently under "{form.headOfAccount}" and can be reused in future vouchers.
+              </p>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setShowAddSubCategory(false)}>Cancel</button>
+              <button className="btn btn-primary" onClick={handleAddSubCategory} disabled={loading || !newSubCategory.trim()}>{loading && Icons.loader}Add Sub-Category</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {showPreview && (
+        <div className="modal-overlay" onClick={() => setShowPreview(false)}>
+          <div className="modal modal-lg" onClick={e => e.stopPropagation()}>
+            <div className="modal-header" style={{background: '#f59e0b', color: 'white'}}>
+              <h3 className="modal-title" style={{color: 'white'}}>👁️ Voucher Preview</h3>
+              <button className="modal-close" onClick={() => setShowPreview(false)} style={{color: 'white'}}>×</button>
+            </div>
+            <div className="modal-body" style={{padding: 0}}>
+              <PreviewVoucher 
+                formData={form}
+                payees={payees}
+                user={user}
+              />
+            </div>
+            <div className="modal-footer" style={{display: 'flex', gap: '1rem', justifyContent: 'space-between'}}>
+              <button className="btn btn-secondary" onClick={() => setShowPreview(false)}>← Back to Edit</button>
+              <div style={{display: 'flex', gap: '0.75rem'}}>
+                <button className="btn btn-secondary" onClick={() => { setShowPreview(false); handleSaveOrSubmit(true); }} disabled={loading}>
+                  💾 Save as Draft
+                </button>
+                <button className="btn btn-primary" onClick={() => { setShowPreview(false); handleSaveOrSubmit(false); }} disabled={loading}>
+                  {Icons.send} Submit for Approval
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// Preview Voucher Component (for Create Voucher preview)
+const PreviewVoucher = ({ formData, payees, user }) => {
+  const selectedPayee = payees.find(p => p.id === formData.payeeId);
+  const narrationItems = formData.narrationItems || [];
+  const deductions = formData.deductions || [];
+  const validItems = narrationItems.filter(item => item.description || item.amount);
+  const validDeductions = deductions.filter(d => d.description || d.amount);
+  const grossTotal = validItems.reduce((sum, item) => sum + (parseFloat(item.amount) || 0), 0) || parseFloat(formData.amount) || 0;
+  const deductionTotal = validDeductions.reduce((sum, d) => sum + (parseFloat(d.amount) || 0), 0);
+  const netTotal = Math.max(0, grossTotal - deductionTotal);
+  
+  return (
+    <div className="voucher-preview" style={{margin: 0, boxShadow: 'none'}}>
+      <div className="voucher-header">
+        <div className="voucher-company">{user.company.name}</div>
+        <div className="voucher-address">{user.company.address}</div>
+        <div className="voucher-title">PAYMENT VOUCHER</div>
+        <div style={{background: '#e0f2fe', color: '#0369a1', padding: '4px 12px', borderRadius: '4px', fontSize: '0.8rem', fontWeight: 600, marginTop: '8px'}}>
+          👁️ PREVIEW - Not Yet Saved
+        </div>
+      </div>
+      <div className="voucher-meta">
+        <div className="voucher-meta-item"><span className="voucher-meta-label">Voucher No:</span><span className="voucher-meta-value" style={{color: '#888', fontStyle: 'italic'}}>Will be assigned</span></div>
+        <div className="voucher-meta-item"><span className="voucher-meta-label">Date:</span><span className="voucher-meta-value">{new Date().toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</span></div>
+        <div className="voucher-meta-item"><span className="voucher-meta-label">Payee:</span><span className="voucher-meta-value">{selectedPayee?.name || 'Not selected'} {selectedPayee?.alias && `(${selectedPayee.alias})`}</span></div>
+        <div className="voucher-meta-item"><span className="voucher-meta-label">Mode:</span><span className="voucher-meta-value">{formData.paymentMode}</span></div>
+        {formData.invoiceReference && <div className="voucher-meta-item"><span className="voucher-meta-label">Invoice Ref:</span><span className="voucher-meta-value">{formData.invoiceReference}</span></div>}
+      </div>
+      <div className="voucher-meta-item mb-1"><span className="voucher-meta-label">Head:</span><span className="voucher-meta-value">{formData.headOfAccount || 'Not selected'}{formData.subHeadOfAccount && ` → ${formData.subHeadOfAccount}`}</span></div>
+      {formData.narration && <div className="voucher-meta-item mb-1"><span className="voucher-meta-label">Narration:</span><span className="voucher-meta-value">{formData.narration}</span></div>}
+      
+      {validItems.length > 0 ? (
+        <div style={{marginTop: '1rem', marginBottom: '1rem'}}>
+          <div style={{fontWeight: 600, marginBottom: '0.5rem', color: '#92400e'}}>Particulars</div>
+          <table style={{width: '100%', borderCollapse: 'collapse', border: '2px solid #f59e0b', borderRadius: '8px', overflow: 'hidden'}}>
+            <thead>
+              <tr style={{background: '#f59e0b', color: 'white'}}>
+                <th style={{padding: '10px', textAlign: 'center', width: '60px'}}>S.No.</th>
+                <th style={{padding: '10px', textAlign: 'left'}}>Description</th>
+                <th style={{padding: '10px', textAlign: 'right', width: '120px'}}>Amount (₹)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {validItems.map((item, idx) => (
+                <tr key={idx} style={{borderBottom: '1px solid #fcd34d', background: idx % 2 === 0 ? 'white' : '#fffbeb'}}>
+                  <td style={{padding: '8px', textAlign: 'center', fontWeight: 600}}>{idx + 1}</td>
+                  <td style={{padding: '8px'}}>{item.description}</td>
+                  <td style={{padding: '8px', textAlign: 'right', fontFamily: 'monospace'}}>{formatRupees(item.amount)}</td>
+                </tr>
+              ))}
+            </tbody>
+            {validDeductions.length === 0 && (
+              <tfoot>
+                <tr style={{background: '#fef3c7', fontWeight: 700}}>
+                  <td colSpan="2" style={{padding: '10px', textAlign: 'right'}}>TOTAL:</td>
+                  <td style={{padding: '10px', textAlign: 'right', fontFamily: 'monospace', color: '#f59e0b'}}>{formatRupees(grossTotal)}</td>
+                </tr>
+                <tr style={{background: '#fffbeb'}}>
+                  <td colSpan="3" style={{padding: '8px', fontSize: '0.85rem', fontStyle: 'italic', color: '#92400e'}}>
+                    <strong>Amount in Words:</strong> {numberToWordsIndian(grossTotal)}
+                  </td>
+                </tr>
+              </tfoot>
+            )}
+          </table>
+        </div>
+      ) : (
+        validDeductions.length === 0 && (
+          <>
+            <div className="voucher-total">TOTAL: {formatRupees(grossTotal)}</div>
+            <div style={{fontSize: '0.85rem', fontStyle: 'italic', color: '#666', marginTop: '0.5rem', marginBottom: '1rem', background: '#fffbeb', padding: '0.75rem', borderRadius: '6px', border: '1px solid #fcd34d'}}>
+              <strong style={{color: '#92400e'}}>In Words:</strong> {numberToWordsIndian(grossTotal)}
+            </div>
+          </>
+        )
+      )}
+
+      {/* Deductions table */}
+      {validDeductions.length > 0 && (
+        <div style={{marginTop: '1rem', marginBottom: '1rem'}}>
+          <div style={{fontWeight: 600, marginBottom: '0.5rem', color: '#3730a3'}}>Less: Advance / Part Payments Deducted</div>
+          <table style={{width: '100%', borderCollapse: 'collapse', border: '2px solid #6366f1', borderRadius: '8px', overflow: 'hidden'}}>
+            <thead>
+              <tr style={{background: '#6366f1', color: 'white'}}>
+                <th style={{padding: '10px', textAlign: 'center', width: '60px'}}>S.No.</th>
+                <th style={{padding: '10px', textAlign: 'left'}}>Description</th>
+                <th style={{padding: '10px', textAlign: 'right', width: '130px'}}>Deduction (₹)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {validDeductions.map((d, idx) => (
+                <tr key={idx} style={{borderBottom: '1px solid #e0e7ff', background: idx % 2 === 0 ? 'white' : '#f5f3ff'}}>
+                  <td style={{padding: '8px', textAlign: 'center', fontWeight: 600}}>{idx + 1}</td>
+                  <td style={{padding: '8px'}}>{d.description}</td>
+                  <td style={{padding: '8px', textAlign: 'right', fontFamily: 'monospace', color: '#6366f1'}}>- {formatRupees(d.amount)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {/* Net payable summary */}
+          <div style={{marginTop: '0.75rem', padding: '0.75rem 1rem', background: '#eef2ff', borderRadius: '8px', border: '2px solid #6366f1'}}>
+            {validItems.length > 0 && (
+              <div style={{display: 'flex', justifyContent: 'space-between', fontSize: '0.9rem', color: '#374151', marginBottom: '0.3rem'}}>
+                <span>Gross Amount:</span>
+                <span style={{fontFamily: 'monospace', fontWeight: 600}}>{formatRupees(grossTotal)}</span>
+              </div>
+            )}
+            <div style={{display: 'flex', justifyContent: 'space-between', fontSize: '0.9rem', color: '#6366f1', marginBottom: '0.4rem'}}>
+              <span>Less: Deductions:</span>
+              <span style={{fontFamily: 'monospace', fontWeight: 600}}>- {formatRupees(deductionTotal)}</span>
+            </div>
+            <div style={{display: 'flex', justifyContent: 'space-between', fontWeight: 700, fontSize: '1.05rem', borderTop: '2px solid #6366f1', paddingTop: '0.4rem'}}>
+              <span style={{color: '#3730a3'}}>NET PAYABLE:</span>
+              <span style={{fontFamily: 'monospace', color: '#3730a3'}}>{formatRupees(netTotal)}</span>
+            </div>
+            <div style={{marginTop: '0.4rem', fontSize: '0.8rem', color: '#6366f1', fontStyle: 'italic'}}>
+              <strong>In Words:</strong> {numberToWordsIndian(netTotal)}
+            </div>
+          </div>
+        </div>
+      )}
+      
+      <div className="voucher-signatures" style={{marginTop: '1.5rem'}}>
+        <div className="voucher-signature">
+          <div className="voucher-signature-line" style={{borderBottom: '1px dashed #ccc', height: '40px'}}></div>
+          <div className="voucher-signature-role">Prepared By</div>
+          <div className="voucher-signature-name">{user.name}</div>
+        </div>
+        <div className="voucher-signature">
+          <div className="voucher-signature-line" style={{borderBottom: '1px dashed #ccc', height: '40px'}}></div>
+          <div className="voucher-signature-role">Approved By</div>
+          <div className="voucher-signature-name" style={{color: '#888', fontStyle: 'italic'}}>Pending</div>
+        </div>
+        <div className="voucher-signature">
+          <div className="voucher-signature-line" style={{borderBottom: '1px dashed #ccc', height: '40px'}}></div>
+          <div className="voucher-signature-role">Received By</div>
+          <div className="voucher-signature-name" style={{color: '#888', fontStyle: 'italic'}}>Pending</div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// Voucher List
+const VoucherList = ({ filter }) => {
+  const { user, vouchers, addToast, refreshVouchers, navigateToSuspense, pendingShareForConfirmation, consumePendingShare } = useApp();
+  const [selectedVoucher, setSelectedVoucher] = useState(null);
+  const [showModal, setShowModal] = useState(false);
+  const [payeeOtp, setPayeeOtp] = useState('');
+  const [rejectReason, setRejectReason] = useState('');
+  const [showRejectModal, setShowRejectModal] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [showPrintModal, setShowPrintModal] = useState(false);
+  const [payNowVoucher, setPayNowVoucher] = useState(null);
+  const [showRetroScan, setShowRetroScan] = useState(false);
+  const [verifyReceiptVoucher, setVerifyReceiptVoucher] = useState(null); // single-voucher verify
+  const [verifyReceiptResult, setVerifyReceiptResult] = useState(null);  // scan result for that voucher
+  const [verifyReceiptLoading, setVerifyReceiptLoading] = useState(false);
+
+  const handleVerifyReceipt = async (v) => {
+    setVerifyReceiptVoucher(v);
+    setVerifyReceiptResult(null);
+    setVerifyReceiptLoading(true);
+    try {
+      const res = await api.retrospectiveScan(user.company.id, { requestedBy: user.id, voucherIds: [v.id] });
+      setVerifyReceiptResult((res.results || [])[0] || { voucherId: v.id, bestConfidence: 'none', attachments: [] });
+    } catch (e) {
+      setVerifyReceiptResult({ voucherId: v.id, bestConfidence: 'none', attachments: [], error: e.message });
+    }
+    setVerifyReceiptLoading(false);
+  };
+
+  const handleConfirmVerifiedPaid = async (result) => {
+    const best = (result.attachments || []).find(a => a.confidence === 'high') || (result.attachments || []).find(a => a.confidence === 'low');
+    try {
+      await api.retrospectiveScan(user.company.id, {
+        requestedBy: user.id,
+        confirmIds: [{ voucherId: result.voucherId, attachmentUrl: best?.publicUrl || null, utr: best?.utr || null, transferType: best?.transferType || null }]
+      });
+      addToast(`${verifyReceiptVoucher?.serial_number} marked as Paid ✅`, 'success');
+      setVerifyReceiptVoucher(null);
+      setVerifyReceiptResult(null);
+      refreshVouchers();
+    } catch (e) { addToast(e.message || 'Failed', 'error'); }
+  };
+  const [printDateFrom, setPrintDateFrom] = useState('');
+  const [printDateTo, setPrintDateTo] = useState('');
+  const [showExcelModal, setShowExcelModal] = useState(false);
+  const [excelDateFrom, setExcelDateFrom] = useState('');
+  const [excelDateTo, setExcelDateTo] = useState('');
+  const [excelPayee, setExcelPayee] = useState('');
+  const [loading, setLoading] = useState(false);
+  
+  // Document verification state
+  const [showAttestationModal, setShowAttestationModal] = useState(false);
+  const [attestationNotes, setAttestationNotes] = useState('');
+  
+  // Payment tracking state (Phase-2)
+  const [selectedRows, setSelectedRows] = useState(new Set());
+  // Batch combination constraint: set when first voucher is checked in awaiting_payment
+  // view; subsequent checkboxes that don't match are visually disabled.
+  const [batchConstraint, setBatchConstraint] = useState(null); // null | { payeeId, paymentMode }
+  // Holds batch object after createBatch succeeds, driving the Pay Now (batch) modal.
+  const [payNowBatch, setPayNowBatch] = useState(null);
+  // Batch Pay Now modal form state (hoisted here — hooks cannot live inside an IIFE)
+  const [batchPaidRef, setBatchPaidRef] = useState('');
+  const [batchPaidNotes, setBatchPaidNotes] = useState('');
+  const [batchReceiptData, setBatchReceiptData] = useState('');
+  const [batchReceiptMime, setBatchReceiptMime] = useState('');
+  const [batchReceiptPreview, setBatchReceiptPreview] = useState('');
+  const [batchPaying, setBatchPaying] = useState(false);
+  // B2: batch provenance for the Payment Record "Settled via / Members" rows
+  const [selectedBatchDetails, setSelectedBatchDetails] = useState(null); // { batch_reference, total_amount, members[] }
+  // Batch Receipts modal — view / add receipts on an already-paid batch
+  const [batchReceiptsModal, setBatchReceiptsModal] = useState(null); // { batchId, batchReference, payeeName }
+  const [batchReceiptsList, setBatchReceiptsList] = useState([]);
+  const [batchReceiptsListLoading, setBatchReceiptsListLoading] = useState(false);
+  const [addingBatchReceipt, setAddingBatchReceipt] = useState(false);
+  const [newBatchReceiptData, setNewBatchReceiptData] = useState('');
+  const [newBatchReceiptMime, setNewBatchReceiptMime] = useState('');
+  const [newBatchReceiptPreview, setNewBatchReceiptPreview] = useState('');
+  const [newBatchReceiptRef, setNewBatchReceiptRef] = useState('');
+  const [newBatchReceiptNotes, setNewBatchReceiptNotes] = useState('');
+  const [showMarkPaidModal, setShowMarkPaidModal] = useState(false);
+  const [markPaidVoucher, setMarkPaidVoucher] = useState(null);
+  const [paymentReference, setPaymentReference] = useState('');
+  const [paymentNotes, setPaymentNotes] = useState('');
+  const [paymentReceiptData, setPaymentReceiptData] = useState('');
+  const [paymentReceiptMimeType, setPaymentReceiptMimeType] = useState('');
+  const [paymentReceiptPreview, setPaymentReceiptPreview] = useState('');
+  
+  // Edit Draft state
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editForm, setEditForm] = useState({ headOfAccount: '', subHeadOfAccount: '', narration: '', narrationItems: [], deductions: [], payeeId: '', paymentMode: 'UPI', amount: '', invoiceReference: '', paidFromAccount: '' });
+  const [payees, setPayees] = useState([]);
+  const [paymentAccounts, setPaymentAccounts] = useState([]);
+  const [heads, setHeads] = useState([]);
+  const [headsData, setHeadsData] = useState([]);
+  const [subHeads, setSubHeads] = useState([]);
+  const [allSubHeads, setAllSubHeads] = useState([]);
+  const [useNarrationTable, setUseNarrationTable] = useState(false);
+  const [showEditDeductions, setShowEditDeductions] = useState(false);
+
+  // Search state — All Vouchers + Completed Vouchers tabs
+  const [searchNum, setSearchNum] = useState('');
+  const [searchHead, setSearchHead] = useState('');
+  const [searchPayee, setSearchPayee] = useState('');
+  const [searchStatus, setSearchStatus] = useState('');
+  const [searchDateMode, setSearchDateMode] = useState('range'); // 'exact' | 'range'
+  const [searchDate, setSearchDate] = useState('');
+  const [searchFrom, setSearchFrom] = useState('');
+  const [searchTo, setSearchTo] = useState('');
+  const hasSearchFilters = searchNum || searchHead || searchPayee || searchStatus || searchDate || searchFrom || searchTo;
+
+  // ── Android UPI Bridge ──────────────────────────────────────────────────────
+  // Load payees and heads for edit modal
+  useEffect(() => {
+    api.getPayees(user.company.id).then(setPayees);
+    api.getPaymentAccounts(user.company.id).then(setPaymentAccounts);
+    api.getHeadsOfAccount(user.company.id).then(data => {
+      if (Array.isArray(data)) {
+        setHeadsData(data);
+        setHeads(data.map(h => h.name));
+      }
+    });
+    api.getSubHeadsByCompany(user.company.id).then(data => {
+      if (Array.isArray(data)) setAllSubHeads(data);
+    });
+  }, [user.company.id]);
+
+  // Update sub-heads when head of account changes in edit form
+  useEffect(() => {
+    if (editForm.headOfAccount) {
+      const selectedHead = headsData.find(h => h.name === editForm.headOfAccount);
+      if (selectedHead) {
+        const filtered = allSubHeads.filter(sh => sh.head_id === selectedHead.id);
+        setSubHeads(filtered);
+      } else {
+        setSubHeads([]);
+      }
+    } else {
+      setSubHeads([]);
+    }
+  }, [editForm.headOfAccount, headsData, allSubHeads]);
+
+  // Auto-update amount when narration items change in edit form
+  useEffect(() => {
+    if (useNarrationTable && editForm.narrationItems.length > 0) {
+      const total = editForm.narrationItems.reduce((sum, item) => sum + (parseFloat(item.amount) || 0), 0);
+      if (total > 0) {
+        setEditForm(f => ({ ...f, amount: total.toFixed(2) }));
+      }
+    }
+  }, [editForm.narrationItems, useNarrationTable]);
+
+  // Clear bulk selection when tab changes
+  useEffect(() => { setSelectedRows(new Set()); setBatchConstraint(null); }, [filter]);
+
+  // Reset batch Pay Now form fields when the modal is closed
+  useEffect(() => {
+    if (!payNowBatch) {
+      setBatchPaidRef(''); setBatchPaidNotes('');
+      setBatchReceiptData(''); setBatchReceiptMime(''); setBatchReceiptPreview('');
+      setBatchPaying(false);
+    }
+  }, [payNowBatch]);
+
+  // Write a pending-confirmation context to localStorage when the voucher Pay Now
+  // modal opens. If the admin shares a bank receipt from their phone, the Web Share
+  // Target handler reads this context and routes the file here instead of reconcile.
+  useEffect(() => {
+    if (!payNowVoucher) return;
+    const _ctx = { type: 'voucher', entityId: payNowVoucher.id, suspenseId: null };
+    try { localStorage.setItem('relish_share_context', JSON.stringify({ ..._ctx, expires: Date.now() + 15 * 60 * 1000 })); } catch {}
+    api.setPendingShareContext(user.id, _ctx).catch(() => {}); // cross-device server copy
+    return () => {
+      try { const _r = localStorage.getItem('relish_share_context'); if (_r) { const _c = JSON.parse(_r); if (_c?.type === 'voucher' && _c?.entityId === payNowVoucher?.id) localStorage.removeItem('relish_share_context'); } } catch {}
+      api.clearPendingShareContext(user.id).catch(() => {}); // prevent stale context triggering MarkPaidModal on next share
+    };
+  }, [payNowVoucher?.id]);
+
+  // Consume a receipt routed to a specific voucher's Pay Now confirmation modal.
+  useEffect(() => {
+    if (!pendingShareForConfirmation || pendingShareForConfirmation.type !== 'voucher') return;
+    if (!vouchers || !vouchers.length) return;
+    const _target = vouchers.find(v => v.id === pendingShareForConfirmation.entityId);
+    if (!_target) return;
+    // Auto-complete may have already marked it paid; skip modal and let success screen show
+    if (_target.status === 'paid') { consumePendingShare(); return; }
+    const _psc = pendingShareForConfirmation;
+    const _b64 = _psc.receipt.dataUrl.replace(/^data:.*?;base64,/, '');
+    setPaymentReceiptData(_b64);
+    setPaymentReceiptMimeType(_psc.receipt.mimeType);
+    setPaymentReceiptPreview(_psc.receipt.mimeType.startsWith('image/') ? _psc.receipt.dataUrl : 'pdf');
+    setMarkPaidVoucher(_target);
+    setShowMarkPaidModal(true);
+    consumePendingShare();
+  }, [vouchers, pendingShareForConfirmation]);
+
+  const baseFiltered = vouchers.filter(v => { 
+    if (filter === 'draft') return v.status === 'draft';
+    if (filter === 'pending') return v.status === 'pending'; 
+    if (filter === 'approved') return ['approved', 'awaiting_payee_otp'].includes(v.status); 
+    if (filter === 'completed') return v.status === 'completed'; 
+    if (filter === 'awaiting_payment') return v.status === 'awaiting_payment';
+    if (filter === 'paid') return v.status === 'paid';
+    return true; 
+  });
+
+  const filtered = (filter !== 'completed' && filter !== 'all') ? baseFiltered : baseFiltered.filter(v => {
+    const lc = s => (s || '').toLowerCase();
+    if (searchNum && !lc(v.serial_number).includes(lc(searchNum))) return false;
+    if (searchHead && !lc(v.head_of_account).includes(lc(searchHead))) return false;
+    if (searchPayee && !lc(v.payee_name).includes(lc(searchPayee))) return false;
+    if (searchStatus && v.status !== searchStatus) return false;
+    const vDate = new Date(v.created_at);
+    if (searchDateMode === 'exact' && searchDate) {
+      const d = new Date(searchDate + 'T00:00:00'); const next = new Date(d); next.setDate(next.getDate() + 1);
+      if (vDate < d || vDate >= next) return false;
+    } else if (searchDateMode === 'range') {
+      if (searchFrom && vDate < new Date(searchFrom + 'T00:00:00')) return false;
+      if (searchTo && vDate > new Date(searchTo + 'T23:59:59')) return false;
+    }
+    return true;
+  });
+  
+  const openVoucher = async (v) => {
+    const full = await api.getVoucher(v.id);
+    if (full?.error) { addToast(full.error || 'Failed to load voucher', 'error'); return; }
+    setSelectedVoucher(full);
+    setShowModal(true);
+    // B2: fetch batch provenance for the "Settled via / Members" rows
+    setSelectedBatchDetails(null);
+    if (full.batch_id && full.status === 'paid') {
+      api.getBatch(full.batch_id).then(setSelectedBatchDetails).catch(() => {});
+    }
+  };
+
+  const handleEditDraft = (voucher) => {
+    const narrationItems = typeof voucher.narration_items === 'string' 
+      ? JSON.parse(voucher.narration_items || '[]') 
+      : (voucher.narration_items || []);
+    const hasItems = narrationItems.length > 0 && narrationItems.some(item => item.description || item.amount);
+
+    const storedDeductions = typeof voucher.deductions === 'string'
+      ? JSON.parse(voucher.deductions || '[]')
+      : (voucher.deductions || []);
+    const validDeductions = storedDeductions.filter(d => d.description || d.amount);
+    const deductionTotal = validDeductions.reduce((sum, d) => sum + (parseFloat(d.amount) || 0), 0);
+    // Reconstruct gross amount: stored amount is NET, so gross = net + deductions
+    const netAmount = parseFloat(voucher.amount) || 0;
+    const grossAmount = netAmount + deductionTotal;
+    
+    setEditForm({
+      headOfAccount: voucher.head_of_account || '',
+      subHeadOfAccount: voucher.sub_head_of_account || '',
+      narration: voucher.narration || '',
+      narrationItems: narrationItems,
+      deductions: validDeductions,
+      payeeId: voucher.payee_id || '',
+      paymentMode: voucher.payment_mode || 'UPI',
+      amount: grossAmount.toFixed(2),
+      invoiceReference: voucher.invoice_reference || '',
+      paidFromAccount: voucher.paid_from_account || ''
+    });
+    setUseNarrationTable(hasItems);
+    setShowEditDeductions(validDeductions.length > 0);
+    setShowModal(false);
+    setShowEditModal(true);
+  };
+
+  const handleUpdateDraft = async (saveAsDraft = true) => {
+    if (!editForm.headOfAccount || !editForm.payeeId || !editForm.amount) {
+      addToast('Fill all required fields (Head of Account, Payee, Amount)', 'error');
+      return;
+    }
+    const editDeductionTotal = editForm.deductions.reduce((sum, d) => sum + (parseFloat(d.amount) || 0), 0);
+    const editNetAmount = Math.max(0, (parseFloat(editForm.amount) || 0) - editDeductionTotal);
+    if (editNetAmount <= 0 && !saveAsDraft) {
+      addToast('Net payable amount must be greater than zero after deductions', 'error');
+      return;
+    }
+    setLoading(true);
+    try {
+      const result = await api.updateVoucher(selectedVoucher.id, {
+        headOfAccount: editForm.headOfAccount,
+        subHeadOfAccount: editForm.subHeadOfAccount || null,
+        narration: editForm.narration,
+        narrationItems: editForm.narrationItems,
+        deductions: editForm.deductions,
+        amount: editNetAmount,
+        paymentMode: editForm.paymentMode,
+        payeeId: editForm.payeeId,
+        saveAsDraft: saveAsDraft,
+        invoiceReference: editForm.invoiceReference || null,
+        paidFromAccount: editForm.paidFromAccount || null
+      });
+      if (result.success) {
+        addToast(saveAsDraft ? 'Draft updated successfully' : 'Voucher submitted for approval', 'success');
+        refreshVouchers();
+        setShowEditModal(false);
+      } else {
+        addToast(result.error || 'Failed to update', 'error');
+      }
+    } catch {
+      addToast('Failed to update voucher', 'error');
+    }
+    setLoading(false);
+  };
+  
+  const handleSubmitDraft = async (voucher) => {
+    setLoading(true);
+    try {
+      const result = await api.submitVoucher(voucher.id);
+      if (result.success) {
+        addToast('Voucher submitted for approval', 'success');
+        refreshVouchers();
+        setShowModal(false);
+      } else {
+        addToast(result.error || 'Failed to submit', 'error');
+      }
+    } catch {
+      addToast('Failed to submit voucher', 'error');
+    }
+    setLoading(false);
+  };
+  
+  const handlePrintSingle = async (voucher) => {
+    const full = voucher.company_name ? voucher : await api.getVoucher(voucher.id);
+    const printWindow = window.open('', '_blank');
+    printWindow.document.write(generateVoucherHTML([full], `Voucher ${full.voucher_number || voucher.voucher_number || ''}`));
+    printWindow.document.close();
+    setTimeout(() => printWindow.print(), 250);
+  };
+  
+  const handlePrintPeriod = () => {
+    if (!printDateFrom || !printDateTo) {
+      addToast('Select date range', 'error');
+      return;
+    }
+    
+    const from = new Date(printDateFrom);
+    const to = new Date(printDateTo);
+    to.setHours(23, 59, 59);
+    
+    const periodVouchers = vouchers.filter(v => {
+      const vDate = new Date(v.created_at);
+      return vDate >= from && vDate <= to && (filter === 'all' || 
+        (filter === 'pending' && v.status === 'pending') ||
+        (filter === 'approved' && ['approved', 'awaiting_payee_otp'].includes(v.status)) ||
+        (filter === 'completed' && v.status === 'completed'));
+    });
+    
+    if (periodVouchers.length === 0) {
+      addToast('No vouchers in selected period', 'error');
+      return;
+    }
+    
+    // Fetch full details for all vouchers
+    Promise.all(periodVouchers.map(v => api.getVoucher(v.id)))
+      .then(fullVouchers => {
+        const printWindow = window.open('', '_blank');
+        printWindow.document.write(generateVoucherHTML(fullVouchers, `Vouchers Report: ${printDateFrom} to ${printDateTo}`));
+        printWindow.document.close();
+        setTimeout(() => printWindow.print(), 250);
+        setShowPrintModal(false);
+      })
+      .catch(() => addToast('Failed to generate report', 'error'));
+  };
+  
+  const generateVoucherHTML = (vouchers, title) => {
+    const formatDate = (d) => new Date(d).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+    const formatCurrency = (a) => formatRupees(a);
+    const totalAmount = vouchers.reduce((sum, v) => sum + v.amount, 0);
+    
+    // Helper to convert number to words for print
+    const numToWords = (num) => {
+      if (num === 0) return 'Rupees Zero Only';
+      const ones = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine'];
+      const tens = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
+      const teens = ['Ten', 'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen', 'Seventeen', 'Eighteen', 'Nineteen'];
+      const convertLessThan100 = (n) => { if (n < 10) return ones[n]; if (n >= 10 && n < 20) return teens[n - 10]; return tens[Math.floor(n / 10)] + (n % 10 !== 0 ? ' ' + ones[n % 10] : ''); };
+      const convertLessThan1000 = (n) => { if (n < 100) return convertLessThan100(n); return ones[Math.floor(n / 100)] + ' Hundred' + (n % 100 !== 0 ? ' ' + convertLessThan100(n % 100) : ''); };
+      const [rupeesStr, paiseStr] = num.toFixed(2).split('.'); let remainingRupees = parseInt(rupeesStr, 10); const paise = parseInt(paiseStr, 10); let words = '';
+      if (remainingRupees >= 10000000) { const crores = Math.floor(remainingRupees / 10000000); words += convertLessThan1000(crores) + ' Crore '; remainingRupees %= 10000000; }
+      if (remainingRupees >= 100000) { const lakhs = Math.floor(remainingRupees / 100000); words += convertLessThan1000(lakhs) + ' Lakh '; remainingRupees %= 100000; }
+      if (remainingRupees >= 1000) { const thousands = Math.floor(remainingRupees / 1000); words += convertLessThan1000(thousands) + ' Thousand '; remainingRupees %= 1000; }
+      if (remainingRupees > 0) { words += convertLessThan1000(remainingRupees); }
+      words = 'Rupees ' + words.trim(); if (paise > 0) { words += ' and ' + convertLessThan100(paise) + ' Paise'; }
+      return words.trim() + ' Only';
+    };
+    
+    // Helper to render attachment links and payment record for print
+    const renderAttachments = (v) => {
+      const atts = v.attachments || [];
+      const hasPaymentReceipt = !!v.payment_receipt_url;
+      const hasPaidInfo = v.status === 'paid' && (v.payment_reference || v.batch_reference || v.payment_notes);
+      if (atts.length === 0 && !hasPaymentReceipt && !hasPaidInfo) return '';
+
+      let html = '<div style="margin-top:18px;border-top:2px dashed #e5e7eb;padding-top:14px">';
+
+      if (atts.length > 0) {
+        html += `<div style="font-weight:700;font-size:10px;color:#92400e;margin-bottom:8px;text-transform:uppercase;letter-spacing:0.06em">&#128206; Bill / Invoice Attachments (${atts.length})</div>`;
+        html += '<table style="width:100%;border-collapse:collapse;font-size:10px;margin-bottom:6px">';
+        html += '<thead><tr style="background:#fef3c7"><th style="padding:5px 8px;text-align:left;border:1px solid #fcd34d;font-weight:600">File Name</th><th style="padding:5px 8px;text-align:left;border:1px solid #fcd34d;font-weight:600">Link</th></tr></thead><tbody>';
+        atts.forEach((a, i) => {
+          const name = a.file_name || `Attachment ${i + 1}`;
+          html += `<tr style="background:${i % 2 === 0 ? '#fff' : '#fffbeb'}">
+            <td style="padding:5px 8px;border:1px solid #fef3c7;font-weight:600;white-space:nowrap">${name}</td>
+            <td style="padding:5px 8px;border:1px solid #fef3c7;word-break:break-all"><a href="${a.public_url}" style="color:#2563eb;text-decoration:none;font-size:9px">${a.public_url}</a></td>
+          </tr>`;
+        });
+        html += '</tbody></table>';
+      }
+
+      if (hasPaidInfo || hasPaymentReceipt) {
+        html += `<div style="margin-top:${atts.length > 0 ? '12px' : '0'};font-weight:700;font-size:10px;color:#166534;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.06em">&#9989; Payment Record</div>`;
+        html += '<table style="width:100%;border-collapse:collapse;font-size:10px;margin-bottom:4px">';
+        if (v.payment_reference) {
+          html += `<tr><td style="padding:4px 8px;color:#374151;font-weight:600;width:140px;border-bottom:1px solid #dcfce7">UTR / Reference</td><td style="padding:4px 8px;font-family:monospace;font-weight:700;color:#166534;border-bottom:1px solid #dcfce7">${v.payment_reference}</td></tr>`;
+        }
+        if (v.batch_reference) {
+          html += `<tr><td style="padding:4px 8px;color:#374151;font-weight:600;border-bottom:1px solid #dcfce7">Paid via Batch</td><td style="padding:4px 8px;font-family:monospace;font-weight:700;color:#1d4ed8;border-bottom:1px solid #dcfce7">${v.batch_reference}</td></tr>`;
+          if (v.batch_members && v.batch_members.length > 0) {
+            const coversList = v.batch_members.map(m => `${m.serial_number} \u20b9${parseFloat(m.amount||0).toLocaleString('en-IN',{minimumFractionDigits:2})}`).join(' \u00b7 ');
+            html += `<tr><td style="padding:4px 8px;color:#374151;font-weight:600;vertical-align:top;border-bottom:1px solid #dcfce7">Batch Covers</td><td style="padding:4px 8px;font-family:monospace;font-size:8.5px;color:#1e3a5f;border-bottom:1px solid #dcfce7">${coversList}</td></tr>`;
+          }
+        }
+        if (v.payment_notes) {
+          html += `<tr><td style="padding:4px 8px;color:#374151;font-weight:600;border-bottom:1px solid #dcfce7">Notes</td><td style="padding:4px 8px;color:#374151;border-bottom:1px solid #dcfce7">${v.payment_notes}</td></tr>`;
+        }
+        if (hasPaymentReceipt) {
+          html += `<tr><td style="padding:4px 8px;color:#374151;font-weight:600">Receipt</td><td style="padding:4px 8px;word-break:break-all"><a href="${v.payment_receipt_url}" style="color:#16a34a;text-decoration:none;font-size:9px">${v.payment_receipt_url}</a></td></tr>`;
+        }
+        html += '</table>';
+      }
+
+      html += '</div>';
+      return html;
+    };
+
+    // Helper to render narration items table with enhanced styling
+    const renderNarrationItems = (v) => {
+      const items = typeof v.narration_items === 'string' 
+        ? JSON.parse(v.narration_items || '[]') 
+        : (v.narration_items || []);
+      const validItems = items.filter(item => item.description || item.amount);
+      const deductions = typeof v.deductions === 'string' ? JSON.parse(v.deductions || '[]') : (v.deductions || []);
+      const validDeductions = deductions.filter(d => d.description || d.amount);
+      
+      if (validItems.length === 0) return '';
+      
+      const itemsTotal = validItems.reduce((sum, item) => sum + (parseFloat(item.amount) || 0), 0);
+      
+      return `
+        <div class="particulars-section">
+          <div class="particulars-title">Particulars</div>
+          <table class="particulars-table">
+            <thead>
+              <tr style="background: #f59e0b; color: white;">
+                <th style="text-align:center;width:10%">S.No.</th>
+                <th style="text-align:left;width:60%">Description</th>
+                <th style="text-align:right;width:30%">Amount (₹)</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${validItems.map((item, idx) => `
+                <tr style="background: ${idx % 2 === 0 ? '#fff' : '#fafafa'}">
+                  <td style="text-align:center;font-weight:600;color:#666">${idx + 1}</td>
+                  <td style="text-align:left">${item.description || '-'}</td>
+                  <td style="text-align:right;font-weight:600;font-family:monospace">${item.amount ? formatCurrency(item.amount) : '-'}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+            ${validDeductions.length === 0 ? `
+            <tfoot>
+              <tr style="background:#fef3c7;font-weight:700">
+                <td colspan="2" style="text-align:right;padding:10px;border-top:2px solid #f59e0b">TOTAL:</td>
+                <td style="text-align:right;padding:10px;font-family:monospace;color:#f59e0b;border-top:2px solid #f59e0b">${formatCurrency(itemsTotal)}</td>
+              </tr>
+              <tr style="background:#fffbeb">
+                <td colspan="3" style="padding:8px;font-size:10px;font-style:italic;color:#92400e">
+                  <strong>In Words:</strong> ${numToWords(itemsTotal)}
+                </td>
+              </tr>
+            </tfoot>` : ''}
+          </table>
+        </div>
+      `;
+    };
+
+    // Helper to render deductions table
+    const renderDeductions = (v) => {
+      const deductions = typeof v.deductions === 'string' ? JSON.parse(v.deductions || '[]') : (v.deductions || []);
+      const validDeductions = deductions.filter(d => d.description || d.amount);
+      if (validDeductions.length === 0) return '';
+      const deductionTotal = validDeductions.reduce((sum, d) => sum + (parseFloat(d.amount) || 0), 0);
+      return `
+        <div class="particulars-section" style="margin-top:10px">
+          <div class="particulars-title" style="color:#3730a3">Less: Advance / Part Payments Deducted</div>
+          <table class="particulars-table" style="border:1px solid #c7d2fe">
+            <thead>
+              <tr style="background:#6366f1;color:white">
+                <th style="text-align:center;width:10%">S.No.</th>
+                <th style="text-align:left;width:60%">Description</th>
+                <th style="text-align:right;width:30%">Deduction (₹)</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${validDeductions.map((d, idx) => `
+                <tr style="background:${idx % 2 === 0 ? '#fff' : '#f5f3ff'}">
+                  <td style="text-align:center;font-weight:600;color:#6366f1">${idx + 1}</td>
+                  <td style="text-align:left">${d.description || '-'}</td>
+                  <td style="text-align:right;font-weight:600;font-family:monospace;color:#6366f1">- ${formatCurrency(d.amount)}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+          <div style="margin-top:8px;padding:8px 12px;background:#eef2ff;border:2px solid #6366f1;border-radius:4px">
+            <div style="display:flex;justify-content:space-between;font-size:11px;color:#6366f1;margin-bottom:4px">
+              <span>Total Deductions:</span>
+              <span style="font-family:monospace;font-weight:600">- ${formatCurrency(deductionTotal)}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;font-weight:700;font-size:13px;border-top:1px solid #6366f1;padding-top:4px">
+              <span style="color:#3730a3">NET PAYABLE:</span>
+              <span style="font-family:monospace;color:#3730a3">${formatCurrency(v.amount)}</span>
+            </div>
+            <div style="font-size:10px;font-style:italic;color:#6366f1;margin-top:4px">
+              <strong>In Words:</strong> ${numToWords(v.amount)}
+            </div>
+          </div>
+        </div>
+      `;
+    };
+    
+    return `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>${title}</title>
+  <style>
+    @page { size: A4; margin: 15mm; }
+    body { font-family: Arial, sans-serif; margin: 0; padding: 20px; font-size: 12px; }
+    .report-header { text-align: center; margin-bottom: 20px; border-bottom: 2px solid #333; padding-bottom: 10px; }
+    .report-title { font-size: 18px; font-weight: bold; margin-bottom: 5px; }
+    .report-subtitle { font-size: 12px; color: #666; }
+    .voucher { page-break-inside: avoid; margin-bottom: 30px; border: 1px solid #ddd; padding: 15px; }
+    .voucher-header { background: #f5f5f5; padding: 10px; margin: -15px -15px 15px; border-bottom: 2px solid #333; }
+    .company-name { font-size: 16px; font-weight: bold; }
+    .company-address { font-size: 10px; color: #666; margin-top: 3px; }
+    .voucher-title { font-size: 14px; font-weight: bold; text-align: center; margin-top: 8px; }
+    .draft-badge { background: #fef3c7; color: #92400e; padding: 4px 12px; border-radius: 4px; font-size: 10px; font-weight: 600; display: inline-block; margin-top: 8px; }
+    .voucher-meta { display: table; width: 100%; margin-bottom: 15px; }
+    .meta-row { display: table-row; }
+    .meta-label { display: table-cell; font-weight: bold; width: 150px; padding: 4px 0; }
+    .meta-value { display: table-cell; padding: 4px 0; }
+    .particulars-section { margin: 15px 0; }
+    .particulars-title { font-weight: bold; margin-bottom: 8px; font-size: 11px; color: #666; }
+    .particulars-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+    .particulars-table th { background: #f5f5f5; padding: 6px 8px; border: 1px solid #ddd; font-weight: 600; }
+    .particulars-table td { padding: 6px 8px; border: 1px solid #eee; }
+    .voucher-amount { font-size: 16px; font-weight: bold; text-align: right; margin: 15px 0; border-top: 1px solid #333; padding-top: 10px; }
+    .voucher-signatures { display: flex; justify-content: space-between; margin-top: 40px; }
+    .signature-box { text-align: center; flex: 1; }
+    .signature-line { border-top: 1px solid #000; padding-top: 5px; margin: 30px 10px 5px; font-weight: bold; }
+    .signature-label { font-size: 10px; color: #666; }
+    .summary { margin-top: 30px; padding: 15px; background: #f5f5f5; border: 1px solid #ddd; }
+    .summary-title { font-size: 14px; font-weight: bold; margin-bottom: 10px; }
+    .summary-item { display: flex; justify-content: space-between; padding: 5px 0; }
+    .summary-total { font-size: 16px; font-weight: bold; border-top: 2px solid #333; margin-top: 10px; padding-top: 10px; }
+    @media print {
+      .no-print { display: none; }
+      body { padding: 0; }
+    }
+  </style>
+</head>
+<body>
+  ${title ? `
+  <div class="report-header">
+    <div class="report-title">${title}</div>
+    <div class="report-subtitle">Generated on ${new Date().toLocaleString('en-IN')}</div>
+  </div>
+  ` : ''}
+  ${vouchers.map(v => `
+    <div class="voucher">
+      <div class="voucher-header">
+        <div class="company-name">${v.company_name}</div>
+        <div class="company-address">${v.company_address}</div>
+        <div class="company-address">GST: ${v.company_gst}</div>
+        <div class="voucher-title">PAYMENT VOUCHER</div>
+        ${v.status === 'draft' ? '<div class="draft-badge">📝 DRAFT - Not Submitted</div>' : ''}
+      </div>
+      
+      <div class="voucher-meta">
+        <div class="meta-row">
+          <div class="meta-label">Voucher No:</div>
+          <div class="meta-value">${v.serial_number}</div>
+        </div>
+        <div class="meta-row">
+          <div class="meta-label">Date:</div>
+          <div class="meta-value">${formatDate(v.created_at)}</div>
+        </div>
+        <div class="meta-row">
+          <div class="meta-label">Payee:</div>
+          <div class="meta-value">${v.payee_name}${v.payee_alias ? ` (${v.payee_alias})` : ''}</div>
+        </div>
+        <div class="meta-row">
+          <div class="meta-label">Payment Mode:</div>
+          <div class="meta-value">${v.payment_mode}</div>
+        </div>
+        ${v.invoice_reference ? `
+        <div class="meta-row">
+          <div class="meta-label">Invoice Ref:</div>
+          <div class="meta-value">${v.invoice_reference}</div>
+        </div>` : ''}
+        ${v.suspense_serial ? `
+        <div class="meta-row" style="background:#fffbeb;border-radius:4px;padding:2px 4px">
+          <div class="meta-label" style="color:#92400e">Suspense Ref:</div>
+          <div class="meta-value" style="font-weight:700;color:#92400e">${v.suspense_serial}</div>
+        </div>` : ''}
+        ${v.batch_reference ? `
+        <div class="meta-row" style="background:#f0fdf4;border-radius:4px;padding:2px 4px">
+          <div class="meta-label" style="color:#166534">Paid via Batch:</div>
+          <div class="meta-value" style="font-weight:700;color:#166534">${v.batch_reference}</div>
+        </div>` : ''}
+        <div class="meta-row">
+          <div class="meta-label">Head of Account:</div>
+          <div class="meta-value">${v.head_of_account}</div>
+        </div>
+        ${v.narration ? `
+        <div class="meta-row">
+          <div class="meta-label">Narration:</div>
+          <div class="meta-value">${v.narration}</div>
+        </div>` : ''}
+        <div class="meta-row">
+          <div class="meta-label">Status:</div>
+          <div class="meta-value">${v.status.replace(/_/g, ' ').toUpperCase()}</div>
+        </div>
+      </div>
+      
+      ${renderNarrationItems(v)}
+      ${renderDeductions(v)}
+      
+      ${(() => { const deds = typeof v.deductions === 'string' ? JSON.parse(v.deductions || '[]') : (v.deductions || []); const hasDeds = deds.filter(d => d.description || d.amount).length > 0; const items = typeof v.narration_items === 'string' ? JSON.parse(v.narration_items || '[]') : (v.narration_items || []); const hasItems = items.filter(i => i.description || i.amount).length > 0; return (!hasItems && !hasDeds) ? `<div class="voucher-amount">AMOUNT: ${formatCurrency(v.amount)}</div><div style="font-size:11px;font-style:italic;color:#666;margin-bottom:15px;background:#fffbeb;padding:8px;border-radius:4px;border:1px solid #fcd34d"><strong style="color:#92400e">In Words:</strong> ${numToWords(v.amount)}</div>` : ''; })()}
+      
+      <div class="voucher-signatures">
+        <div class="signature-box">
+          <div class="signature-line">
+            ${v.preparer_name || v.preparer_username}<br/>
+            <span style="font-size:9px;color:#666">👤 Accounts</span><br/>
+            <span style="font-size:8px;color:#888">${formatDate(v.created_at)}</span>
+          </div>
+          <div class="signature-label">Prepared By</div>
+        </div>
+        <div class="signature-box">
+          <div class="signature-line">
+            ${v.approver_name ? `
+              ${v.approver_name}<br/>
+              <span style="font-size:9px;color:#666">🛡️ Approver</span><br/>
+              <span style="font-size:8px;color:#888">${v.approved_at ? formatDate(v.approved_at) : ''}</span>
+            ` : '___________'}
+          </div>
+          <div class="signature-label">Approved By</div>
+        </div>
+        <div class="signature-box">
+          <div class="signature-line">
+            ${v.payee_otp_verified ? `
+              ✓ OTP Verified<br/>
+              <span style="font-size:8px;color:#888">${v.completed_at ? formatDate(v.completed_at) : ''}</span>
+            ` : '___________'}
+          </div>
+          <div class="signature-label">Payee Signature</div>
+        </div>
+      </div>
+      ${renderAttachments(v)}
+    </div>
+  `).join('')}
+  
+  ${vouchers.length > 1 ? `
+    <div class="summary">
+      <div class="summary-title">Summary</div>
+      <div class="summary-item">
+        <span>Total Vouchers:</span>
+        <span>${vouchers.length}</span>
+      </div>
+      <div class="summary-item">
+        <span>Completed:</span>
+        <span>${vouchers.filter(v => v.status === 'completed').length}</span>
+      </div>
+      <div class="summary-item">
+        <span>Pending:</span>
+        <span>${vouchers.filter(v => v.status === 'pending').length}</span>
+      </div>
+      <div class="summary-item summary-total">
+        <span>TOTAL AMOUNT:</span>
+        <span>${formatCurrency(totalAmount)}</span>
+      </div>
+    </div>
+  ` : ''}
+  
+  <button class="no-print" onclick="window.print()" style="position: fixed; top: 20px; right: 20px; padding: 10px 20px; background: #F59E0B; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold;">Print</button>
+</body>
+</html>`;
+  };
+  
+  const handleApprove = async () => { 
+    setLoading(true); 
+    try { 
+      const result = await api.approveVoucher(selectedVoucher.id, user.id); 
+      if (result.success) { 
+        if (result.suspenseSettlement) {
+          // Suspense-linked voucher — already paid, completed immediately, no OTP
+          addToast('Voucher approved and completed.', 'success');
+          refreshVouchers();
+          setShowModal(false);
+        } else if (result.requiresDocument) {
+          // Ad-hoc payee - needs document upload
+          addToast('Voucher pre-approved. Document upload required.', 'info');
+          refreshVouchers();
+          setShowModal(false);
+        } else if (result.requiresAttestation) {
+          // Document already uploaded - show attestation UI
+          addToast('Document found. Please review and attest.', 'info');
+          refreshVouchers();
+        } else {
+          // Standard OTP flow
+          addToast('Voucher approved. OTP sent to payee.', 'success'); 
+          refreshVouchers(); 
+          setShowModal(false);
+        }
+      } else addToast(result.error, 'error'); 
+    } catch { addToast('Failed', 'error'); } 
+    setLoading(false); 
+  };
+  const handleApproveWithAttestation = async () => {
+    if (!attestationNotes.trim()) {
+      addToast('Please add attestation notes', 'error');
+      return;
+    }
+    setLoading(true);
+    try {
+      const result = await api.approveWithAttestation(selectedVoucher.id, user.id, attestationNotes);
+      if (result.success) {
+        addToast('Voucher approved with document attestation!', 'success');
+        refreshVouchers();
+        setShowModal(false);
+        setShowAttestationModal(false);
+        setAttestationNotes('');
+      } else {
+        addToast(result.error, 'error');
+      }
+    } catch {
+      addToast('Failed', 'error');
+    }
+    setLoading(false);
+  };
+  const handleDocumentUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    // Validate file type
+    const validTypes = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
+    if (!validTypes.includes(file.type)) {
+      addToast('Please upload a JPG, PNG, WebP or PDF file', 'error');
+      return;
+    }
+    
+    // Validate file size (max 5MB)
+    if (file.size > 5 * 1024 * 1024) {
+      addToast('File size must be less than 5MB', 'error');
+      return;
+    }
+    
+    setLoading(true);
+    try {
+      // Convert to base64
+      const reader = new FileReader();
+      reader.onloadend = async () => {
+        const base64Data = reader.result;
+        const result = await api.uploadVoucherDocument(selectedVoucher.id, base64Data, file.type, user.id);
+        if (result.success) {
+          addToast('Document uploaded! Awaiting approver attestation.', 'success');
+          refreshVouchers();
+          // Update local voucher state
+          setSelectedVoucher({...selectedVoucher, document_url: result.documentUrl, verification_type: 'document'});
+        } else {
+          addToast(result.error || 'Upload failed', 'error');
+        }
+        setLoading(false);
+      };
+      reader.readAsDataURL(file);
+    } catch {
+      addToast('Upload failed', 'error');
+      setLoading(false);
+    }
+  };
+
+  const handleMarkAwaitingPayment = async (v) => {
+    setLoading(true);
+    try {
+      const result = await api.markAwaitingPayment(v.id, user.id);
+      if (result.success) { addToast('Voucher queued for payment 💳', 'success'); refreshVouchers(); }
+      else addToast(result.error || 'Failed', 'error');
+    } catch { addToast('Failed', 'error'); }
+    setLoading(false);
+  };
+
+  const handleDequeuePayment = async (v) => {
+    if (!window.confirm(`Remove ${v.serial_number} from the payment queue?\nIt will return to “OTP Verified” so payment can be deferred.`)) return;
+    setLoading(true);
+    try {
+      const result = await api.dequeuePayment(v.id, user.id);
+      if (result.success) { addToast('Payment deferred — voucher returned to OTP Verified 🔙', 'info'); refreshVouchers(); }
+      else addToast(result.error || 'Failed', 'error');
+    } catch { addToast('Failed', 'error'); }
+    setLoading(false);
+  };
+
+  const handlePaymentReceiptUpload = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) { addToast('Receipt must be under 5 MB', 'error'); return; }
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const base64 = ev.target.result.split(',')[1];
+      setPaymentReceiptData(base64);
+      setPaymentReceiptMimeType(file.type);
+      setPaymentReceiptPreview(file.type.startsWith('image/') ? ev.target.result : 'pdf');
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const clearMarkPaidModal = () => {
+    setShowMarkPaidModal(false);
+    setMarkPaidVoucher(null);
+    setPaymentReference('');
+    setPaymentNotes('');
+    setPaymentReceiptData('');
+    setPaymentReceiptMimeType('');
+    setPaymentReceiptPreview('');
+  };
+
+  const handleMarkPaid = async () => {
+    if (!paymentReference.trim() && !paymentReceiptData) { addToast('Enter a UTR reference or upload a receipt — at least one is required', 'error'); return; }
+    setLoading(true);
+    try {
+      const result = await api.markPaid(markPaidVoucher.id, user.id, paymentReference.trim(), paymentNotes.trim(), paymentReceiptData, paymentReceiptMimeType);
+      if (result.success) {
+        addToast('Voucher marked as paid! ✅', 'success');
+        refreshVouchers();
+        clearMarkPaidModal();
+        if (showModal) setShowModal(false);
+      } else addToast(result.error || 'Failed', 'error');
+    } catch { addToast('Failed', 'error'); }
+    setLoading(false);
+  };
+
+  const generateWhatsAppMessage = (list) => {
+    const company = user.company.name;
+    const today = new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+    if (list.length === 1) {
+      const v = list[0];
+      const detail = v.payment_mode === 'UPI' && v.payee_upi_id
+        ? `UPI ID: ${v.payee_upi_id}`
+        : v.payment_mode === 'Account Transfer' && v.payee_bank_account
+          ? `A/C: ${v.payee_bank_account}${v.payee_ifsc ? ` · IFSC: ${v.payee_ifsc}` : ''}`
+          : '';
+      return `💳 *Payment Due — ${company}*\n\n` +
+        `Voucher: ${v.serial_number}\n` +
+        `Payee: ${v.payee_name}\n` +
+        `Amount: ₹${parseFloat(v.amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}\n` +
+        `Mode: ${v.payment_mode}\n` +
+        (detail ? `${detail}\n` : '') +
+        (v.payment_mode === 'Account Transfer' && computeVchKey(v.serial_number) ? `Transfer Remarks: ${computeVchKey(v.serial_number)}\n` : '') +
+        (v.invoice_reference ? `Invoice Ref: ${v.invoice_reference}\n` : '') +
+        `\nhttps://relishvoucher.vercel.app`;
+    }
+    const total = list.reduce((s, v) => s + parseFloat(v.amount || 0), 0);
+    const lines = list.map((v, i) =>
+      `${i + 1}. *${v.serial_number}* | ${v.payee_name} | ₹${parseFloat(v.amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })} | ${v.payment_mode}`
+    ).join('\n');
+    return `💳 *Payment List — ${company}*\n📅 ${today}\n\n${lines}\n\n*Total: ₹${total.toLocaleString('en-IN', { minimumFractionDigits: 2 })} (${list.length} vouchers)*\n\nhttps://relishvoucher.vercel.app`;
+  };
+
+  const shareOnWhatsApp = (list) => {
+    const msg = generateWhatsAppMessage(list);
+    window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
+  };
+
+  const handleReject = async () => { setLoading(true); try { await api.rejectVoucher(selectedVoucher.id, user.id, rejectReason); addToast('Voucher rejected', 'info'); refreshVouchers(); setShowRejectModal(false); setShowModal(false); } catch { addToast('Failed', 'error'); } setLoading(false); };
+  const handleComplete = async () => { if (loading) return; if (payeeOtp.length < 6) { addToast('Enter complete OTP', 'error'); return; } setLoading(true); try { const result = await api.completeVoucher(selectedVoucher.id, payeeOtp); if (result.success) { addToast(result.cashPaid ? 'Cash voucher paid ✅' : 'Voucher completed!', 'success'); refreshVouchers(); setShowModal(false); setPayeeOtp(''); } else { const msg = result.details ? `${result.error}: ${result.details}` : result.error; addToast(msg, 'error'); } } catch { addToast('Failed to verify OTP', 'error'); } setLoading(false); };
+  const handleResend = async () => { try { await api.resendPayeeOtp(selectedVoucher.id); addToast('OTP resent', 'success'); } catch { addToast('Failed', 'error'); } };
+  const handleDelete = async () => { setLoading(true); try { const result = await api.deleteVoucher(selectedVoucher.id, user.id); if (result.success) { addToast('Voucher deleted', 'success'); refreshVouchers(); setShowDeleteModal(false); setShowModal(false); } else addToast(result.error || 'Failed to delete', 'error'); } catch { addToast('Failed to delete voucher', 'error'); } setLoading(false); };
+  const titles = { all: 'All Vouchers', draft: 'Saved Drafts', pending: 'Pending Approval', approved: 'Approved / Awaiting OTP', completed: 'OTP Verified', awaiting_payment: 'Awaiting Payment', paid: 'Paid Vouchers' };
+
+  const handleDownloadExcel = () => {
+    if (!excelDateFrom || !excelDateTo) { addToast('Select date range', 'error'); return; }
+    const from = new Date(excelDateFrom);
+    const to = new Date(excelDateTo);
+    to.setHours(23, 59, 59);
+    const dateFiltered = filtered.filter(v => {
+      const vDate = new Date(v.created_at);
+      return vDate >= from && vDate <= to;
+    });
+    const payeeQuery = excelPayee.trim().toLowerCase();
+    const payeeFiltered = payeeQuery
+      ? dateFiltered.filter(v => (v.payee_name || '').toLowerCase().includes(payeeQuery))
+      : dateFiltered;
+    if (payeeFiltered.length === 0) { addToast('No vouchers match the selected filters', 'error'); return; }
+    const rows = payeeFiltered.map((v, idx) => {
+      const items = typeof v.narration_items === 'string'
+        ? JSON.parse(v.narration_items || '[]')
+        : (v.narration_items || []);
+      const narrationText = items.length > 0
+        ? items.filter(i => i.description).map(i => i.description).join(', ')
+        : (v.narration || '');
+      return {
+        'S.No.': idx + 1,
+        'Voucher No.': v.serial_number || '',
+        'Date': new Date(v.created_at).toLocaleDateString('en-IN'),
+        'Head of Account': v.head_of_account || '',
+        'Sub Head': v.sub_head_of_account || '',
+        'Payee': v.payee_name || '',
+        'Narration': narrationText,
+        'Invoice Ref': v.invoice_reference || '',
+        'Suspense Ref': v.suspense_serial || '',
+        'Payment Mode': v.payment_mode || '',
+        'Amount (₹)': v.amount || 0,
+        'Status': (v.status || '').replace(/_/g, ' '),
+      };
+    });
+    const payeeSuffix = excelPayee.trim() ? '_' + excelPayee.trim().replace(/[^a-zA-Z0-9]/g, '_') : '';
+    const ws = XLSX.utils.json_to_sheet(rows);
+    const colWidths = Object.keys(rows[0]).map(key => ({
+      wch: Math.max(key.length, ...rows.map(r => String(r[key]).length)) + 2
+    }));
+    ws['!cols'] = colWidths;
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, titles[filter]);
+    XLSX.writeFile(wb, `${titles[filter].replace(/\s+/g, '_')}${payeeSuffix}_${excelDateFrom}_to_${excelDateTo}.xlsx`);
+    setShowExcelModal(false);
+  };
+
+  return (
+    <div>
+      <div className="page-header">
+        <div>
+          <h1 className="page-title">{titles[filter]}</h1>
+          <p className="page-subtitle">{filtered.length} voucher(s)</p>
+        </div>
+        {filtered.length > 0 && (
+          <div style={{display: 'flex', gap: '0.5rem', flexWrap: 'wrap'}}>
+            {(filter === 'all' || filter === 'completed' || filter === 'paid') && (
+              <button className="btn btn-secondary" onClick={() => setShowExcelModal(true)}>
+                {Icons.download} Excel
+              </button>
+            )}
+            {filter === 'awaiting_payment' && (user.role === 'accounts' || user.isSuperAdmin) && (
+              <button className="btn btn-secondary" style={{background:'#7c3aed',color:'white',border:'none'}} onClick={() => setShowRetroScan(true)} title="Scan existing bill attachments for payment proof">
+                🔍 Scan for Paid Receipts
+              </button>
+            )}
+            <button className="btn btn-secondary" onClick={() => setShowPrintModal(true)}>
+              {Icons.printer} Print Report
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* ── HOA CORRECTION PANEL (Admin, all + pending tabs) ── */}
+      {(user.role === 'admin' || user.isSuperAdmin) && (filter === 'all' || filter === 'pending') && (
+        <HoaCorrectionPanel />
+      )}
+
+      {/* ── SEARCH PANEL (All Vouchers + Completed tabs) ── */}
+      {(filter === 'all' || filter === 'completed') && (
+        <div className="card" style={{ marginBottom: '1rem' }}>
+          <div className="card-body" style={{ padding: '1rem 1.25rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
+              <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>🔍 Search Vouchers</span>
+              {hasSearchFilters && (
+                <button className="btn btn-sm btn-secondary" style={{ marginLeft: 'auto', fontSize: '0.78rem' }}
+                  onClick={() => { setSearchNum(''); setSearchHead(''); setSearchPayee(''); setSearchStatus(''); setSearchDate(''); setSearchFrom(''); setSearchTo(''); }}>
+                  ✕ Clear All Filters
+                </button>
+              )}
+              {hasSearchFilters && (
+                <span style={{ fontSize: '0.8rem', color: '#f5841f', fontWeight: 600 }}>
+                  {filtered.length} of {baseFiltered.length} vouchers
+                </span>
+              )}
+            </div>
+            <div className="form-row">
+              <div className="form-group">
+                <label className="form-label">Voucher Number</label>
+                <input type="text" className="form-input" placeholder="e.g. 431 or VCH-2025-26-00431"
+                  value={searchNum} onChange={e => setSearchNum(e.target.value)} />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Head of Account</label>
+                <input type="text" className="form-input" placeholder="Partial name..."
+                  value={searchHead} onChange={e => setSearchHead(e.target.value)} />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Payee</label>
+                <input type="text" className="form-input" placeholder="Partial name..."
+                  value={searchPayee} onChange={e => setSearchPayee(e.target.value)} />
+              </div>
+              {filter === 'all' && (
+                <div className="form-group">
+                  <label className="form-label">Status</label>
+                  <select className="form-select" value={searchStatus} onChange={e => setSearchStatus(e.target.value)}>
+                    <option value="">All</option>
+                    <option value="pending">Pending Approval</option>
+                    <option value="awaiting_payee_otp">Awaiting OTP</option>
+                    <option value="completed">OTP Verified</option>
+                    <option value="awaiting_payment">Awaiting Payment</option>
+                    <option value="paid">Paid</option>
+                    <option value="rejected">Rejected</option>
+                    <option value="draft">Draft</option>
+                  </select>
+                </div>
+              )}
+            </div>
+            <div style={{ display: 'flex', alignItems: 'flex-end', gap: '1rem', flexWrap: 'wrap' }}>
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label className="form-label">Date Filter</label>
+                <div style={{ display: 'flex', gap: '0.4rem' }}>
+                  <button
+                    className={`btn btn-sm ${searchDateMode === 'exact' ? 'btn-primary' : 'btn-secondary'}`}
+                    onClick={() => { setSearchDateMode('exact'); setSearchFrom(''); setSearchTo(''); }}>
+                    📅 Specific Date
+                  </button>
+                  <button
+                    className={`btn btn-sm ${searchDateMode === 'range' ? 'btn-primary' : 'btn-secondary'}`}
+                    onClick={() => { setSearchDateMode('range'); setSearchDate(''); }}>
+                    📅 Date Range
+                  </button>
+                </div>
+              </div>
+              {searchDateMode === 'exact' ? (
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label className="form-label">Date</label>
+                  <input type="date" className="form-input" value={searchDate} onChange={e => setSearchDate(e.target.value)} />
+                </div>
+              ) : (
+                <>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="form-label">From</label>
+                    <input type="date" className="form-input" value={searchFrom} onChange={e => setSearchFrom(e.target.value)} />
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="form-label">To</label>
+                    <input type="date" className="form-input" value={searchTo} onChange={e => setSearchTo(e.target.value)} />
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="card"><div className="card-body" style={{ padding: 0 }}>
+        {filter === 'awaiting_payment' && batchConstraint && (
+          <div style={{margin:'0.75rem 0.75rem 0', padding:'0.5rem 0.75rem', background:'#eff6ff', border:'1px solid #bfdbfe', borderRadius:'6px', fontSize:'0.82rem', color:'#1d4ed8', display:'flex', alignItems:'center', gap:'0.4rem'}}>
+            🔗 Combining: <strong>{batchConstraint.paymentMode}</strong> vouchers to the same payee.
+            Other rows are <strong>disabled</strong>. Tap ✕ in the bar below to clear.
+          </div>
+        )}
+        {filtered.length === 0 ? <div className="empty-state">{Icons.fileText}<p>No vouchers found</p></div> : (
+          <div className="table-container"><table className="table"><thead><tr>
+            {filter === 'awaiting_payment' && <th style={{width:'36px'}}><input type="checkbox" onChange={(e) => { if (e.target.checked) { const compatible = batchConstraint ? filtered.filter(v => v.payee_id === batchConstraint.payeeId && v.payment_mode === batchConstraint.paymentMode) : filtered; const next = new Set(compatible.map(v => v.id)); if (!batchConstraint && compatible.length > 0) setBatchConstraint({ payeeId: compatible[0].payee_id, paymentMode: compatible[0].payment_mode }); setSelectedRows(next); } else { setSelectedRows(new Set()); setBatchConstraint(null); } }} checked={selectedRows.size > 0 && selectedRows.size === (batchConstraint ? filtered.filter(v => v.payee_id === batchConstraint.payeeId && v.payment_mode === batchConstraint.paymentMode) : filtered).length} style={{width:'16px',height:'16px',cursor:'pointer'}} /></th>}
+            <th>Serial No.</th><th>Head of Account</th><th>Payee</th><th>Amount</th><th>Mode</th><th>Status</th><th>Date</th><th>Actions</th></tr></thead><tbody>
+            {filtered.map(v => (<tr key={v.id}>
+              {filter === 'awaiting_payment' && (() => {
+                const isConstrained = batchConstraint && (batchConstraint.payeeId !== v.payee_id || batchConstraint.paymentMode !== v.payment_mode);
+                return <td title={isConstrained ? `Different payee or mode — only ${batchConstraint.paymentMode} payments to the selected payee can be combined` : undefined}><input type="checkbox" checked={selectedRows.has(v.id)} disabled={!!isConstrained} onChange={(e) => { const next = new Set(selectedRows); if (e.target.checked) { next.add(v.id); if (!batchConstraint) setBatchConstraint({ payeeId: v.payee_id, paymentMode: v.payment_mode }); } else { next.delete(v.id); if (next.size === 0) setBatchConstraint(null); } setSelectedRows(next); }} style={{width:'16px',height:'16px',cursor: isConstrained ? 'not-allowed' : 'pointer', opacity: isConstrained ? 0.3 : 1}} /></td>;
+              })()}
+              <td className="text-mono fw-600">{v.serial_number}{v.attachment_count > 0 && <span title={`${v.attachment_count} bill attachment${v.attachment_count > 1 ? 's' : ''}`} style={{marginLeft: '6px', color: '#f5841f', verticalAlign: 'middle', display: 'inline-flex'}}>{Icons.paperclip}</span>}{v.payment_receipt_url && <span title="Payment receipt attached" style={{marginLeft: '4px', color: '#16a34a', verticalAlign: 'middle', display: 'inline-flex'}}>{Icons.receiptCheck}</span>}</td><td>{v.head_of_account}</td><td>{v.payee_name}</td><td className="fw-600">{formatRupees(v.amount, 0)}</td><td>{v.payment_mode}</td><td><span className={`status-badge status-${v.status}`}>{v.status === 'completed' ? 'OTP Verified' : v.status === 'awaiting_payment' ? 'Awaiting Payment' : v.status === 'paid' ? 'Paid' : v.status.replace(/_/g, ' ')}</span></td><td>{new Date(v.created_at).toLocaleDateString('en-IN')}</td>
+              <td><div style={{display:'flex',gap:'0.4rem',flexWrap:'wrap',alignItems:'center'}}>
+                <button className="btn btn-sm btn-secondary" onClick={() => openVoucher(v)}>{Icons.eye} View</button>
+                {/* OTP Verified → Accounts queues non-Cash, non-pre-paid vouchers for payment */}
+                {v.status === 'completed' && v.payment_mode !== 'Cash' && !v.is_suspense_settlement && (user.role === 'accounts' || user.isSuperAdmin) && (<button className="btn btn-sm" style={{background:'#f59e0b',color:'white',border:'none',borderRadius:'6px',padding:'0.3rem 0.65rem',fontSize:'0.8rem',cursor:'pointer',fontWeight:600}} onClick={() => handleMarkAwaitingPayment(v)} disabled={loading}>📤 Queue</button>)}
+                {/* OTP Verified → Accounts clicks Pay Now for Account Transfer (non-pre-paid only) */}
+                {v.status === 'completed' && v.payment_mode === 'Account Transfer' && !v.is_suspense_settlement && (user.role === 'accounts' || user.isSuperAdmin) && (<button className="btn btn-sm" style={{background:'#16a34a',color:'white',border:'none',borderRadius:'6px',padding:'0.3rem 0.65rem',fontSize:'0.8rem',cursor:'pointer',fontWeight:600}} onClick={() => setPayNowVoucher(v)}>💳 Pay Now</button>)}
+                {/* Pre-paid suspense-settlement vouchers: show closed badge instead of payment buttons */}
+                {v.is_suspense_settlement && (v.status === 'completed' || v.status === 'paid') && (<span style={{background:'#ede9fe',color:'#6d28d9',border:'1px solid #c4b5fd',borderRadius:'6px',padding:'0.25rem 0.65rem',fontSize:'0.8rem',fontWeight:700,letterSpacing:'0.02em'}}>🔄 Pre-paid</span>)}
+                {/* Verify Receipt: visible on completed/awaiting_payment rows with attachment but no payment receipt */}
+                {(v.status === 'completed' || v.status === 'awaiting_payment') && !v.is_suspense_settlement && v.attachment_count > 0 && !v.payment_receipt_url && (user.role === 'accounts' || user.isSuperAdmin) && (
+                  <button className="btn btn-sm" style={{background:'#7c3aed',color:'white',border:'none',borderRadius:'6px',padding:'0.3rem 0.65rem',fontSize:'0.8rem',cursor:'pointer',fontWeight:600}} onClick={() => handleVerifyReceipt(v)} title="Scan uploaded attachment to check for payment proof">🔍 Verify</button>
+                )}
+                {/* Awaiting Payment → Admin opens UPI app or views bank details to make payment */}
+                {v.status === 'awaiting_payment' && v.payment_mode !== 'Cash' && (user.role === 'admin' || user.isSuperAdmin) && (<button className="btn btn-sm" style={{background:'#16a34a',color:'white',border:'none',borderRadius:'6px',padding:'0.3rem 0.65rem',fontSize:'0.8rem',cursor:'pointer',fontWeight:600}} onClick={() => setPayNowVoucher(v)}>💳 Pay Now</button>)}
+                {/* Awaiting Payment: WhatsApp share (any role) */}
+                {v.status === 'awaiting_payment' && (<button className="btn btn-sm" style={{background:'#25d366',color:'white',border:'none',borderRadius:'6px',padding:'0.3rem 0.65rem',fontSize:'0.8rem',cursor:'pointer',fontWeight:600}} onClick={() => shareOnWhatsApp([v])}>💬 WA</button>)}
+                {/* Awaiting Payment → Accounts confirms payment (upload UTR / receipt) */}
+                {v.status === 'awaiting_payment' && (user.role === 'accounts' || user.isSuperAdmin) && (<button className="btn btn-sm" style={{background:'#22c55e',color:'white',border:'none',borderRadius:'6px',padding:'0.3rem 0.65rem',fontSize:'0.8rem',cursor:'pointer',fontWeight:600}} onClick={() => { setMarkPaidVoucher(v); setShowMarkPaidModal(true); }}>✅ Confirm Paid</button>)}
+                {/* Awaiting Payment → Defer: remove from queue back to OTP Verified */}
+                {v.status === 'awaiting_payment' && (user.role === 'accounts' || user.role === 'admin' || user.isSuperAdmin) && (<button className="btn btn-sm" style={{background:'#6b7280',color:'white',border:'none',borderRadius:'6px',padding:'0.3rem 0.65rem',fontSize:'0.8rem',cursor:'pointer',fontWeight:600}} onClick={() => handleDequeuePayment(v)} disabled={loading}>↩ Defer</button>)}
+                {v.status === 'paid' && (<span style={{background:'#dcfce7',color:'#166534',border:'1px solid #86efac',borderRadius:'6px',padding:'0.25rem 0.65rem',fontSize:'0.8rem',fontWeight:700,letterSpacing:'0.02em'}}>✅ PAID</span>)}
+                {v.status === 'paid' && v.batch_id && (user.role === 'accounts' || user.role === 'admin' || user.isSuperAdmin) && (
+                  <button className="btn btn-sm" style={{background:'#1d4ed8',color:'white',border:'none',borderRadius:'6px',padding:'0.3rem 0.65rem',fontSize:'0.8rem',cursor:'pointer',fontWeight:600}} title="View or add transaction receipts for this combined payment" onClick={async () => {
+                    setBatchReceiptsModal({ batchId: v.batch_id, batchReference: v.batch_reference || v.batch_id, payeeName: v.payee_name });
+                    setBatchReceiptsList([]); setNewBatchReceiptData(''); setNewBatchReceiptMime(''); setNewBatchReceiptPreview(''); setNewBatchReceiptRef(''); setNewBatchReceiptNotes('');
+                    setBatchReceiptsListLoading(true);
+                    try { const r = await api.getBatchReceipts(v.batch_id); setBatchReceiptsList(r); } catch (e) { addToast(e.message, 'error'); }
+                    setBatchReceiptsListLoading(false);
+                  }}>📎 Receipts</button>
+                )}
+              </div></td>
+            </tr>))}
+          </tbody></table></div>
+        )}
+      </div></div>
+      {/* Floating action bar: combine + WhatsApp */}
+      {selectedRows.size > 0 && (() => {
+        const selectedVouchers = filtered.filter(v => selectedRows.has(v.id));
+        const selectedTotal = selectedVouchers.reduce((s, v) => s + parseFloat(v.amount || 0), 0);
+        const canCombine = selectedRows.size >= 2 && filter === 'awaiting_payment' && (user.role === 'accounts' || user.isSuperAdmin);
+
+        const handleCombineAndPay = async () => {
+          setLoading(true);
+          try {
+            const result = await api.createBatch({ createdBy: user.id, companyId: user.company.id, voucherIds: [...selectedRows] });
+            addToast(`Batch ${result.batchReference} created — ₹${parseFloat(result.totalAmount).toLocaleString('en-IN', { minimumFractionDigits: 2 })} total`, 'success');
+            setSelectedRows(new Set()); setBatchConstraint(null);
+            const fv = selectedVouchers[0];
+            setPayNowBatch({ ...result, payment_mode: fv.payment_mode, payee_name: fv.payee_name,
+              payee_bank_account: fv.payee_bank_account, payee_ifsc: fv.payee_ifsc,
+              payee_bank_name: fv.payee_bank_name, payee_upi_id: fv.payee_upi_id,
+              amount: result.totalAmount, vouchers: selectedVouchers });
+            refreshVouchers();
+          } catch (err) { addToast(err.message || 'Failed to create batch', 'error'); }
+          setLoading(false);
+        };
+
+        return (
+          <div style={{position:'fixed',bottom:'24px',left:'50%',transform:'translateX(-50%)',background:'#1a1a2e',color:'white',borderRadius:'12px',padding:'0.75rem 1.25rem',display:'flex',alignItems:'center',gap:'1rem',boxShadow:'0 8px 32px rgba(0,0,0,0.35)',zIndex:9999,minWidth:'340px',justifyContent:'space-between'}}>
+            <div style={{display:'flex',flexDirection:'column',gap:'2px'}}>
+              <span style={{fontWeight:600,fontSize:'0.9rem'}}>✓ {selectedRows.size} selected{canCombine ? ` · ₹${selectedTotal.toLocaleString('en-IN', {minimumFractionDigits:2})}` : ''}</span>
+              {batchConstraint && <span style={{fontSize:'0.72rem',opacity:0.75}}>{batchConstraint.paymentMode} · same payee only</span>}
+            </div>
+            <div style={{display:'flex',gap:'0.5rem'}}>
+              {canCombine && <button style={{background:'#16a34a',color:'white',border:'none',borderRadius:'8px',padding:'0.4rem 0.9rem',fontWeight:600,cursor:'pointer',fontSize:'0.85rem'}} onClick={handleCombineAndPay} disabled={loading}>💳 Combine & Pay</button>}
+              <button style={{background:'#25d366',color:'white',border:'none',borderRadius:'8px',padding:'0.4rem 0.9rem',fontWeight:600,cursor:'pointer',fontSize:'0.85rem'}} onClick={() => { shareOnWhatsApp(selectedVouchers); }}>💬 Share on WhatsApp</button>
+              <button style={{background:'rgba(255,255,255,0.15)',color:'white',border:'1px solid rgba(255,255,255,0.3)',borderRadius:'8px',padding:'0.4rem 0.7rem',cursor:'pointer',fontSize:'0.85rem'}} onClick={() => { setSelectedRows(new Set()); setBatchConstraint(null); }}>✕</button>
+            </div>
+          </div>
+        );
+      })()}
+      {showModal && selectedVoucher && (
+        <div className="modal-overlay" onClick={() => setShowModal(false)}><div className="modal modal-lg" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-header" style={{background: '#f5841f', color: 'white'}}>
+            <h3 className="modal-title" style={{color: 'white'}}>Voucher Details</h3>
+            <div style={{display: 'flex', gap: '0.5rem', alignItems: 'center'}}>
+              {selectedVoucher.is_suspense_settlement && selectedVoucher.suspense_voucher_id && (
+                <button className="btn btn-sm" style={{background:'#92400e',color:'white',border:'none',borderRadius:'6px',fontSize:'0.8rem',fontWeight:600}} onClick={(e) => { e.stopPropagation(); setShowModal(false); navigateToSuspense(selectedVoucher.suspense_voucher_id); }} title={`View source suspense voucher ${selectedVoucher.suspense_serial}`}>
+                  📋 {selectedVoucher.suspense_serial || 'View Suspense'}
+                </button>
+              )}
+              {(user.role === 'admin' || user.isSuperAdmin) && (
+                <button className="btn btn-sm btn-danger" onClick={(e) => { e.stopPropagation(); setShowDeleteModal(true); }}>
+                  🗑️ <span className="btn-text">Delete</span>
+                </button>
+              )}
+              <button className="btn btn-sm btn-secondary" onClick={(e) => { e.stopPropagation(); handlePrintSingle(selectedVoucher); }}>
+                {Icons.printer} <span className="btn-text">Print</span>
+              </button>
+              <button className="modal-close" style={{color: 'white'}} onClick={() => setShowModal(false)}>×</button>
+            </div>
+          </div>
+          <div className="modal-body">
+            <VoucherPreview voucher={selectedVoucher} />
+            {/* HOA Correction Proposal — Auditor only */}
+            <ProposeHoaCorrectionSection voucher={selectedVoucher} />
+            {/* Bill Attachments — visible on all statuses */}
+            <BillAttachmentPanel
+              voucherId={selectedVoucher.id}
+              voucherSerialNumber={selectedVoucher.serial_number}
+              voucherType="regular"
+              companyId={user.company.id}
+            />
+            {/* Payment confirmation panel — shown for paid vouchers */}
+            {selectedVoucher.status === 'paid' && (selectedVoucher.payment_reference || selectedVoucher.payment_receipt_url || selectedVoucher.payment_notes) && (
+              <div style={{background:'#f0fdf4',border:'1px solid #86efac',borderRadius:'8px',padding:'1rem',marginTop:'1rem'}}>
+                <p style={{fontWeight:600,color:'#166534',marginBottom:'0.6rem',display:'flex',alignItems:'center',gap:'0.4rem'}}>✅ Payment Record</p>
+                {selectedVoucher.payment_reference && (
+                  <div style={{display:'flex',justifyContent:'space-between',fontSize:'0.9rem',marginBottom:'0.3rem'}}>
+                    <span style={{color:'#166534'}}>UTR / Ref</span>
+                    <strong style={{fontFamily:'monospace'}}>{selectedVoucher.payment_reference}</strong>
+                  </div>
+                )}
+                {/* B2: CPAY batch audit trail — reference + all member vouchers, from voucher data directly */}
+                {selectedVoucher.batch_reference && (
+                  <React.Fragment>
+                    <div style={{borderTop:'1px solid #bbf7d0',paddingTop:'0.4rem',marginTop:'0.2rem',display:'flex',justifyContent:'space-between',alignItems:'baseline',fontSize:'0.85rem',fontWeight:700,color:'#1d4ed8',marginBottom:'0.15rem'}}>
+                      <span>Paid via Batch</span>
+                      <span style={{fontFamily:'monospace'}}>{selectedVoucher.batch_reference}{selectedBatchDetails?.total_amount ? ` — ₹${parseFloat(selectedBatchDetails.total_amount).toLocaleString('en-IN',{minimumFractionDigits:2})} total` : ''}</span>
+                    </div>
+                    {(selectedVoucher.batch_members||[]).length > 0 && (
+                      <div style={{fontSize:'0.78rem',color:'#374151',marginBottom:'0.3rem',lineHeight:'1.6'}}>
+                        <span style={{color:'#6b7280',marginRight:'4px'}}>Covers {(selectedVoucher.batch_members||[]).length} voucher{(selectedVoucher.batch_members||[]).length!==1?'s':''}:</span>
+                        {(selectedVoucher.batch_members||[]).map((m,i,arr) => (
+                          <span key={i} style={{fontFamily:'monospace',fontWeight:600}}>{m.serial_number} ₹{parseFloat(m.amount||0).toLocaleString('en-IN',{minimumFractionDigits:2})}{i<arr.length-1?' · ':''}</span>
+                        ))}
+                      </div>
+                    )}
+                  </React.Fragment>
+                )}
+                {selectedVoucher.payment_notes && (
+                  <div style={{fontSize:'0.85rem',color:'#166534',marginBottom:'0.5rem'}}>{selectedVoucher.payment_notes}</div>
+                )}
+                {selectedVoucher.payment_receipt_url && (
+                  <div style={{marginTop:'0.5rem'}}>
+                    {selectedVoucher.payment_receipt_url.match(/\.(jpg|jpeg|png|webp|gif)(\?|$)/i) ? (
+                      <a href={selectedVoucher.payment_receipt_url} target="_blank" rel="noopener noreferrer">
+                        <img src={selectedVoucher.payment_receipt_url} alt="Payment receipt" style={{width:'100%',maxHeight:'220px',objectFit:'contain',borderRadius:'6px',border:'1px solid #bbf7d0',cursor:'pointer'}} />
+                      </a>
+                    ) : (
+                      <a href={selectedVoucher.payment_receipt_url} target="_blank" rel="noopener noreferrer" className="btn btn-secondary" style={{width:'100%',justifyContent:'center',fontSize:'0.85rem'}}>
+                        📄 View Payment Receipt
+                      </a>
+                    )}
+                  </div>
+                )}
+                {selectedVoucher.batch_id && (user.role === 'accounts' || user.role === 'admin' || user.isSuperAdmin) && (
+                  <button className="btn btn-sm" style={{marginTop:'0.6rem',background:'#1d4ed8',color:'white',border:'none',borderRadius:'6px',width:'100%',padding:'0.4rem',fontWeight:600,cursor:'pointer',fontSize:'0.82rem'}} onClick={async () => {
+                    setBatchReceiptsModal({ batchId: selectedVoucher.batch_id, batchReference: selectedVoucher.batch_reference || selectedVoucher.batch_id, payeeName: selectedVoucher.payee_name });
+                    setBatchReceiptsList([]); setNewBatchReceiptData(''); setNewBatchReceiptMime(''); setNewBatchReceiptPreview(''); setNewBatchReceiptRef(''); setNewBatchReceiptNotes('');
+                    setBatchReceiptsListLoading(true);
+                    try { const r = await api.getBatchReceipts(selectedVoucher.batch_id); setBatchReceiptsList(r); } catch (e) { addToast(e.message, 'error'); }
+                    setBatchReceiptsListLoading(false);
+                  }}>📎 View / Add Batch Receipts</button>
+                )}
+              </div>
+            )}
+            {/* Document Upload Section - for awaiting_document status */}
+            {selectedVoucher.status === 'awaiting_document' && (selectedVoucher.prepared_by === user.id || user.role === 'admin' || user.isSuperAdmin) && !selectedVoucher.document_url && (
+              <div className="document-upload-section" style={{background: '#fef3c7', padding: '1.5rem', borderRadius: '8px', marginTop: '1rem', textAlign: 'center'}}>
+                <div style={{fontSize: '2rem', marginBottom: '0.5rem'}}>📄</div>
+                <p style={{fontWeight: 600, color: '#92400e', marginBottom: '0.5rem'}}>Invoice/Receipt Upload Required</p>
+                <p style={{fontSize: '0.85rem', color: '#a16207', marginBottom: '1rem'}}>This payment requires document verification. Please upload the invoice or receipt.</p>
+                <label className="btn btn-primary" style={{cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '0.5rem'}}>
+                  {Icons.upload} Choose File
+                  <input type="file" accept="image/*,.pdf" style={{display: 'none'}} onChange={handleDocumentUpload} disabled={loading} />
+                </label>
+                <p style={{fontSize: '0.75rem', color: '#a16207', marginTop: '0.5rem'}}>Accepts: JPG, PNG, WebP, PDF (max 5MB)</p>
+              </div>
+            )}
+            {/* Document Preview - when document is uploaded */}
+            {selectedVoucher.document_url && (
+              <div className="document-preview-section" style={{background: '#ecfdf5', padding: '1rem', borderRadius: '8px', marginTop: '1rem', border: '1px solid #10b981'}}>
+                <div style={{display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem'}}>
+                  {Icons.fileCheck}
+                  <span style={{fontWeight: 600, color: '#059669'}}>Document Uploaded</span>
+                  {selectedVoucher.verification_type === 'document' && selectedVoucher.status === 'completed' && (
+                    <span style={{background: '#10b981', color: 'white', padding: '2px 8px', borderRadius: '4px', fontSize: '0.7rem', marginLeft: 'auto'}}>ATTESTED</span>
+                  )}
+                </div>
+                <a href={selectedVoucher.document_url} target="_blank" rel="noopener noreferrer" className="btn btn-sm btn-secondary" style={{marginTop: '0.5rem'}}>
+                  {Icons.eye} View Document
+                </a>
+                {selectedVoucher.attestation_notes && (
+                  <div style={{marginTop: '0.75rem', padding: '0.5rem', background: '#d1fae5', borderRadius: '4px', fontSize: '0.85rem'}}>
+                    <strong>Attestation Notes:</strong> {selectedVoucher.attestation_notes}
+                  </div>
+                )}
+              </div>
+            )}
+            {/* Awaiting Attestation - Admin can now attest after document upload */}
+            {(user.role === 'admin' || user.isSuperAdmin) && selectedVoucher.status === 'awaiting_document' && selectedVoucher.document_url && (
+              <div className="attestation-section" style={{background: '#eff6ff', padding: '1rem', borderRadius: '8px', marginTop: '1rem', border: '1px solid #3b82f6'}}>
+                <p style={{fontWeight: 600, color: '#1d4ed8', marginBottom: '0.5rem'}}>📋 Document Ready for Attestation</p>
+                <p style={{fontSize: '0.85rem', color: '#3b82f6', marginBottom: '1rem'}}>Review the uploaded document and attest to complete this voucher.</p>
+                <button className="btn btn-primary" onClick={() => setShowAttestationModal(true)}>{Icons.fileCheck} Review & Attest</button>
+              </div>
+            )}
+            {/* OTP Section - for registered payees */}
+            {selectedVoucher.status === 'awaiting_payee_otp' && (selectedVoucher.prepared_by === user.id || user.role === 'admin' || user.isSuperAdmin) && (
+              <div className="otp-section">
+                {Icons.smartphone}<p style={{fontWeight:500,margin:'0.5rem 0'}}>Enter Payee OTP</p><p style={{fontSize:'0.85rem',color:'#666',marginBottom:'1rem'}}>OTP sent to payee: {selectedVoucher.payee_mobile?.replace(/\d(?=\d{4})/g, '*')}</p>
+                <OTPInput value={payeeOtp} onChange={setPayeeOtp} />
+                <div className="otp-actions" style={{display:'flex',flexDirection:'row',flexWrap:'wrap',gap:'0.75rem',justifyContent:'center',marginTop:'1rem'}}><button className="btn btn-secondary btn-sm" style={{flex:'1 1 auto',minWidth:'140px'}} onClick={handleResend}>{Icons.refresh} Resend OTP</button><button className="btn btn-success" style={{flex:'1 1 auto',minWidth:'160px'}} onClick={handleComplete} disabled={loading || payeeOtp.length < 6}>{loading && Icons.loader}{Icons.checkCircle} Complete Voucher</button></div>
+              </div>
+            )}
+          </div>
+          {selectedVoucher.status === 'awaiting_payment' && (
+            <div className="modal-footer" style={{background:'#fefce8',justifyContent:'space-between',flexWrap:'wrap',gap:'0.5rem'}}>
+              <button style={{background:'#25d366',color:'white',border:'none',borderRadius:'8px',padding:'0.5rem 1rem',fontWeight:600,cursor:'pointer',display:'flex',alignItems:'center',gap:'0.4rem'}} onClick={() => shareOnWhatsApp([selectedVoucher])}>💬 Share on WhatsApp</button>
+              {(user.role === 'admin' || user.isSuperAdmin) && (
+                <button className="btn btn-success" onClick={() => { setMarkPaidVoucher(selectedVoucher); setShowMarkPaidModal(true); }}>✅ Mark as Paid</button>
+              )}
+            </div>
+          )}
+          {(user.role === 'admin' || user.isSuperAdmin) && selectedVoucher.status === 'pending' && (
+            <div className="modal-footer"><button className="btn btn-danger" onClick={() => setShowRejectModal(true)}>{Icons.x} Reject</button><button className="btn btn-success" onClick={handleApprove} disabled={loading}>{loading && Icons.loader}{Icons.check} {selectedVoucher.is_suspense_settlement ? 'Approve' : 'Approve & Send Payee OTP'}</button></div>
+          )}
+          {selectedVoucher.status === 'draft' && selectedVoucher.prepared_by === user.id && (
+            <div className="modal-footer" style={{background: '#fef3c7'}}>
+              <div style={{flex: 1, fontSize: '0.85rem', color: '#92400e'}}>
+                💡 This voucher is saved as a draft. Edit or submit when ready.
+              </div>
+              <div style={{display: 'flex', gap: '0.5rem'}}>
+                <button className="btn btn-secondary" onClick={() => handleEditDraft(selectedVoucher)} disabled={loading}>
+                  ✏️ Edit Draft
+                </button>
+                <button className="btn btn-primary" onClick={() => handleSubmitDraft(selectedVoucher)} disabled={loading}>
+                  {loading && Icons.loader}{Icons.send} Submit for Approval
+                </button>
+              </div>
+            </div>
+          )}
+        </div></div>
+      )}
+      {showRejectModal && (
+        <div className="modal-overlay" onClick={() => setShowRejectModal(false)}><div className="modal" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-header"><h3 className="modal-title">Reject Voucher</h3><button className="modal-close" onClick={() => setShowRejectModal(false)}>×</button></div>
+          <div className="modal-body"><div className="form-group"><label className="form-label">Reason for Rejection</label><textarea className="form-input" rows={3} placeholder="Enter reason..." value={rejectReason} onChange={(e) => setRejectReason(e.target.value)} /></div></div>
+          <div className="modal-footer"><button className="btn btn-secondary" onClick={() => setShowRejectModal(false)}>Cancel</button><button className="btn btn-danger" onClick={handleReject} disabled={loading}>{loading && Icons.loader}Confirm Rejection</button></div>
+        </div></div>
+      )}
+      {/* Attestation Modal for Document Verification */}
+      {showAttestationModal && selectedVoucher && (
+        <div className="modal-overlay" onClick={() => setShowAttestationModal(false)}><div className="modal" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-header" style={{background: '#3b82f6', color: 'white'}}>
+            <h3 className="modal-title" style={{color: 'white'}}>📋 Document Attestation</h3>
+            <button className="modal-close" style={{color: 'white'}} onClick={() => setShowAttestationModal(false)}>×</button>
+          </div>
+          <div className="modal-body">
+            <div style={{background: '#eff6ff', padding: '1rem', borderRadius: '8px', marginBottom: '1rem'}}>
+              <p style={{fontWeight: 600, color: '#1d4ed8', marginBottom: '0.5rem'}}>Document Verification</p>
+              <p style={{fontSize: '0.85rem', color: '#3b82f6'}}>
+                You are attesting that you have reviewed the uploaded invoice/receipt and confirm it is valid for this payment.
+              </p>
+            </div>
+            {selectedVoucher.document_url && (
+              <div style={{marginBottom: '1rem'}}>
+                <a href={selectedVoucher.document_url} target="_blank" rel="noopener noreferrer" className="btn btn-secondary" style={{width: '100%', justifyContent: 'center'}}>
+                  {Icons.eye} View Uploaded Document
+                </a>
+              </div>
+            )}
+            <div className="form-group">
+              <label className="form-label">Attestation Notes <span style={{color: '#dc2626'}}>*</span></label>
+              <textarea 
+                className="form-input" 
+                rows={3} 
+                placeholder="I have verified the attached invoice/receipt and confirm..." 
+                value={attestationNotes} 
+                onChange={(e) => setAttestationNotes(e.target.value)} 
+              />
+              <p style={{fontSize: '0.75rem', color: '#666', marginTop: '0.25rem'}}>Describe what you verified (invoice number, amount match, vendor details, etc.)</p>
+            </div>
+            <div style={{background: '#fef3c7', padding: '0.75rem', borderRadius: '6px', fontSize: '0.85rem', color: '#92400e'}}>
+              ⚠️ By attesting, you confirm that you have physically verified the invoice/receipt and authorize this payment.
+            </div>
+          </div>
+          <div className="modal-footer">
+            <button className="btn btn-secondary" onClick={() => setShowAttestationModal(false)}>Cancel</button>
+            <button className="btn btn-success" onClick={handleApproveWithAttestation} disabled={loading || !attestationNotes.trim()}>
+              {loading && Icons.loader}{Icons.fileCheck} Attest & Complete Voucher
+            </button>
+          </div>
+        </div></div>
+      )}
+      {/* Mark as Paid Modal (Phase-2) */}
+      {showMarkPaidModal && markPaidVoucher && (
+        <div className="modal-overlay" onClick={clearMarkPaidModal}><div className="modal" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-header" style={{background:'#22c55e',color:'white'}}>
+            <h3 className="modal-title" style={{color:'white'}}>✅ Mark as Paid — {markPaidVoucher.serial_number}</h3>
+            <button className="modal-close" style={{color:'white'}} onClick={clearMarkPaidModal}>×</button>
+          </div>
+          <div className="modal-body">
+            {/* Voucher summary */}
+            <div style={{background:'#f0fdf4',borderRadius:'8px',padding:'0.75rem 1rem',marginBottom:'1.25rem',border:'1px solid #86efac',fontSize:'0.9rem'}}>
+              <div style={{display:'flex',justifyContent:'space-between',marginBottom:'0.3rem'}}><span style={{color:'#166534'}}>Payee</span><strong>{markPaidVoucher.payee_name}</strong></div>
+              <div style={{display:'flex',justifyContent:'space-between',marginBottom:'0.3rem'}}><span style={{color:'#166534'}}>Amount</span><strong style={{fontFamily:'monospace'}}>₹{parseFloat(markPaidVoucher.amount).toLocaleString('en-IN',{minimumFractionDigits:2})}</strong></div>
+              <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#166534'}}>Mode</span><strong>{markPaidVoucher.payment_mode}</strong></div>
+            </div>
+            {/* Hint */}
+            <p style={{fontSize:'0.8rem',color:'#6b7280',marginBottom:'1rem',background:'#f9fafb',padding:'0.5rem 0.75rem',borderRadius:'6px',border:'1px solid #e5e7eb'}}>
+              💡 Provide a UTR / transaction reference <strong>and/or</strong> upload the payment receipt — at least one is required.
+            </p>
+            {/* Stored-as filename — shown regardless of what the bank app called the receipt */}
+            {(() => { const _fd = new Date(); const _fds = `${String(_fd.getDate()).padStart(2,'0')}-${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][_fd.getMonth()]}-${_fd.getFullYear()}`; const _fnm = `${(markPaidVoucher?.serial_number||'VCH').replace(/[^A-Za-z0-9-]/g,'-')}-PMT-${_fds}`; return (
+            <div style={{background:'#f0fdf4',border:'1px solid #86efac',borderRadius:'6px',padding:'0.45rem 0.75rem',marginBottom:'1rem',display:'flex',alignItems:'center',justifyContent:'space-between',gap:'0.5rem'}}>
+              <div style={{fontSize:'0.78rem',overflow:'hidden'}}><span style={{color:'#166534',fontWeight:600}}>📁 Stored as: </span><code style={{color:'#14532d',fontSize:'0.75rem',wordBreak:'break-all'}}>{_fnm}.<span style={{color:'#6b7280'}}>pdf/img</span></code></div>
+              <button style={{background:'none',border:'1px solid #86efac',borderRadius:'4px',padding:'2px 8px',cursor:'pointer',fontSize:'0.73rem',color:'#166534',fontWeight:600,flexShrink:0,whiteSpace:'nowrap'}} onClick={() => navigator.clipboard.writeText(_fnm+'.pdf').then(()=>addToast('Filename copied','success'))}>📋 Copy</button>
+            </div>
+            ); })()}
+            {/* UTR */}
+            <div className="form-group">
+              <label className="form-label">UTR / Transaction Reference</label>
+              <input type="text" className="form-input" placeholder="e.g. 409312345678 or TXNXXXXXXXX" value={paymentReference} onChange={(e) => setPaymentReference(e.target.value)} />
+              <p style={{fontSize:'0.75rem',color:'#888',marginTop:'0.25rem'}}>UTR for NEFT/IMPS/RTGS · UPI Transaction ID · Cheque No.</p>
+            </div>
+            {/* Receipt upload */}
+            <div className="form-group">
+              <label className="form-label">Payment Receipt / Screenshot <span style={{color:'#888',fontWeight:400}}>(optional)</span></label>
+              {paymentReceiptPreview ? (
+                <div style={{position:'relative',marginBottom:'0.5rem'}}>
+                  {paymentReceiptPreview === 'pdf' ? (
+                    <div style={{background:'#f3f4f6',border:'1px solid #d1d5db',borderRadius:'8px',padding:'1rem',textAlign:'center',fontSize:'0.9rem',color:'#374151'}}>
+                      📄 PDF receipt selected
+                    </div>
+                  ) : (
+                    <img src={paymentReceiptPreview} alt="Receipt preview" style={{width:'100%',maxHeight:'180px',objectFit:'contain',borderRadius:'8px',border:'1px solid #d1d5db',background:'#f9fafb'}} />
+                  )}
+                  <button onClick={() => { setPaymentReceiptData(''); setPaymentReceiptMimeType(''); setPaymentReceiptPreview(''); }} style={{position:'absolute',top:'6px',right:'6px',background:'rgba(0,0,0,0.55)',color:'white',border:'none',borderRadius:'50%',width:'24px',height:'24px',cursor:'pointer',fontSize:'0.85rem',lineHeight:'1'}}>×</button>
+                </div>
+              ) : (
+                <label style={{display:'flex',alignItems:'center',gap:'0.5rem',padding:'0.65rem 1rem',border:'2px dashed #d1d5db',borderRadius:'8px',cursor:'pointer',color:'#6b7280',fontSize:'0.9rem',transition:'border-color 0.2s'}} onMouseEnter={e=>e.currentTarget.style.borderColor='#22c55e'} onMouseLeave={e=>e.currentTarget.style.borderColor='#d1d5db'}>
+                  📎 Click to upload receipt (image or PDF, max 5 MB)
+                  <input type="file" accept="image/*,.pdf" style={{display:'none'}} onChange={handlePaymentReceiptUpload} />
+                </label>
+              )}
+            </div>
+            {/* Notes */}
+            <div className="form-group">
+              <label className="form-label">Notes <span style={{color:'#888',fontWeight:400}}>(optional)</span></label>
+              <textarea className="form-input" rows={2} placeholder="e.g. Paid via HDFC Net Banking on 29-Jun-2026" value={paymentNotes} onChange={(e) => setPaymentNotes(e.target.value)} />
+            </div>
+          </div>
+          <div className="modal-footer">
+            <button className="btn btn-secondary" onClick={clearMarkPaidModal}>Cancel</button>
+            <button className="btn btn-success" onClick={handleMarkPaid} disabled={loading || (!paymentReference.trim() && !paymentReceiptData)}>{loading && Icons.loader}✅ Confirm Payment</button>
+          </div>
+        </div></div>
+      )}
+      {showDeleteModal && selectedVoucher && (
+        <div className="modal-overlay" onClick={() => setShowDeleteModal(false)}><div className="modal" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-header"><h3 className="modal-title">🗑️ Delete Voucher</h3><button className="modal-close" onClick={() => setShowDeleteModal(false)}>×</button></div>
+          <div className="modal-body">
+            <p style={{marginBottom: '1rem', color: '#dc2626', fontWeight: 500}}>⚠️ This action cannot be undone!</p>
+            <p>Are you sure you want to delete voucher <strong>{selectedVoucher.serial_number}</strong>?</p>
+            <div style={{background: '#fef2f2', padding: '1rem', borderRadius: '8px', marginTop: '1rem', fontSize: '0.9rem'}}>
+              <strong>Voucher Details:</strong><br/>
+              Payee: {selectedVoucher.payee_name}<br/>
+              Amount: ₹{selectedVoucher.amount?.toLocaleString('en-IN')}<br/>
+              Status: {selectedVoucher.status?.replace(/_/g, ' ')}
+            </div>
+          </div>
+          <div className="modal-footer"><button className="btn btn-secondary" onClick={() => setShowDeleteModal(false)}>Cancel</button><button className="btn btn-danger" onClick={handleDelete} disabled={loading}>{loading && Icons.loader}Delete Voucher</button></div>
+        </div></div>
+      )}
+      {showExcelModal && (
+        <div className="modal-overlay" onClick={() => { setShowExcelModal(false); setExcelPayee(''); }}><div className="modal" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-header"><h3 className="modal-title">{Icons.download} Download Excel Report</h3><button className="modal-close" onClick={() => { setShowExcelModal(false); setExcelPayee(''); }}>×</button></div>
+          <div className="modal-body">
+            <p style={{marginBottom: '1rem', color: '#666'}}>Select date range for Excel report</p>
+            <div className="form-row">
+              <div className="form-group">
+                <label className="form-label">From Date</label>
+                <input type="date" className="form-input" value={excelDateFrom} onChange={(e) => setExcelDateFrom(e.target.value)} />
+              </div>
+              <div className="form-group">
+                <label className="form-label">To Date</label>
+                <input type="date" className="form-input" value={excelDateTo} onChange={(e) => setExcelDateTo(e.target.value)} />
+              </div>
+            </div>
+            <div className="form-group" style={{marginTop: '0.75rem'}}>
+              <label className="form-label">Filter by Payee <span style={{color:'#9ca3af', fontWeight: 400}}>(optional — leave blank for all payees)</span></label>
+              <input type="text" className="form-input" placeholder="e.g. Mahadeva Electricals" value={excelPayee} onChange={(e) => setExcelPayee(e.target.value)} />
+            </div>
+            <div style={{background: '#f8f9fa', padding: '1rem', borderRadius: '8px', fontSize: '0.9rem', marginTop: '0.75rem'}}>
+              <strong>ℹ️ Excel report will include:</strong>
+              <ul style={{margin: '0.5rem 0 0', paddingLeft: '1.5rem'}}>
+                <li>{excelPayee.trim() ? `Only vouchers for payee matching "${excelPayee.trim()}"` : `All ${titles[filter].toLowerCase()}`} in selected date range</li>
+                <li>Serial No, Head of Account, Payee, Amount, Mode, Status</li>
+                <li>Narration, Invoice Reference, Sub Head details</li>
+              </ul>
+            </div>
+          </div>
+          <div className="modal-footer"><button className="btn btn-secondary" onClick={() => { setShowExcelModal(false); setExcelPayee(''); }}>Cancel</button><button className="btn btn-primary" onClick={handleDownloadExcel} disabled={!excelDateFrom || !excelDateTo}>{Icons.download} Download Excel</button></div>
+        </div></div>
+      )}
+      {showPrintModal && (
+        <div className="modal-overlay" onClick={() => setShowPrintModal(false)}><div className="modal" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-header"><h3 className="modal-title">{Icons.calendar} Print Vouchers Report</h3><button className="modal-close" onClick={() => setShowPrintModal(false)}>×</button></div>
+          <div className="modal-body">
+            <p style={{marginBottom: '1rem', color: '#666'}}>Select date range for consolidated voucher report</p>
+            <div className="form-row">
+              <div className="form-group">
+                <label className="form-label">From Date</label>
+                <input type="date" className="form-input" value={printDateFrom} onChange={(e) => setPrintDateFrom(e.target.value)} />
+              </div>
+              <div className="form-group">
+                <label className="form-label">To Date</label>
+                <input type="date" className="form-input" value={printDateTo} onChange={(e) => setPrintDateTo(e.target.value)} />
+              </div>
+            </div>
+            <div style={{background: '#f8f9fa', padding: '1rem', borderRadius: '8px', fontSize: '0.9rem'}}>
+              <strong>ℹ️ Report will include:</strong>
+              <ul style={{margin: '0.5rem 0 0', paddingLeft: '1.5rem'}}>
+                <li>All vouchers in selected date range</li>
+                <li>Detailed voucher information</li>
+                <li>Summary with total amounts</li>
+                <li>Print-optimized layout</li>
+              </ul>
+            </div>
+          </div>
+          <div className="modal-footer"><button className="btn btn-secondary" onClick={() => setShowPrintModal(false)}>Cancel</button><button className="btn btn-primary" onClick={handlePrintPeriod} disabled={!printDateFrom || !printDateTo}>{Icons.printer} Generate & Print</button></div>
+        </div></div>
+      )}
+      {showEditModal && selectedVoucher && (
+        <div className="modal-overlay" onClick={() => setShowEditModal(false)}><div className="modal modal-lg" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-header" style={{background: '#f59e0b', color: 'white'}}>
+            <h3 className="modal-title" style={{color: 'white'}}>✏️ Edit Draft - {selectedVoucher.voucher_number}</h3>
+            <button className="modal-close" style={{color: 'white'}} onClick={() => setShowEditModal(false)}>×</button>
+          </div>
+          <div className="modal-body">
+            <div style={{marginBottom: '1.5rem', padding: '1rem', background: '#fffbeb', borderRadius: '8px', border: '2px solid #f59e0b'}}>
+              <div style={{display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem'}}>
+                {Icons.building}
+                <span style={{fontSize: '1.1rem', fontWeight: 600}}>{user.company.name}</span>
+              </div>
+              <div style={{fontSize: '0.85rem', color: '#666'}}>{user.company.address}</div>
+            </div>
+            <div className="form-row">
+              <div className="form-group">
+                <label className="form-label">Head of Account *</label>
+                <select className="form-select" value={editForm.headOfAccount} onChange={(e) => setEditForm({ ...editForm, headOfAccount: e.target.value, subHeadOfAccount: '' })}>
+                  <option value="">Select</option>
+                  {heads.map(h => <option key={h} value={h}>{h}</option>)}
+                  {editForm.headOfAccount && !heads.includes(editForm.headOfAccount) && (
+                    <option value={editForm.headOfAccount}>{editForm.headOfAccount} (custom)</option>
+                  )}
+                </select>
+              </div>
+              <div className="form-group">
+                <label className="form-label">Sub-Category</label>
+                <select className="form-select" value={editForm.subHeadOfAccount} onChange={(e) => setEditForm({ ...editForm, subHeadOfAccount: e.target.value })} disabled={!editForm.headOfAccount}>
+                  <option value="">{!editForm.headOfAccount ? 'Select Head first' : subHeads.length === 0 ? 'No sub-categories (optional)' : 'Select (optional)'}</option>
+                  {subHeads.map(sh => <option key={sh.id} value={sh.name}>{sh.name}</option>)}
+                  {editForm.subHeadOfAccount && !subHeads.find(sh => sh.name === editForm.subHeadOfAccount) && (
+                    <option value={editForm.subHeadOfAccount}>{editForm.subHeadOfAccount}</option>
+                  )}
+                </select>
+              </div>
+            </div>
+            <div className="form-row">
+              <div className="form-group">
+                <label className="form-label">Payment Mode *</label>
+                <select className="form-select" value={editForm.paymentMode} onChange={(e) => setEditForm({ ...editForm, paymentMode: e.target.value })}>
+                  <option value="UPI">UPI</option>
+                  <option value="Account Transfer">Account Transfer</option>
+                  <option value="Cash">Cash</option>
+                </select>
+              </div>
+              <div className="form-group">
+                <label className="form-label">Invoice Reference</label>
+                <input type="text" className="form-input" placeholder="e.g., INV-2026-001 (optional)" value={editForm.invoiceReference} onChange={(e) => setEditForm({ ...editForm, invoiceReference: e.target.value })} />
+              </div>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Paid From Account <span style={{fontWeight:400,color:'#888',fontSize:'0.82rem'}}>(optional — which bank account / director's account)</span></label>
+              <input type="text" list="pfa-edit-list" className="form-input" placeholder="e.g., HDFC Current A/C, Director Ramesh A/C" value={editForm.paidFromAccount} onChange={(e) => setEditForm({ ...editForm, paidFromAccount: e.target.value })} />
+              <datalist id="pfa-edit-list">{paymentAccounts.map(a => <option key={a.id} value={a.label} />)}</datalist>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Payee *</label>
+              <select className="form-select" value={editForm.payeeId} onChange={(e) => setEditForm({ ...editForm, payeeId: e.target.value })}>
+                <option value="">Select Payee</option>
+                {payees.map(p => <option key={p.id} value={p.id}>{p.name} {p.alias && `(${p.alias})`}</option>)}
+              </select>
+              {editForm.payeeId && editForm.paymentMode !== 'Cash' && (() => {
+                const p = payees.find(x => x.id === editForm.payeeId);
+                if (!p) return null;
+                if (editForm.paymentMode === 'UPI') {
+                  return p.upi_id
+                    ? <div style={{marginTop:'0.4rem',padding:'0.45rem 0.75rem',background:'#f0fdf4',border:'1px solid #86efac',borderRadius:'6px',fontSize:'0.82rem',color:'#166534'}}>✅ UPI ID: <strong style={{fontFamily:'monospace'}}>{p.upi_id}</strong></div>
+                    : <div style={{marginTop:'0.4rem',padding:'0.45rem 0.75rem',background:'#fffbeb',border:'1px solid #fcd34d',borderRadius:'6px',fontSize:'0.82rem',color:'#92400e'}}>⚠️ No UPI ID on file for this payee — go to <strong>Manage Payees</strong> to add it before submitting.</div>;
+                }
+                if (editForm.paymentMode === 'Account Transfer') {
+                  return p.bank_account
+                    ? <div style={{marginTop:'0.4rem',padding:'0.45rem 0.75rem',background:'#f0fdf4',border:'1px solid #86efac',borderRadius:'6px',fontSize:'0.82rem',color:'#166534'}}>✅ A/C: <strong style={{fontFamily:'monospace'}}>{p.bank_account}</strong>{p.ifsc ? <> · IFSC: <strong style={{fontFamily:'monospace'}}>{p.ifsc}</strong></> : null}{p.bank_name ? <> · {p.bank_name}</> : null}</div>
+                    : <div style={{marginTop:'0.4rem',padding:'0.45rem 0.75rem',background:'#fffbeb',border:'1px solid #fcd34d',borderRadius:'6px',fontSize:'0.82rem',color:'#92400e'}}>⚠️ No bank account on file for this payee — go to <strong>Manage Payees</strong> to add it before submitting.</div>;
+                }
+                return null;
+              })()}
+            </div>
+            <div className="form-group">
+              <label className="form-label form-label-row">
+                Narration / Line Items
+                <label style={{display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem', cursor: 'pointer', background: useNarrationTable ? '#f59e0b' : '#888', color: 'white', padding: '0.35rem 0.75rem', borderRadius: '6px'}}>
+                  <input type="checkbox" checked={useNarrationTable} onChange={(e) => {
+                    setUseNarrationTable(e.target.checked);
+                    if (!e.target.checked) setEditForm({ ...editForm, narrationItems: [] });
+                  }} />
+                  {useNarrationTable ? '📋 Multiple Items' : '📝 Simple Text'}
+                </label>
+              </label>
+              {useNarrationTable ? (
+                <NarrationItemsTable items={editForm.narrationItems} onChange={(items) => setEditForm({ ...editForm, narrationItems: items })} />
+              ) : (
+                <textarea className="form-input" rows={2} placeholder="Enter payment description" value={editForm.narration} onChange={(e) => setEditForm({ ...editForm, narration: e.target.value })} />
+              )}
+            </div>
+
+            {/* Deductions Section */}
+            <div className="form-group">
+              <label className="form-label form-label-row">
+                Deductions / Advance Payments
+                <label style={{display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem', cursor: 'pointer', background: showEditDeductions ? '#6366f1' : '#888', color: 'white', padding: '0.35rem 0.75rem', borderRadius: '6px'}}>
+                  <input type="checkbox" checked={showEditDeductions} onChange={(e) => {
+                    setShowEditDeductions(e.target.checked);
+                    if (!e.target.checked) setEditForm({ ...editForm, deductions: [] });
+                  }} />
+                  {showEditDeductions ? '💰 Deductions Active' : '➖ Add Deductions'}
+                </label>
+              </label>
+              {showEditDeductions && (
+                <DeductionsTable items={editForm.deductions} onChange={(items) => setEditForm({ ...editForm, deductions: items })} />
+              )}
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">
+                {showEditDeductions && editForm.deductions.length > 0 ? 'Gross Amount (₹) *' : 'Amount (₹) *'}
+                {useNarrationTable && editForm.narrationItems.length > 0 && <span style={{color: '#f59e0b', fontWeight: 'normal', marginLeft: '0.5rem'}}>(auto-calculated)</span>}
+              </label>
+              <input 
+                type="number" 
+                className="form-input" 
+                placeholder="Enter amount" 
+                value={editForm.amount} 
+                onChange={(e) => setEditForm({ ...editForm, amount: e.target.value })}
+                readOnly={useNarrationTable && editForm.narrationItems.some(i => parseFloat(i.amount) > 0)}
+                style={useNarrationTable && editForm.narrationItems.some(i => parseFloat(i.amount) > 0) ? {background: '#f5f5f5', fontWeight: 600, fontSize: '1.1rem'} : {}}
+              />
+              {/* Net amount breakdown when deductions are active */}
+              {showEditDeductions && editForm.deductions.length > 0 && parseFloat(editForm.amount) > 0 && (() => {
+                const editDedTotal = editForm.deductions.reduce((s, d) => s + (parseFloat(d.amount) || 0), 0);
+                const editNet = Math.max(0, (parseFloat(editForm.amount) || 0) - editDedTotal);
+                return (
+                  <div style={{marginTop: '0.75rem', padding: '1rem', background: '#eef2ff', borderRadius: '8px', border: '2px solid #6366f1'}}>
+                    <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: '0.4rem', fontSize: '0.9rem'}}>
+                      <span style={{color: '#374151'}}>Gross Amount:</span>
+                      <span style={{fontFamily: 'monospace', fontWeight: 600}}>{formatRupees(parseFloat(editForm.amount))}</span>
+                    </div>
+                    <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: '0.4rem', fontSize: '0.9rem', color: '#6366f1'}}>
+                      <span>Less: Deductions:</span>
+                      <span style={{fontFamily: 'monospace', fontWeight: 600}}>- {formatRupees(editDedTotal)}</span>
+                    </div>
+                    <div style={{borderTop: '2px solid #6366f1', paddingTop: '0.5rem', display: 'flex', justifyContent: 'space-between', fontSize: '1rem', fontWeight: 700}}>
+                      <span style={{color: '#3730a3'}}>Net Payable:</span>
+                      <span style={{fontFamily: 'monospace', color: '#3730a3'}}>{formatRupees(editNet)}</span>
+                    </div>
+                    <div style={{marginTop: '0.5rem', fontSize: '0.8rem', color: '#6366f1', fontStyle: 'italic'}}>
+                      <strong>Net in Words:</strong> {numberToWordsIndian(editNet)}
+                    </div>
+                  </div>
+                );
+              })()}
+              {(!showEditDeductions || editForm.deductions.length === 0) && editForm.amount > 0 && (
+                <div style={{marginTop: '0.5rem', fontSize: '0.85rem', color: '#666', fontStyle: 'italic', background: '#fffbeb', padding: '0.75rem', borderRadius: '6px', border: '1px solid #fcd34d'}}>
+                  <strong style={{color: '#92400e'}}>In Words:</strong> {numberToWordsIndian(parseFloat(editForm.amount))}
+                </div>
+              )}
+            </div>
+            <BillAttachmentPanel
+              voucherId={selectedVoucher.id}
+              voucherSerialNumber={selectedVoucher.serial_number}
+              voucherType="regular"
+              companyId={user.company.id}
+            />
+          </div>
+          <div className="modal-footer" style={{display: 'flex', gap: '0.5rem', justifyContent: 'space-between'}}>
+            <button className="btn btn-secondary" onClick={() => setShowEditModal(false)}>Cancel</button>
+            <div style={{display: 'flex', gap: '0.5rem'}}>
+              <button className="btn btn-secondary" onClick={() => handleUpdateDraft(true)} disabled={loading}>
+                {loading && Icons.loader}💾 Save Draft
+              </button>
+              <button className="btn btn-primary" onClick={() => handleUpdateDraft(false)} disabled={loading}>
+                {loading && Icons.loader}{Icons.send} Submit for Approval
+              </button>
+            </div>
+          </div>
+        </div></div>
+      )}
+
+      {/* Retrospective Scan Modal */}
+      {showRetroScan && <RetrospectiveScanModal onClose={() => setShowRetroScan(false)} />}
+
+      {/* Single-Voucher Verify Receipt Result Modal */}
+      {verifyReceiptVoucher && (
+        <div className="modal-overlay" onClick={() => { setVerifyReceiptVoucher(null); setVerifyReceiptResult(null); }}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{maxWidth:'440px'}}>
+            <div className="modal-header" style={{background:'#7c3aed',color:'white'}}>
+              <h3 className="modal-title" style={{color:'white'}}>🔍 Verify Receipt — {verifyReceiptVoucher.serial_number}</h3>
+              <button className="modal-close" style={{color:'white'}} onClick={() => { setVerifyReceiptVoucher(null); setVerifyReceiptResult(null); }}>×</button>
+            </div>
+            <div className="modal-body">
+              {verifyReceiptLoading && (
+                <div style={{textAlign:'center',padding:'2rem'}}>{Icons.loader}<p style={{color:'#6b7280',marginTop:'0.75rem',fontSize:'0.875rem'}}>Scanning attachment via GPT-4o Vision…</p></div>
+              )}
+              {!verifyReceiptLoading && verifyReceiptResult && (() => {
+                const r = verifyReceiptResult;
+                const best = (r.attachments || []).find(a => a.confidence === 'high') || (r.attachments || []).find(a => a.confidence === 'low');
+                if (r.error) return <div style={{background:'#fef2f2',border:'1px solid #fca5a5',borderRadius:'8px',padding:'0.75rem',color:'#991b1b',fontSize:'0.875rem'}}>⚠️ Scan failed: {r.error}</div>;
+                if (r.bestConfidence === 'high') return (
+                  <div>
+                    <div style={{background:'#f0fdf4',border:'2px solid #86efac',borderRadius:'10px',padding:'1rem',marginBottom:'1rem'}}>
+                      <div style={{fontWeight:700,color:'#166534',marginBottom:'0.5rem'}}>✅ Payment receipt found — HIGH confidence</div>
+                      {best?.extractedVchRef && <div style={{fontSize:'0.875rem',marginBottom:'4px'}}>📄 Voucher ref: <code>{best.extractedVchRef}</code></div>}
+                      {best?.utr && <div style={{fontSize:'0.875rem',marginBottom:'4px'}}>🔑 UTR / Txn ID: <code style={{fontWeight:700}}>{best.utr}</code></div>}
+                      {best?.transferType && <div style={{fontSize:'0.875rem',marginBottom:'4px'}}>🏦 Transfer type: <strong>{best.transferType}</strong></div>}
+                      {best?.fileName && <div style={{fontSize:'0.875rem'}}><a href={best.publicUrl} target="_blank" rel="noreferrer" style={{color:'#2563eb'}}>📎 View: {best.fileName}</a></div>}
+                    </div>
+                    <button className="btn btn-success" style={{width:'100%'}} onClick={() => handleConfirmVerifiedPaid(r)}>✅ Mark {verifyReceiptVoucher.serial_number} as Paid</button>
+                  </div>
+                );
+                if (r.bestConfidence === 'low') return (
+                  <div>
+                    <div style={{background:'#fefce8',border:'2px solid #fde68a',borderRadius:'10px',padding:'1rem',marginBottom:'1rem'}}>
+                      <div style={{fontWeight:700,color:'#713f12',marginBottom:'0.5rem'}}>⚠️ Partial match — LOW confidence</div>
+                      {best?.extractedVchRef && <div style={{fontSize:'0.875rem',marginBottom:'4px'}}>📄 Ref found: <code>{best.extractedVchRef}</code></div>}
+                      {best?.utr && <div style={{fontSize:'0.875rem',marginBottom:'4px'}}>🔑 UTR: <code>{best.utr}</code></div>}
+                      {best?.fileName && <div style={{fontSize:'0.875rem',marginBottom:'8px'}}><a href={best.publicUrl} target="_blank" rel="noreferrer" style={{color:'#2563eb'}}>📎 Review: {best.fileName}</a></div>}
+                      <div style={{fontSize:'0.82rem',color:'#92400e'}}>Review the attachment above before confirming.</div>
+                    </div>
+                    <button className="btn btn-success" style={{width:'100%'}} onClick={() => handleConfirmVerifiedPaid(r)}>✅ Confirm — Mark as Paid</button>
+                  </div>
+                );
+                return (
+                  (() => {
+                    const allErrors = (r.attachments || []).filter(a => a.error);
+                    const anyScanned = (r.attachments || []).some(a => !a.error);
+                    const allFailed = allErrors.length === (r.attachments || []).length && allErrors.length > 0;
+                    return (
+                      <div>
+                        {allFailed && (
+                          <div style={{background:'#fef2f2',border:'1px solid #fca5a5',borderRadius:'8px',padding:'0.875rem',marginBottom:'0.75rem',fontSize:'0.875rem',color:'#991b1b'}}>
+                            <div style={{fontWeight:700,marginBottom:'4px'}}>⚠️ Could not OCR any attachment</div>
+                            <div>All files either failed or are image-based PDFs. Review the attachments manually and use <strong>Mark as Paid</strong> if you confirm payment was made.</div>
+                          </div>
+                        )}
+                        {!allFailed && (
+                          <div style={{background:'#f9fafb',border:'1px solid #e5e7eb',borderRadius:'8px',padding:'1rem',textAlign:'center',color:'#6b7280',fontSize:'0.875rem',marginBottom:'0.5rem'}}>
+                            <div style={{fontSize:'2rem',marginBottom:'0.5rem'}}>🔎</div>
+                            <div style={{fontWeight:600,marginBottom:'0.25rem'}}>No payment proof found in scanned attachments.</div>
+                            <div>These files do not appear to be payment receipts. Upload the actual GPay/bank screenshot using the Upload File button.</div>
+                          </div>
+                        )}
+                        {(r.attachments || []).map((a, i) => a.fileName && (
+                          <div key={i} style={{fontSize:'0.78rem',marginTop:'0.5rem',color:'#6b7280',display:'flex',alignItems:'flex-start',gap:'6px',flexWrap:'wrap'}}>
+                            <a href={a.publicUrl} target="_blank" rel="noreferrer" style={{color:'#2563eb'}}>📎 {a.fileName}</a>
+                            {a.error
+                              ? <span style={{color:'#dc2626'}}>— {a.error.length > 80 ? a.error.slice(0,80)+'…' : a.error}</span>
+                              : <span style={{color:'#16a34a'}}>— scanned (no payment ref found)</span>
+                            }
+                          </div>
+                        ))}
+                        {/* Manual override: if all attachments failed, offer a manual mark-paid */}
+                        {allFailed && (
+                          <button className="btn btn-secondary" style={{width:'100%',marginTop:'1rem',fontSize:'0.85rem'}}
+                            onClick={() => { setVerifyReceiptVoucher(null); setVerifyReceiptResult(null); setMarkPaidVoucher(verifyReceiptVoucher); setShowMarkPaidModal(true); }}>
+                            ✅ Mark as Paid manually (upload receipt in next step)
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })()
+                );
+              })()}
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => { setVerifyReceiptVoucher(null); setVerifyReceiptResult(null); }}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Pay Now Modal */}
+      {payNowVoucher && (() => {
+        const v = payNowVoucher;
+        const upiUrl = v.payment_mode === 'UPI' && v.payee_upi_id
+          ? `upi://pay?${new URLSearchParams({ pa: v.payee_upi_id, pn: v.payee_name, am: parseFloat(v.amount).toFixed(2), cu: 'INR', tn: `Voucher ${v.serial_number}` }).toString()}`
+          : null;
+        const qrSrc = upiUrl
+          ? `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(upiUrl)}&bgcolor=ffffff&color=1a1a1a&margin=10`
+          : null;
+        const copyBankDetails = () => {
+          const vchKey = computeVchKey(v.serial_number);
+          const text = [`Payee: ${v.payee_name}`, `Account No: ${v.payee_bank_account || '—'}`, `IFSC: ${v.payee_ifsc || '—'}`, `Bank: ${v.payee_bank_name || '—'}`, `Amount: ₹${parseFloat(v.amount).toLocaleString('en-IN', {minimumFractionDigits:2})}`, `Reference: ${v.serial_number}`, ...(vchKey ? [`Remarks key: ${vchKey}`] : [])].join('\n');
+          navigator.clipboard.writeText(text).then(() => addToast('Bank details copied', 'success'));
+        };
+        return (
+          <div className="modal-overlay" onClick={() => setPayNowVoucher(null)}>
+            <div className="modal" onClick={(e) => e.stopPropagation()} style={{maxWidth:'440px'}}>
+              <div className="modal-header" style={{background:'#16a34a',color:'white'}}>
+                <h3 className="modal-title" style={{color:'white'}}>💳 Pay Now — {v.serial_number}</h3>
+                <button className="modal-close" style={{color:'white'}} onClick={() => setPayNowVoucher(null)}>×</button>
+              </div>
+              <div className="modal-body">
+                <div style={{marginBottom:'1rem',padding:'0.75rem',background:'#f0fdf4',borderRadius:'8px',border:'1px solid #86efac',fontSize:'0.9rem'}}>
+                  <div style={{display:'flex',justifyContent:'space-between',marginBottom:'0.3rem'}}><span style={{color:'#166534'}}>Payee</span><strong>{v.payee_name}</strong></div>
+                  <div style={{display:'flex',justifyContent:'space-between',marginBottom:'0.3rem'}}><span style={{color:'#166534'}}>Amount</span><strong style={{fontFamily:'monospace',fontSize:'1.1rem'}}>₹{parseFloat(v.amount).toLocaleString('en-IN',{minimumFractionDigits:2})}</strong></div>
+                  <div style={{display:'flex',justifyContent:'space-between',marginBottom:'0.3rem'}}><span style={{color:'#166534'}}>Mode</span><strong>{v.payment_mode}</strong></div>
+                  {v.paid_from_account && <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#166534'}}>Paid From</span><strong>{v.paid_from_account}</strong></div>}
+                </div>
+
+                {v.payment_mode === 'UPI' && !v.payee_upi_id && (
+                  <div style={{padding:'1rem',background:'#fef9c3',borderRadius:'8px',border:'1px solid #fde047',textAlign:'center',fontSize:'0.88rem',color:'#713f12'}}>
+                    ⚠️ No UPI ID recorded for this payee. Edit the payee to add their UPI ID.
+                  </div>
+                )}
+
+                {v.payment_mode === 'UPI' && v.payee_upi_id && (
+                  <div style={{textAlign:'center'}}>
+                    <p style={{fontSize:'0.85rem',color:'#555',marginBottom:'0.75rem'}}>Scan this QR code with a second device using any UPI app.</p>
+                    <img src={qrSrc} alt="UPI QR Code" style={{width:220,height:220,border:'1px solid #e5e7eb',borderRadius:'8px'}} />
+                    <p style={{fontSize:'0.75rem',color:'#888',marginTop:'0.5rem'}}>UPI ID: <code>{v.payee_upi_id}</code></p>
+                    <button
+                      className="btn btn-sm"
+                      style={{marginTop:'0.65rem',background:'#f0fdf4',border:'1px solid #86efac',color:'#15803d',fontWeight:600,borderRadius:'6px',padding:'6px 14px',cursor:'pointer',fontSize:'0.82rem'}}
+                      onClick={() => downloadQrCard({ qrSrc, serial: v.serial_number, payeeName: v.payee_name, amount: v.amount, upiId: v.payee_upi_id, label: 'Pay Now' })}
+                    >💾 Save QR to Phone</button>
+                    <p style={{fontSize:'0.72rem',color:'#9ca3af',marginTop:'0.35rem'}}>Upload in GPay → Pay → Scan QR (under ₹2,000 only)</p>
+                  </div>
+                )}
+
+                {v.payment_mode === 'Account Transfer' && (
+                  <div>
+                    <p style={{fontSize:'0.85rem',color:'#555',marginBottom:'0.75rem'}}>Use these details in your banking app (NEFT / IMPS / RTGS).</p>
+                    <div style={{background:'#f8fafc',border:'1px solid #e2e8f0',borderRadius:'8px',padding:'1rem',fontSize:'0.9rem'}}>
+                      {[['Payee', v.payee_name], ['Account No', v.payee_bank_account || '—'], ['IFSC', v.payee_ifsc || '—'], ['Bank', v.payee_bank_name || '—'], ['Amount', `₹${parseFloat(v.amount).toLocaleString('en-IN',{minimumFractionDigits:2})}`], ['Reference', v.serial_number]].map(([label, val]) => (
+                        <div key={label} style={{display:'flex',justifyContent:'space-between',padding:'0.35rem 0',borderBottom:'1px solid #e2e8f0'}}>
+                          <span style={{color:'#64748b'}}>{label}</span><strong style={{textAlign:'right',maxWidth:'60%',wordBreak:'break-all'}}>{val}</strong>
+                        </div>
+                      ))}
+                    </div>
+                    {computeVchKey(v.serial_number) && (
+                      <div style={{marginTop:'0.75rem',padding:'0.75rem 1rem',background:'#eff6ff',border:'1px solid #bfdbfe',borderRadius:'8px',display:'flex',alignItems:'center',justifyContent:'space-between',gap:'0.75rem'}}>
+                        <div>
+                          <div style={{fontSize:'0.72rem',color:'#1d4ed8',fontWeight:700,textTransform:'uppercase',letterSpacing:'0.04em',marginBottom:'2px'}}>📝 Type in bank Remarks / Notes field</div>
+                          <code style={{fontSize:'1.05rem',fontWeight:800,letterSpacing:'0.08em',color:'#1e3a8a'}}>{computeVchKey(v.serial_number)}</code>
+                        </div>
+                        <button className="btn btn-sm" style={{background:'#2563eb',color:'white',border:'none',borderRadius:'6px',padding:'4px 12px',fontWeight:600,cursor:'pointer',flexShrink:0}} onClick={() => copyToClipboard(computeVchKey(v.serial_number)).then(() => addToast('Reference key copied', 'success'))}>📋 Copy</button>
+                      </div>
+                    )}
+                    <button className="btn btn-secondary" style={{width:'100%',marginTop:'0.75rem'}} onClick={copyBankDetails}>📋 Copy All Details</button>
+                  </div>
+                )}
+              </div>
+              <div className="modal-footer">
+                <button className="btn btn-secondary" onClick={() => setPayNowVoucher(null)}>Close</button>
+                {/* Account Transfer in OTP Verified: Accounts can proceed directly to confirm payment */}
+                {v.status === 'completed' && v.payment_mode === 'Account Transfer' && (user.role === 'accounts' || user.isSuperAdmin) && (
+                  <button className="btn btn-success" onClick={() => { setPayNowVoucher(null); setMarkPaidVoucher(v); setShowMarkPaidModal(true); }}>✅ Confirm Payment →</button>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── Batch Pay Now Modal ────────────────────────────────────────────── */}
+      {payNowBatch && (() => {
+        const b = payNowBatch;
+        const cpayKey = computeCpayKey(b.batchReference);
+
+        const handleBatchReceiptUpload = (e) => {
+          const file = e.target.files[0];
+          if (!file) return;
+          if (file.size > 5 * 1024 * 1024) { addToast('Receipt must be under 5 MB', 'error'); return; }
+          const reader = new FileReader();
+          reader.onload = (ev) => {
+            const base64 = ev.target.result.split(',')[1];
+            setBatchReceiptData(base64); setBatchReceiptMime(file.type);
+            setBatchReceiptPreview(file.type.startsWith('image/') ? ev.target.result : 'pdf');
+          };
+          reader.readAsDataURL(file);
+        };
+
+        const handleConfirmBatchPaid = async () => {
+          if (!batchPaidRef.trim() && !batchReceiptData) { addToast('Enter a UTR reference or upload a receipt', 'error'); return; }
+          setBatchPaying(true);
+          try {
+            const result = await api.markBatchPaid(b.batchId, { paidBy: user.id, paymentReference: batchPaidRef.trim() || null, paymentNotes: batchPaidNotes.trim() || null, receiptData: batchReceiptData || null, receiptMimeType: batchReceiptMime || null });
+            if (result.success) { addToast(`Batch ${b.batchReference} marked paid — ${result.vouchers_paid} vouchers ✅`, 'success'); setPayNowBatch(null); refreshVouchers(); }
+            else addToast(result.error || 'Failed', 'error');
+          } catch (err) { addToast(err.message || 'Failed', 'error'); }
+          setBatchPaying(false);
+        };
+
+        return (
+          <div className="modal-overlay" onClick={() => setPayNowBatch(null)}>
+            <div className="modal" onClick={e => e.stopPropagation()} style={{maxWidth:'460px'}}>
+              <div className="modal-header" style={{background:'#1d4ed8',color:'white'}}>
+                <h3 className="modal-title" style={{color:'white'}}>💳 Pay Batch — {b.batchReference}</h3>
+                <button className="modal-close" style={{color:'white'}} onClick={() => setPayNowBatch(null)}>×</button>
+              </div>
+              <div className="modal-body">
+                <div style={{background:'#eff6ff',border:'1px solid #bfdbfe',borderRadius:'8px',padding:'0.75rem',marginBottom:'0.75rem',fontSize:'0.9rem'}}>
+                  <div style={{display:'flex',justifyContent:'space-between',marginBottom:'4px'}}><span style={{color:'#1d4ed8'}}>Batch</span><strong style={{fontFamily:'monospace'}}>{b.batchReference}</strong></div>
+                  <div style={{display:'flex',justifyContent:'space-between',marginBottom:'4px'}}><span style={{color:'#1d4ed8'}}>Payee</span><strong>{b.payee_name}</strong></div>
+                  <div style={{display:'flex',justifyContent:'space-between',marginBottom:'4px'}}><span style={{color:'#1d4ed8'}}>Total</span><strong style={{fontFamily:'monospace',fontSize:'1.1rem'}}>₹{parseFloat(b.totalAmount).toLocaleString('en-IN',{minimumFractionDigits:2})}</strong></div>
+                  <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#1d4ed8'}}>Mode</span><strong>{b.payment_mode}</strong></div>
+                  {b.vouchers?.length > 0 && <div style={{marginTop:'6px',fontSize:'0.78rem',color:'#3730a3'}}>{b.vouchers.map(v => v.serial_number).join(' · ')}</div>}
+                </div>
+
+                {/* UPI QR — same helper as individual Pay Now; tn=batchReference so the bank narration
+                    may embed the CPAY ref (future Tier-0 matching). Guard: only when mode is UPI AND
+                    payee has a UPI ID; the combine flow already enforces same-payee+UPI-only via
+                    batchConstraint (line ~3757), but we check both fields explicitly here regardless. */}
+                {b.payment_mode === 'UPI' && !b.payee_upi_id && (
+                  <div style={{padding:'1rem',background:'#fef9c3',borderRadius:'8px',border:'1px solid #fde047',textAlign:'center',fontSize:'0.88rem',color:'#713f12',marginBottom:'0.75rem'}}>
+                    ⚠️ No UPI ID recorded for this payee. Edit the payee to add their UPI ID.
+                  </div>
+                )}
+                {b.payment_mode === 'UPI' && b.payee_upi_id && (() => {
+                  const _upiUrl = `upi://pay?${new URLSearchParams({ pa: b.payee_upi_id, pn: b.payee_name, am: parseFloat(b.totalAmount).toFixed(2), cu: 'INR', tn: b.batchReference }).toString()}`;
+                  const _qrSrc = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(_upiUrl)}&bgcolor=ffffff&color=1a1a1a&margin=10`;
+                  return (
+                    <div style={{textAlign:'center',marginBottom:'0.75rem'}}>
+                      <p style={{fontSize:'0.85rem',color:'#555',marginBottom:'0.75rem'}}>Scan with any UPI app on a second device.</p>
+                      <img src={_qrSrc} alt="UPI QR Code" style={{width:220,height:220,border:'1px solid #e5e7eb',borderRadius:'8px'}} />
+                      <p style={{fontSize:'0.75rem',color:'#888',marginTop:'0.5rem'}}>UPI ID: <code>{b.payee_upi_id}</code></p>
+                      <button
+                        className="btn btn-sm"
+                        style={{marginTop:'0.65rem',background:'#eff6ff',border:'1px solid #bfdbfe',color:'#1d4ed8',fontWeight:600,borderRadius:'6px',padding:'6px 14px',cursor:'pointer',fontSize:'0.82rem'}}
+                        onClick={() => downloadQrCard({ qrSrc: _qrSrc, serial: b.batchReference, payeeName: b.payee_name, amount: b.totalAmount, upiId: b.payee_upi_id, label: 'Batch Pay' })}
+                      >💾 Save QR to Phone</button>
+                      <p style={{fontSize:'0.72rem',color:'#9ca3af',marginTop:'0.35rem'}}>Upload in GPay → Pay → Scan QR (under ₹2,000 only)</p>
+                    </div>
+                  );
+                })()}
+
+                {b.payment_mode === 'Account Transfer' && (
+                  <div>
+                    <p style={{fontSize:'0.85rem',color:'#555',marginBottom:'0.75rem'}}>Use these details in your banking app (NEFT / IMPS / RTGS).</p>
+                    <div style={{background:'#f8fafc',border:'1px solid #e2e8f0',borderRadius:'8px',padding:'1rem',fontSize:'0.9rem',marginBottom:'0.75rem'}}>
+                      {[['Payee', b.payee_name], ['Account No', b.payee_bank_account || '—'], ['IFSC', b.payee_ifsc || '—'], ['Bank', b.payee_bank_name || '—'], ['Amount', `₹${parseFloat(b.totalAmount).toLocaleString('en-IN',{minimumFractionDigits:2})}`]].map(([label, val]) => (
+                        <div key={label} style={{display:'flex',justifyContent:'space-between',padding:'0.35rem 0',borderBottom:'1px solid #e2e8f0'}}>
+                          <span style={{color:'#64748b'}}>{label}</span><strong style={{textAlign:'right',maxWidth:'60%',wordBreak:'break-all'}}>{val}</strong>
+                        </div>
+                      ))}
+                    </div>
+                    {cpayKey && (
+                      <div style={{background:'#eff6ff',border:'1px solid #bfdbfe',borderRadius:'8px',padding:'0.75rem 1rem',display:'flex',alignItems:'center',justifyContent:'space-between',gap:'0.75rem',marginBottom:'0.75rem'}}>
+                        <div>
+                          <div style={{fontSize:'0.72rem',color:'#1d4ed8',fontWeight:700,textTransform:'uppercase',letterSpacing:'0.04em',marginBottom:'2px'}}>📝 Type in bank Remarks / Notes field</div>
+                          <code style={{fontSize:'1.05rem',fontWeight:800,letterSpacing:'0.08em',color:'#1e3a8a'}}>{cpayKey}</code>
+                        </div>
+                        <button className="btn btn-sm" style={{background:'#2563eb',color:'white',border:'none',borderRadius:'6px',padding:'4px 12px',fontWeight:600,cursor:'pointer',flexShrink:0}} onClick={() => copyToClipboard(cpayKey).then(() => addToast('Batch key copied', 'success'))}>📋 Copy</button>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Confirm-paid section */}
+                {(user.role === 'accounts' || user.isSuperAdmin) && (
+                  <div style={{borderTop:'1px solid #e5e7eb',paddingTop:'0.75rem',marginTop:'0.25rem'}}>
+                    <p style={{fontSize:'0.82rem',fontWeight:600,color:'#374151',marginBottom:'0.5rem'}}>Confirm payment made:</p>
+                    <div style={{fontSize:'0.76rem',color:'#6b7280',background:'#f9fafb',border:'1px solid #e5e7eb',borderRadius:'6px',padding:'0.45rem 0.65rem',marginBottom:'0.5rem',lineHeight:'1.4'}}>
+                      💡 If you made individual payments instead of one combined transfer, confirm here with any one receipt — then use <strong>📎 Receipts</strong> on the paid voucher row to attach additional receipts.
+                    </div>
+                    <input className="form-input" placeholder="UTR / Transaction reference" value={batchPaidRef} onChange={e => setBatchPaidRef(e.target.value)} style={{marginBottom:'0.5rem'}} />
+                    <textarea className="form-input" placeholder="Notes (optional)" value={batchPaidNotes} onChange={e => setBatchPaidNotes(e.target.value)} rows={2} style={{marginBottom:'0.5rem',resize:'none'}} />
+                    <div style={{display:'flex',alignItems:'center',gap:'0.5rem',flexWrap:'wrap'}}>
+                      <label className="btn btn-sm btn-secondary" style={{cursor:'pointer',display:'inline-flex',alignItems:'center',gap:'4px'}}>
+                        📎 {batchReceiptPreview ? (batchReceiptPreview === 'pdf' ? '📄 PDF selected' : '🖼 Image selected') : 'Upload receipt (optional)'}
+                        <input type="file" accept="image/*,.pdf" style={{display:'none'}} onChange={handleBatchReceiptUpload} />
+                      </label>
+                      {batchReceiptPreview && (
+                        <button onClick={() => { setBatchReceiptData(''); setBatchReceiptMime(''); setBatchReceiptPreview(''); }} style={{background:'none',border:'none',color:'#ef4444',cursor:'pointer',fontSize:'0.8rem',padding:'2px 6px'}}>✕ Remove</button>
+                      )}
+                    </div>
+                    {batchReceiptPreview && batchReceiptPreview !== 'pdf' && <img src={batchReceiptPreview} alt="receipt" style={{display:'block',maxHeight:'80px',borderRadius:'4px',marginTop:'4px'}} />}
+                  </div>
+                )}
+              </div>
+              <div className="modal-footer">
+                <button className="btn btn-secondary" onClick={() => setPayNowBatch(null)}>Close</button>
+                {(user.role === 'accounts' || user.isSuperAdmin) && (
+                  <button className="btn btn-success" onClick={handleConfirmBatchPaid} disabled={batchPaying || (!batchPaidRef.trim() && !batchReceiptData)}>
+                    {batchPaying ? Icons.loader : '✅'} Confirm Batch Paid
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ─── Batch Receipts Modal ─── */}
+      {/* Opens for paid batch vouchers: lists all uploaded receipts and allows adding more */}
+      {batchReceiptsModal && (() => {
+        const bm = batchReceiptsModal;
+
+        const handleNewReceiptFile = (e) => {
+          const file = e.target.files[0];
+          if (!file) return;
+          if (file.size > 5 * 1024 * 1024) { addToast('Receipt must be under 5 MB', 'error'); return; }
+          const reader = new FileReader();
+          reader.onload = (ev) => {
+            const base64 = ev.target.result.split(',')[1];
+            setNewBatchReceiptData(base64); setNewBatchReceiptMime(file.type);
+            setNewBatchReceiptPreview(file.type.startsWith('image/') ? ev.target.result : 'pdf');
+          };
+          reader.readAsDataURL(file);
+        };
+
+        const handleUploadNewReceipt = async () => {
+          if (!newBatchReceiptData) { addToast('Please select a file to upload', 'error'); return; }
+          setAddingBatchReceipt(true);
+          try {
+            await api.addBatchReceipt(bm.batchId, {
+              uploadedBy: user.id,
+              receiptData: newBatchReceiptData,
+              receiptMimeType: newBatchReceiptMime,
+              paymentReference: newBatchReceiptRef.trim() || null,
+              notes: newBatchReceiptNotes.trim() || null
+            });
+            addToast('Receipt uploaded ✅', 'success');
+            setNewBatchReceiptData(''); setNewBatchReceiptMime(''); setNewBatchReceiptPreview('');
+            setNewBatchReceiptRef(''); setNewBatchReceiptNotes('');
+            // Reload list
+            setBatchReceiptsListLoading(true);
+            try { const r = await api.getBatchReceipts(bm.batchId); setBatchReceiptsList(r); } catch {}
+            setBatchReceiptsListLoading(false);
+          } catch (err) { addToast(err.message || 'Upload failed', 'error'); }
+          setAddingBatchReceipt(false);
+        };
+
+        return (
+          <div className="modal-overlay" onClick={() => setBatchReceiptsModal(null)}>
+            <div className="modal" onClick={e => e.stopPropagation()} style={{maxWidth:'500px'}}>
+              <div className="modal-header" style={{background:'#1d4ed8',color:'white'}}>
+                <h3 className="modal-title" style={{color:'white'}}>📎 Batch Receipts — {bm.batchReference}</h3>
+                <button className="modal-close" style={{color:'white'}} onClick={() => setBatchReceiptsModal(null)}>×</button>
+              </div>
+              <div className="modal-body">
+                <div style={{background:'#eff6ff',border:'1px solid #bfdbfe',borderRadius:'8px',padding:'0.6rem 0.9rem',marginBottom:'0.9rem',fontSize:'0.85rem',color:'#1d4ed8'}}>
+                  Combined payment to <strong>{bm.payeeName}</strong>. Upload individual transaction receipts if payments were made separately.
+                </div>
+
+                {/* Existing receipts */}
+                {batchReceiptsListLoading ? (
+                  <p style={{textAlign:'center',color:'#6b7280',fontSize:'0.85rem',padding:'0.5rem'}}>Loading receipts…</p>
+                ) : batchReceiptsList.length === 0 ? (
+                  <p style={{color:'#6b7280',fontSize:'0.85rem',marginBottom:'0.75rem'}}>No receipts uploaded yet for this batch.</p>
+                ) : (
+                  <div style={{marginBottom:'0.75rem'}}>
+                    <p style={{fontWeight:600,fontSize:'0.82rem',color:'#374151',marginBottom:'0.4rem'}}>Uploaded Receipts ({batchReceiptsList.length})</p>
+                    {batchReceiptsList.map((r, idx) => (
+                      <div key={r.id} style={{background:'#f8fafc',border:'1px solid #e2e8f0',borderRadius:'8px',padding:'0.65rem 0.9rem',marginBottom:'0.5rem'}}>
+                        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'4px'}}>
+                          <span style={{fontWeight:600,fontSize:'0.82rem',color:'#1d4ed8'}}>Receipt {idx + 1}</span>
+                          <span style={{fontSize:'0.72rem',color:'#9ca3af'}}>{r.uploader?.name} · {new Date(r.uploaded_at).toLocaleDateString('en-IN')}</span>
+                        </div>
+                        {r.payment_reference && (
+                          <div style={{fontSize:'0.82rem',color:'#374151',marginBottom:'3px'}}>UTR: <strong style={{fontFamily:'monospace'}}>{r.payment_reference}</strong></div>
+                        )}
+                        {r.notes && <div style={{fontSize:'0.8rem',color:'#6b7280',marginBottom:'4px'}}>{r.notes}</div>}
+                        {r.receipt_url.match(/\.(jpg|jpeg|png|webp|gif)(\?|$)/i) ? (
+                          <a href={r.receipt_url} target="_blank" rel="noopener noreferrer">
+                            <img src={r.receipt_url} alt={`Receipt ${idx + 1}`} style={{width:'100%',maxHeight:'100px',objectFit:'contain',borderRadius:'4px',border:'1px solid #e2e8f0',cursor:'pointer',marginTop:'4px'}} />
+                          </a>
+                        ) : (
+                          <a href={r.receipt_url} target="_blank" rel="noopener noreferrer" style={{display:'inline-flex',alignItems:'center',gap:'4px',fontSize:'0.82rem',color:'#2563eb',marginTop:'4px'}}>📄 View Receipt</a>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Upload new receipt */}
+                {(user.role === 'accounts' || user.role === 'admin' || user.isSuperAdmin) && (
+                  <div style={{borderTop:'1px solid #e5e7eb',paddingTop:'0.75rem'}}>
+                    <p style={{fontWeight:600,fontSize:'0.82rem',color:'#374151',marginBottom:'0.5rem'}}>Upload New Receipt:</p>
+                    <input className="form-input" placeholder="UTR / Transaction reference (optional)" value={newBatchReceiptRef} onChange={e => setNewBatchReceiptRef(e.target.value)} style={{marginBottom:'0.4rem'}} />
+                    <textarea className="form-input" placeholder="Notes (optional)" value={newBatchReceiptNotes} onChange={e => setNewBatchReceiptNotes(e.target.value)} rows={2} style={{marginBottom:'0.4rem',resize:'none'}} />
+                    <label className="btn btn-sm btn-secondary" style={{cursor:'pointer',display:'inline-flex',alignItems:'center',gap:'4px',marginBottom:'0.25rem'}}>
+                      📎 {newBatchReceiptPreview ? (newBatchReceiptPreview === 'pdf' ? '📄 PDF selected' : '🖼 Image selected') : 'Choose file…'}
+                      <input type="file" accept="image/*,.pdf" style={{display:'none'}} onChange={handleNewReceiptFile} />
+                    </label>
+                    {newBatchReceiptPreview && newBatchReceiptPreview !== 'pdf' && (
+                      <div style={{position:'relative',display:'inline-block',marginLeft:'8px'}}>
+                        <img src={newBatchReceiptPreview} alt="preview" style={{maxHeight:'60px',borderRadius:'4px',border:'1px solid #e2e8f0',verticalAlign:'middle'}} />
+                        <button onClick={() => { setNewBatchReceiptData(''); setNewBatchReceiptMime(''); setNewBatchReceiptPreview(''); }} style={{position:'absolute',top:'-6px',right:'-6px',background:'#ef4444',color:'white',border:'none',borderRadius:'50%',width:'18px',height:'18px',cursor:'pointer',fontSize:'0.7rem',lineHeight:'18px',textAlign:'center',padding:0}}>×</button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+              <div className="modal-footer">
+                <button className="btn btn-secondary" onClick={() => setBatchReceiptsModal(null)}>Close</button>
+                {(user.role === 'accounts' || user.role === 'admin' || user.isSuperAdmin) && (
+                  <button className="btn btn-primary" onClick={handleUploadNewReceipt} disabled={addingBatchReceipt || !newBatchReceiptData}>
+                    {addingBatchReceipt ? Icons.loader : '⬆'} Upload Receipt
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+    </div>
+  );
+};
+
+// Users Management (Admin Dashboard)
+const UsersManagement = () => {
+  const { user, addToast } = useApp();
+  const [users, setUsers] = useState([]);
+  const [allCompanies, setAllCompanies] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [showOnboardModal, setShowOnboardModal] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [showDetailsModal, setShowDetailsModal] = useState(false);
+  const [showVerifyModal, setShowVerifyModal] = useState(false);
+  const [selectedUser, setSelectedUser] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [newUser, setNewUser] = useState({ name: '', mobile: '', role: 'accounts', companyAccess: [] });
+  const [editUser, setEditUser] = useState({ name: '', mobile: '', role: 'accounts', companyAccess: [] });
+  const [loadingCompanyAccess, setLoadingCompanyAccess] = useState(false);
+  const [onboardStep, setOnboardStep] = useState(1); // 1=form, 2=otp, 3=success
+  const [otp, setOtp] = useState('');
+  const [verifyOtp, setVerifyOtp] = useState('');
+  const [pendingUserId, setPendingUserId] = useState('');
+  const [generatedUsername, setGeneratedUsername] = useState('');
+  const [verifyingUser, setVerifyingUser] = useState(null);
+  
+  const refreshUsers = () => {
+    api.getCompanyUsers(user.company.id).then(setUsers).finally(() => setLoading(false));
+  };
+  
+  useEffect(() => { 
+    refreshUsers(); 
+    // Load all companies for multi-company access selection
+    api.getCompanies().then(companies => {
+      setAllCompanies(companies);
+      // Pre-select ALL companies with default role
+      setNewUser(prev => ({
+        ...prev,
+        companyAccess: companies.map((company, index) => ({
+          companyId: company.id,
+          companyName: company.name,
+          role: prev.role || 'accounts',
+          isPrimary: company.id === user.company.id || index === 0
+        }))
+      }));
+    }).catch(console.error);
+  }, [user.company.id]);
+  
+  const handleCompanyAccessChange = (companyId, companyName, checked) => {
+    setNewUser(prev => {
+      let newAccess = [...prev.companyAccess];
+      if (checked) {
+        // Add company with default role
+        newAccess.push({
+          companyId,
+          companyName,
+          role: prev.role, // Use current selected role
+          isPrimary: newAccess.length === 0
+        });
+      } else {
+        // Remove company
+        newAccess = newAccess.filter(ca => ca.companyId !== companyId);
+        // If removed the primary, make first one primary
+        if (newAccess.length > 0 && !newAccess.some(ca => ca.isPrimary)) {
+          newAccess[0].isPrimary = true;
+        }
+      }
+      return { ...prev, companyAccess: newAccess };
+    });
+  };
+  
+  const handleCompanyRoleChange = (companyId, newRole) => {
+    setNewUser(prev => ({
+      ...prev,
+      companyAccess: prev.companyAccess.map(ca => 
+        ca.companyId === companyId ? { ...ca, role: newRole } : ca
+      )
+    }));
+  };
+
+  // Sync role across ALL company access entries when global role changes
+  const handleNewUserRoleChange = (newRole) => {
+    setNewUser(prev => ({
+      ...prev,
+      role: newRole,
+      companyAccess: prev.companyAccess.map(ca => ({ ...ca, role: newRole }))
+    }));
+  };
+
+  const handleEditUserRoleChange = (newRole) => {
+    setEditUser(prev => ({
+      ...prev,
+      role: newRole,
+      companyAccess: prev.companyAccess.map(ca => ({ ...ca, role: newRole }))
+    }));
+  };
+  
+  const handleOnboardSubmit = async () => {
+    if (!newUser.name?.trim() || !newUser.mobile?.trim()) {
+      addToast('All fields are required', 'error');
+      console.log('Validation failed:', newUser);
+      return;
+    }
+    
+    if (newUser.companyAccess.length === 0) {
+      addToast('Please select at least one company', 'error');
+      return;
+    }
+    
+    // Find primary company
+    const primaryCompany = newUser.companyAccess.find(ca => ca.isPrimary) || newUser.companyAccess[0];
+    
+    const payload = {
+      adminId: user.id,
+      adminMobile: user.mobile,
+      companyId: primaryCompany.companyId,
+      name: newUser.name.trim(),
+      mobile: newUser.mobile.trim(),
+      role: primaryCompany.role,
+      companyAccess: newUser.companyAccess.map(ca => ({
+        companyId: ca.companyId,
+        role: ca.role,
+        isPrimary: ca.isPrimary
+      }))
+    };
+    
+    console.log('Onboard payload:', payload);
+    
+    setSubmitting(true);
+    try {
+      // Call admin onboard endpoint
+      const result = await api.onboardUser(payload);
+      
+      if (result.success) {
+        await api.verifyUserMobile(result.userId);
+        setPendingUserId(result.userId);
+        setGeneratedUsername(result.username);
+        addToast('User created successfully!', 'success');
+        setOnboardStep(3);
+        refreshUsers();
+        setTimeout(() => { setShowOnboardModal(false); resetOnboardForm(); }, 2500);
+      } else {
+        console.error('Onboard error:', result);
+        addToast(result.error || 'Failed to onboard user', 'error');
+      }
+    } catch (error) {
+      console.error('Onboard exception:', error);
+      addToast('Connection error', 'error');
+    }
+    setSubmitting(false);
+  };
+  
+  const handleVerifyOtp = async () => {
+    if (otp.length < 6) {
+      addToast('Enter complete OTP', 'error');
+      return;
+    }
+    
+    setSubmitting(true);
+    try {
+      const result = await api.verifyOtp(newUser.mobile, otp);
+      if (result.success) {
+        await api.verifyUserMobile(pendingUserId);
+        addToast('User verified successfully!', 'success');
+        setOnboardStep(3);
+        refreshUsers();
+        setTimeout(() => {
+          setShowOnboardModal(false);
+          resetOnboardForm();
+        }, 2000);
+      } else {
+        addToast('Invalid OTP', 'error');
+      }
+    } catch (error) {
+      addToast('Verification failed', 'error');
+    }
+    setSubmitting(false);
+  };
+  
+  const resetOnboardForm = () => {
+    setNewUser({ 
+      name: '', 
+      mobile: '', 
+      role: 'accounts',
+      companyAccess: allCompanies.map((company, index) => ({
+        companyId: company.id,
+        companyName: company.name,
+        role: 'accounts',
+        isPrimary: company.id === user.company.id || index === 0
+      }))
+    });
+    setOnboardStep(1);
+    setOtp('');
+    setPendingUserId('');
+    setGeneratedUsername('');
+  };
+  
+  const handleResendOtp = async () => {
+    try {
+      await api.sendOtp(newUser.mobile, 'registration');
+      addToast('OTP resent', 'success');
+    } catch {
+      addToast('Failed to resend', 'error');
+    }
+  };
+  
+  const handleResendVerification = async (userId, mobile, userName) => {
+    if (!mobile) {
+      addToast('Mobile number not found for this user', 'error');
+      console.error('Missing mobile for user:', userId);
+      return;
+    }
+    
+    console.log('Sending OTP to mobile:', mobile);
+    try {
+      const result = await api.sendOtp(mobile, 'verification');
+      if (result.success) {
+        addToast(`Verification OTP sent to ${mobile.replace(/\d(?=\d{4})/g, '*')}`, 'success');
+        setVerifyingUser({ id: userId, mobile, name: userName });
+        setVerifyOtp('');
+        setShowVerifyModal(true);
+      } else {
+        addToast(result.error || 'Failed to send OTP', 'error');
+      }
+    } catch (error) {
+      console.error('OTP send error:', error);
+      addToast('Failed to send OTP', 'error');
+    }
+  };
+  
+  const handleVerifyExistingUserOtp = async () => {
+    if (verifyOtp.length !== 6) {
+      addToast('Please enter 6-digit OTP', 'error');
+      return;
+    }
+    
+    setSubmitting(true);
+    try {
+      const verifyResult = await api.verifyOtp(verifyingUser.mobile, verifyOtp);
+      if (verifyResult.success && verifyResult.status === 'approved') {
+        const updateResult = await api.verifyUserMobile(verifyingUser.id);
+        if (updateResult.success) {
+          addToast('User verified successfully', 'success');
+          setShowVerifyModal(false);
+          setVerifyingUser(null);
+          setVerifyOtp('');
+          refreshUsers();
+          if (selectedUser?.id === verifyingUser.id) {
+            setSelectedUser({ ...selectedUser, mobile_verified: true });
+          }
+        } else {
+          addToast(updateResult.error || 'Failed to update verification status', 'error');
+        }
+      } else {
+        addToast('Invalid OTP', 'error');
+      }
+    } catch (error) {
+      console.error('OTP verification error:', error);
+      addToast('Failed to verify OTP', 'error');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+  
+  const handleManualVerify = async (userId, userName) => {
+    if (!confirm(`Manually verify ${userName}? This will mark their account as verified without OTP.`)) return;
+    
+    try {
+      const result = await api.verifyUserMobile(userId);
+      if (result.success) {
+        addToast('User verified successfully', 'success');
+        refreshUsers();
+        if (selectedUser?.id === userId) {
+          setSelectedUser({ ...selectedUser, mobile_verified: true });
+        }
+      } else {
+        addToast(result.error || 'Failed to verify user', 'error');
+      }
+    } catch {
+      addToast('Connection error', 'error');
+    }
+  };
+  
+  const handleEditUser = async (userToEdit) => {
+    setSelectedUser(userToEdit);
+    setEditUser({ 
+      name: userToEdit.name, 
+      mobile: userToEdit.mobile, 
+      aadhar: userToEdit.aadhar, 
+      role: userToEdit.role,
+      companyAccess: []
+    });
+    setShowEditModal(true);
+    
+    // Load user's current company access
+    setLoadingCompanyAccess(true);
+    try {
+      const companyAccess = await api.getUserCompanies(userToEdit.id);
+      setEditUser(prev => ({ 
+        ...prev, 
+        // Use unified role (prev.role = userToEdit.role) for all companies
+        companyAccess: companyAccess.map(ca => ({
+          companyId: ca.companyId,
+          role: prev.role,
+          isPrimary: ca.isPrimary
+        }))
+      }));
+    } catch (err) {
+      console.error('Failed to load company access:', err);
+      // Fallback: access all companies with the user's role
+      setEditUser(prev => ({ 
+        ...prev, 
+        companyAccess: allCompanies.map((company, index) => ({
+          companyId: company.id,
+          role: userToEdit.role,
+          isPrimary: company.id === user.company.id || index === 0
+        }))
+      }));
+    }
+    setLoadingCompanyAccess(false);
+  };
+  
+  const handleUpdateUser = async () => {
+    if (!editUser.name?.trim() || !editUser.mobile?.trim()) {
+      addToast('All fields are required', 'error');
+      return;
+    }
+    
+    if (!editUser.companyAccess || editUser.companyAccess.length === 0) {
+      addToast('At least one company access is required', 'error');
+      return;
+    }
+    
+    setSubmitting(true);
+    try {
+      // Update user basic info (use unified role from editUser.role)
+      const result = await api.updateUser(selectedUser.id, {
+        name: editUser.name,
+        mobile: editUser.mobile,
+        role: editUser.role,
+        requesterId: user.id
+      });
+      
+      if (result.success) {
+        // Update company access
+        const companyResult = await api.updateUserCompanies(selectedUser.id, editUser.companyAccess, user.id);
+        if (companyResult.success) {
+          addToast('User and company access updated successfully', 'success');
+        } else {
+          addToast('User updated but company access failed', 'warning');
+        }
+        setShowEditModal(false);
+        refreshUsers();
+      } else {
+        addToast(result.error || 'Failed to update user', 'error');
+      }
+    } catch {
+      addToast('Connection error', 'error');
+    }
+    setSubmitting(false);
+  };
+  
+  const handleDeleteUser = async (userId, userName) => {
+    if (!confirm(`Delete user "${userName}"? This action cannot be undone.`)) return;
+    
+    try {
+      const result = await api.deleteUser(userId, user.id);
+      if (result.success) {
+        addToast('User deleted successfully', 'success');
+        refreshUsers();
+      } else {
+        addToast(result.error || 'Failed to delete user', 'error');
+      }
+    } catch {
+      addToast('Connection error', 'error');
+    }
+  };
+  
+  const handleViewDetails = (userToView) => {
+    setSelectedUser(userToView);
+    setShowDetailsModal(true);
+  };
+  
+  if (loading) return <div className="empty-state">{Icons.loader}</div>;
+  
+  return (
+    <div>
+      <div className="page-header">
+        <div>
+          <h1 className="page-title">{Icons.users} User Management</h1>
+          <p className="page-subtitle">Onboard and manage team members</p>
+        </div>
+        <button className="btn btn-primary" onClick={() => setShowOnboardModal(true)}>
+          {Icons.plus} Onboard New User
+        </button>
+      </div>
+      
+      <div className="stats-grid" style={{marginBottom: '2rem'}}>
+        <div className="stat-card">
+          <div className="stat-icon purple">👥</div>
+          <div className="stat-value">{users.length}</div>
+          <div className="stat-label">Total Users</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-icon green">🛡</div>
+          <div className="stat-value">{users.filter(u => u.role === 'admin').length}</div>
+          <div className="stat-label">Admins</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-icon orange">👤</div>
+          <div className="stat-value">{users.filter(u => u.role === 'accounts').length}</div>
+          <div className="stat-label">Accounts Staff</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-icon teal" style={{fontSize:'1rem'}}>🔍</div>
+          <div className="stat-value">{users.filter(u => u.role === 'auditor').length}</div>
+          <div className="stat-label">Auditors</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-icon teal">✓</div>
+          <div className="stat-value">{users.filter(u => u.mobile_verified).length}</div>
+          <div className="stat-label">Verified</div>
+        </div>
+      </div>
+      
+      <div className="card">
+        <div className="card-header"><h3 className="card-title">Team Members</h3></div>
+        <div className="card-body" style={{ padding: 0 }}>
+          <div className="table-container">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Username</th>
+                  <th>Mobile</th>
+                  <th>Role</th>
+                  <th>Status</th>
+                  <th>Last Login</th>
+                  <th style={{textAlign: 'center'}}>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {users.map(u => (
+                  <tr key={u.id} style={{cursor: 'pointer'}} onClick={() => handleViewDetails(u)}>
+                    <td className="fw-600">{u.name}</td>
+                    <td className="text-mono">{u.username}</td>
+                    <td>{u.mobile?.replace(/\d(?=\d{4})/g, '*')}</td>
+                    <td>
+                      <span className={`status-badge ${u.role === 'admin' ? 'status-approved' : u.role === 'auditor' ? 'status-completed' : 'status-pending'}`}>
+                        {u.role === 'admin' ? '🛡 Admin' : u.role === 'auditor' ? '🔍 Auditor' : u.role === 'staff' ? '👤 Staff' : u.role === 'staff_lead' ? '👷 Staff Lead' : '👤 Accounts'}
+                      </span>
+                    </td>
+                    <td>
+                      {u.mobile_verified ? 
+                        <span className="status-badge status-completed">✅ Verified</span> : 
+                        <span className="status-badge status-rejected">⚠ Unverified</span>
+                      }
+                    </td>
+                    <td>{u.last_login ? new Date(u.last_login).toLocaleString('en-IN') : 'Never'}</td>
+                    <td style={{textAlign: 'center'}} onClick={(e) => e.stopPropagation()}>
+                      <div style={{display: 'flex', gap: '0.5rem', justifyContent: 'center'}}>
+                        <button 
+                          className="btn btn-sm btn-secondary" 
+                          onClick={() => handleEditUser(u)}
+                          title="Edit User"
+                        >
+                          ✏️
+                        </button>
+                        {!u.mobile_verified && (
+                          <button 
+                            className="btn btn-sm btn-primary" 
+                            onClick={() => handleResendVerification(u.id, u.mobile, u.name)}
+                            title="Resend Verification OTP"
+                          >
+                            📤
+                          </button>
+                        )}
+                        <button 
+                          className="btn btn-sm btn-danger" 
+                          onClick={() => handleDeleteUser(u.id, u.name)}
+                          title="Delete User"
+                        >
+                          🗑️
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      
+      {showOnboardModal && (
+        <div className="modal-overlay" onClick={() => { setShowOnboardModal(false); resetOnboardForm(); }}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3 className="modal-title">
+                {onboardStep === 1 && '👤 Onboard New User'}
+                {onboardStep === 3 && '✅ User Onboarded Successfully'}
+              </h3>
+              <button className="modal-close" onClick={() => { setShowOnboardModal(false); resetOnboardForm(); }}>×</button>
+            </div>
+            
+            <div className="modal-body">
+              {onboardStep === 1 && (
+                <>
+                  <div className="form-group">
+                    <label className="form-label">Full Name *</label>
+                    <input 
+                      type="text" 
+                      className="form-input" 
+                      placeholder="e.g., John Doe"
+                      value={newUser.name} 
+                      onChange={(e) => setNewUser({ ...newUser, name: e.target.value })} 
+                    />
+                  </div>
+                  
+                  <div className="form-group">
+                    <label className="form-label">Mobile Number *</label>
+                    <input 
+                      type="tel" 
+                      className="form-input" 
+                      placeholder="e.g., 9876543210"
+                      value={newUser.mobile} 
+                      onChange={(e) => setNewUser({ ...newUser, mobile: e.target.value })} 
+                    />
+                    <small style={{color: '#666', fontSize: '0.85rem'}}>User will set up login on first sign-in</small>
+                  </div>
+                  
+                  <div className="form-group">
+                    <label className="form-label">Role *</label>
+                    <select
+                      className="form-input"
+                      value={newUser.role}
+                      onChange={(e) => handleNewUserRoleChange(e.target.value)}
+                    >
+                      <option value="accounts">👤 Accounts</option>
+                      <option value="admin">🛡️ Approver</option>
+                      <option value="auditor">🔍 Auditor</option>
+                      <option value="staff_lead">👷 Staff Lead</option>
+                    </select>
+                    <small style={{color: '#666', fontSize: '0.85rem', marginTop: '4px', display: 'block'}}>
+                      Username will be: <code style={{background: '#f0f0f0', padding: '2px 6px', borderRadius: '4px'}}>{newUser.role === 'admin' ? 'Approve' : newUser.role === 'auditor' ? 'Audit' : newUser.role === 'staff_lead' ? 'Lead' : 'Accounts'}-{newUser.name.split(' ')[0] || 'FirstName'}</code>
+                    </small>
+                  </div>
+                  
+                  <div className="form-group">
+                    <label className="form-label">Company Access *</label>
+                    <div style={{ border: '1px solid #ddd', borderRadius: '8px', padding: '12px', background: '#fafafa' }}>
+                      {allCompanies.map(company => {
+                        const access = newUser.companyAccess.find(ca => ca.companyId === company.id);
+                        const isChecked = !!access;
+                        return (
+                          <div key={company.id} style={{ 
+                            display: 'flex', 
+                            alignItems: 'center',
+                            padding: '10px',
+                            marginBottom: '8px',
+                            background: isChecked ? '#e8f5e9' : '#fff',
+                            borderRadius: '6px',
+                            border: isChecked ? '1px solid #4caf50' : '1px solid #ddd'
+                          }}>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', flex: 1 }}>
+                              <input 
+                                type="checkbox"
+                                checked={isChecked}
+                                onChange={(e) => handleCompanyAccessChange(company.id, company.name, e.target.checked)}
+                                style={{ width: '18px', height: '18px' }}
+                              />
+                              <span style={{ fontWeight: 500 }}>{company.name}</span>
+                            </label>
+                          </div>
+                        );
+                      })}
+                      {allCompanies.length === 0 && (
+                        <div style={{ textAlign: 'center', color: '#666', padding: '10px' }}>Loading companies...</div>
+                      )}
+                    </div>
+                    <small style={{ color: '#666', fontSize: '0.85rem', marginTop: '6px', display: 'block' }}>
+                      Select the companies this user can access
+                    </small>
+                  </div>
+                </>
+              )}
+              
+              {onboardStep === 3 && (
+                <div style={{textAlign: 'center', padding: '2rem'}}>
+                  <div style={{fontSize: '4rem', marginBottom: '1rem'}}>✅</div>
+                  <h3 style={{marginBottom: '0.5rem'}}>User Onboarded Successfully!</h3>
+                  <p style={{color: '#666', marginBottom: '1.5rem'}}>
+                    <strong>{newUser.name}</strong> can now login with username:<br/>
+                    <code style={{background: '#f0f0f0', padding: '0.5rem 1rem', borderRadius: '6px', fontSize: '1.1rem', marginTop: '0.5rem', display: 'inline-block'}}>
+                      {generatedUsername}
+                    </code>
+                  </p>
+                </div>
+              )}
+            </div>
+            
+            <div className="modal-footer">
+              {onboardStep === 1 && (
+                <>
+                  <button 
+                    className="btn btn-secondary" 
+                    onClick={() => { setShowOnboardModal(false); resetOnboardForm(); }}
+                  >
+                    Cancel
+                  </button>
+                  <button 
+                    className="btn btn-primary" 
+                    onClick={handleOnboardSubmit} 
+                    disabled={submitting || !newUser.name?.trim() || !newUser.mobile?.trim() || newUser.companyAccess.length === 0}
+                  >
+                    {submitting && Icons.loader}
+                    {Icons.users} Create User
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+      
+      {/* Edit User Modal */}
+      {showEditModal && (
+        <div className="modal-overlay" onClick={() => setShowEditModal(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3 className="modal-title">✏️ Edit User</h3>
+              <button className="modal-close" onClick={() => setShowEditModal(false)}>×</button>
+            </div>
+            <div className="modal-body">
+              <div className="form-group">
+                <label className="form-label">Full Name *</label>
+                <input 
+                  type="text" 
+                  className="form-input" 
+                  value={editUser.name} 
+                  onChange={(e) => setEditUser({ ...editUser, name: e.target.value })} 
+                />
+              </div>
+              
+              <div className="form-group">
+                <label className="form-label">Mobile Number *</label>
+                <input 
+                  type="tel" 
+                  className="form-input" 
+                  value={editUser.mobile} 
+                  onChange={(e) => setEditUser({ ...editUser, mobile: e.target.value })} 
+                />
+              </div>
+              
+              <div className="form-group">
+                <label className="form-label">Role *</label>
+                <select
+                  className="form-input"
+                  value={editUser.role}
+                  onChange={(e) => handleEditUserRoleChange(e.target.value)}
+                >
+                  <option value="accounts">👤 Accounts</option>
+                  <option value="admin">🛡️ Approver</option>
+                  <option value="auditor">🔍 Auditor</option>
+                  <option value="staff_lead">👷 Staff Lead</option>
+                </select>
+              </div>
+              
+              <div className="form-group">
+                <label className="form-label">🏢 Company Access *</label>
+                {loadingCompanyAccess ? (
+                  <div style={{ padding: '12px', textAlign: 'center', color: '#666' }}>{Icons.loader} Loading...</div>
+                ) : (
+                  <div style={{ border: '1px solid #e5e7eb', borderRadius: '8px', overflow: 'hidden' }}>
+                    {allCompanies.map(company => {
+                      const access = editUser.companyAccess?.find(ca => ca.companyId === company.id);
+                      const isEnabled = !!access;
+                      
+                      return (
+                        <div key={company.id} style={{
+                          padding: '12px 16px',
+                          borderBottom: '1px solid #e5e7eb',
+                          background: isEnabled ? '#f0f9ff' : '#fff'
+                        }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                            <input
+                              type="checkbox"
+                              checked={isEnabled}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  // Add company access with current unified role
+                                  setEditUser(prev => ({
+                                    ...prev,
+                                    companyAccess: [...(prev.companyAccess || []), {
+                                      companyId: company.id,
+                                      role: editUser.role,
+                                      isPrimary: prev.companyAccess?.length === 0
+                                    }]
+                                  }));
+                                } else {
+                                  // Remove company access (but keep at least one)
+                                  if (editUser.companyAccess?.length <= 1) {
+                                    addToast('At least one company is required', 'error');
+                                    return;
+                                  }
+                                  const newAccess = editUser.companyAccess.filter(ca => ca.companyId !== company.id);
+                                  if (newAccess.length > 0 && !newAccess.some(ca => ca.isPrimary)) {
+                                    newAccess[0].isPrimary = true;
+                                  }
+                                  setEditUser(prev => ({ ...prev, companyAccess: newAccess }));
+                                }
+                              }}
+                              style={{ width: '18px', height: '18px' }}
+                            />
+                            <div style={{ fontWeight: 500 }}>{company.name}</div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+                <div style={{ fontSize: '12px', color: '#666', marginTop: '6px' }}>
+                  Select the companies this user can access
+                </div>
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setShowEditModal(false)}>Cancel</button>
+              <button 
+                className="btn btn-primary" 
+                onClick={handleUpdateUser} 
+                disabled={submitting || loadingCompanyAccess || !editUser.companyAccess?.length}
+              >
+                {submitting && Icons.loader}
+                {Icons.check} Update User
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      
+      {/* User Details Modal */}
+      {showDetailsModal && selectedUser && (
+        <div className="modal-overlay" onClick={() => setShowDetailsModal(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3 className="modal-title">👤 User Details</h3>
+              <button className="modal-close" onClick={() => setShowDetailsModal(false)}>×</button>
+            </div>
+            <div className="modal-body">
+              <div style={{display: 'grid', gap: '1.5rem'}}>
+                <div>
+                  <label style={{display: 'block', fontSize: '0.85rem', color: '#666', marginBottom: '0.25rem'}}>Full Name</label>
+                  <div style={{fontSize: '1.1rem', fontWeight: 600}}>{selectedUser.name}</div>
+                </div>
+                
+                <div>
+                  <label style={{display: 'block', fontSize: '0.85rem', color: '#666', marginBottom: '0.25rem'}}>Username</label>
+                  <div style={{fontSize: '1rem', fontFamily: 'monospace', background: '#f5f5f5', padding: '0.5rem', borderRadius: '4px'}}>{selectedUser.username}</div>
+                </div>
+                
+                <div>
+                  <label style={{display: 'block', fontSize: '0.85rem', color: '#666', marginBottom: '0.25rem'}}>Mobile Number</label>
+                  <div style={{fontSize: '1rem'}}>{selectedUser.mobile}</div>
+                </div>
+                
+                <div>
+                  <label style={{display: 'block', fontSize: '0.85rem', color: '#666', marginBottom: '0.25rem'}}>Aadhar Number</label>
+                  <div style={{fontSize: '1rem', fontFamily: 'monospace'}}>{selectedUser.aadhar}</div>
+                </div>
+                
+                <div>
+                  <label style={{display: 'block', fontSize: '0.85rem', color: '#666', marginBottom: '0.25rem'}}>Role</label>
+                  <span className={`status-badge ${selectedUser.role === 'admin' ? 'status-approved' : selectedUser.role === 'auditor' ? 'status-completed' : 'status-pending'}`}>
+                    {selectedUser.role === 'admin' ? '🛡 Admin' : selectedUser.role === 'auditor' ? '🔍 Auditor' : selectedUser.role === 'staff' ? '👤 Staff' : selectedUser.role === 'staff_lead' ? '👷 Staff Lead' : '👤 Accounts'}
+                  </span>
+                </div>
+                
+                <div>
+                  <label style={{display: 'block', fontSize: '0.85rem', color: '#666', marginBottom: '0.25rem'}}>Verification Status</label>
+                  {selectedUser.mobile_verified ? 
+                    <span className="status-badge status-completed">✅ Verified</span> : 
+                    <span className="status-badge status-rejected">⚠ Unverified</span>
+                  }
+                </div>
+                
+                <div>
+                  <label style={{display: 'block', fontSize: '0.85rem', color: '#666', marginBottom: '0.25rem'}}>Last Login</label>
+                  <div style={{fontSize: '1rem'}}>{selectedUser.last_login ? new Date(selectedUser.last_login).toLocaleString('en-IN') : 'Never logged in'}</div>
+                </div>
+                
+                <div>
+                  <label style={{display: 'block', fontSize: '0.85rem', color: '#666', marginBottom: '0.25rem'}}>User ID</label>
+                  <div style={{fontSize: '0.85rem', fontFamily: 'monospace', color: '#999'}}>{selectedUser.id}</div>
+                </div>
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setShowDetailsModal(false)}>Close</button>
+              {!selectedUser.mobile_verified && (
+                <>
+                  <button 
+                    className="btn btn-secondary" 
+                    style={{borderColor: '#f59e0b', color: '#b45309'}}
+                    onClick={() => {
+                      handleResendVerification(selectedUser.id, selectedUser.mobile, selectedUser.name);
+                      setShowDetailsModal(false);
+                    }}
+                  >
+                    📤 Resend OTP
+                  </button>
+                  <button 
+                    className="btn btn-success" 
+                    onClick={() => {
+                      handleManualVerify(selectedUser.id, selectedUser.name);
+                      setShowDetailsModal(false);
+                    }}
+                  >
+                    ✓ Verify Manually
+                  </button>
+                </>
+              )}
+              <button 
+                className="btn btn-primary" 
+                onClick={() => {
+                  setShowDetailsModal(false);
+                  handleEditUser(selectedUser);
+                }}
+              >
+                ✏️ Edit User
+              </button>
+              <button
+                className="btn"
+                style={{ borderColor: '#f59e0b', color: '#b45309' }}
+                title="Clear user's password — they will be prompted to set a new one on next login"
+                onClick={async () => {
+                  if (!confirm(`Reset password for ${selectedUser.name}? They will be prompted to set a new password on their next login.`)) return;
+                  const result = await api.adminResetPassword(selectedUser.id, user.id);
+                  if (result.success) { setShowDetailsModal(false); alert('Password reset. User will set a new one on next login.'); }
+                  else alert(result.error || 'Failed to reset password');
+                }}
+              >
+                🔑 Reset Password
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* OTP Verification Modal */}
+      {showVerifyModal && verifyingUser && (
+        <div className="modal-overlay" onClick={() => setShowVerifyModal(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} style={{maxWidth: '400px'}}>
+            <div className="modal-header">
+              <h2 className="modal-title">Verify User Mobile</h2>
+              <button className="modal-close" onClick={() => setShowVerifyModal(false)}>×</button>
+            </div>
+            <div className="modal-body">
+              <p style={{marginBottom: '1rem', color: '#666'}}>
+                OTP sent to {verifyingUser.mobile.replace(/\d(?=\d{4})/g, '*')} for <strong>{verifyingUser.name}</strong>
+              </p>
+              <div className="form-group">
+                <label className="form-label">Enter 6-digit OTP</label>
+                <input
+                  type="text"
+                  className="form-input"
+                  placeholder="Enter OTP"
+                  value={verifyOtp}
+                  onChange={(e) => setVerifyOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                  maxLength={6}
+                  style={{fontSize: '1.5rem', textAlign: 'center', letterSpacing: '0.5rem'}}
+                />
+              </div>
+              <button 
+                className="btn btn-secondary btn-sm" 
+                onClick={() => handleResendVerification(verifyingUser.id, verifyingUser.mobile, verifyingUser.name)}
+                style={{marginTop: '0.5rem', width: '100%'}}
+              >
+                {Icons.refresh} Resend OTP
+              </button>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setShowVerifyModal(false)}>Cancel</button>
+              <button 
+                className="btn btn-success" 
+                onClick={handleVerifyExistingUserOtp} 
+                disabled={submitting || verifyOtp.length !== 6}
+              >
+                {submitting && Icons.loader}
+                ✓ Verify
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// Payees Management Component
+const PayeesManagement = () => {
+  const { user, addToast } = useApp();
+  const [payees, setPayees] = useState([]);
+  const [companyUsers, setCompanyUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [showStaffLoginModal, setShowStaffLoginModal] = useState(false);
+  const [staffLoginPayee, setStaffLoginPayee] = useState(null);
+  const [staffLoginAadhar, setStaffLoginAadhar] = useState('');
+  const [newPayee, setNewPayee] = useState({ name: '', alias: '', mobile: '', bankAccount: '', ifsc: '', upiId: '', isGlobal: false, payeeType: 'registered', requiresOtp: true, isStaff: false, userId: '' });
+  const [editPayee, setEditPayee] = useState({ id: '', name: '', alias: '', mobile: '', bankAccount: '', ifsc: '', upiId: '', is_global: false, payee_type: 'registered', requires_otp: true, is_staff: false, user_id: '' });
+  const [importData, setImportData] = useState('');
+  const [importMethod, setImportMethod] = useState('excel'); // 'paste' or 'excel'
+  const [searchQuery, setSearchQuery] = useState('');
+
+  const refreshPayees = () => {
+    api.getPayees(user.company.id).then(setPayees).finally(() => setLoading(false));
+  };
+
+  useEffect(() => { refreshPayees(); }, [user.company.id]);
+  useEffect(() => { api.getCompanyUsers(user.company.id).then(data => { if (Array.isArray(data)) setCompanyUsers(data); }); }, [user.company.id]);
+
+  const handleAddPayee = async () => {
+    if (!newPayee.name?.trim() || !newPayee.mobile?.trim()) {
+      addToast('Name and Mobile are required', 'error');
+      return;
+    }
+    
+    setSubmitting(true);
+    try {
+      await api.createPayee({ ...newPayee, companyId: user.company.id });
+      addToast('Payee added successfully', 'success');
+      setShowAddModal(false);
+      setNewPayee({ name: '', alias: '', mobile: '', bankAccount: '', ifsc: '', upiId: '', isGlobal: false, payeeType: 'registered', requiresOtp: true });
+      refreshPayees();
+    } catch (error) {
+      addToast('Failed to add payee: ' + error.message, 'error');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleEditPayee = async () => {
+    if (!editPayee.name?.trim() || !editPayee.mobile?.trim()) {
+      addToast('Name and Mobile are required', 'error');
+      return;
+    }
+    
+    setSubmitting(true);
+    try {
+      await api.updatePayee(editPayee.id, editPayee);
+      addToast('Payee updated successfully', 'success');
+      setShowEditModal(false);
+      refreshPayees();
+    } catch (error) {
+      addToast('Failed to update payee: ' + error.message, 'error');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleDeletePayee = async (id) => {
+    if (!confirm('Are you sure you want to delete this payee?')) return;
+    
+    try {
+      await api.deletePayee(id);
+      addToast('Payee deleted successfully', 'success');
+      refreshPayees();
+    } catch (error) {
+      addToast('Failed to delete payee: ' + error.message, 'error');
+    }
+  };
+
+  const handleCreateStaffLogin = (payee) => {
+    if (!user.isSuperAdmin) { addToast('Only Super Admin can create staff logins', 'error'); return; }
+    setStaffLoginPayee(payee);
+    setStaffLoginAadhar('');
+    setShowStaffLoginModal(true);
+  };
+
+  const handleConfirmStaffLogin = async () => {
+    if (!staffLoginAadhar.trim()) { addToast('Aadhar number is required', 'error'); return; }
+    setSubmitting(true);
+    try {
+      const result = await api.createStaffLogin(staffLoginPayee.id, user.id, staffLoginAadhar.trim());
+      addToast(`Login created! Username: ${result.username}`, 'success');
+      setShowStaffLoginModal(false);
+      setStaffLoginPayee(null);
+      refreshPayees();
+    } catch (error) {
+      addToast('Failed to create login: ' + error.message, 'error');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleImport = async () => {
+    if (!importData.trim()) {
+      addToast('Please paste CSV data to import', 'error');
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const lines = importData.trim().split('\n');
+      const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
+      const imported = [];
+      
+      for (let i = 1; i < lines.length; i++) {
+        const values = lines[i].split(',').map(v => v.trim());
+        const payee = {
+          companyId: user.company.id,
+          name: values[headers.indexOf('name')] || values[0],
+          alias: values[headers.indexOf('alias')] || '',
+          mobile: values[headers.indexOf('mobile')] || values[1],
+          bankAccount: values[headers.indexOf('bank_account')] || values[headers.indexOf('bankaccount')] || '',
+          ifsc: values[headers.indexOf('ifsc')] || '',
+          upiId: values[headers.indexOf('upi')] || values[headers.indexOf('upi_id')] || ''
+        };
+        if (payee.name && payee.mobile) {
+          await api.createPayee(payee);
+          imported.push(payee.name);
+        }
+      }
+      
+      addToast(`Imported ${imported.length} payees successfully`, 'success');
+      setShowImportModal(false);
+      setImportData('');
+      refreshPayees();
+    } catch (error) {
+      addToast('Import failed: ' + error.message, 'error');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleExcelImport = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    
+    setSubmitting(true);
+    try {
+      // Use SheetJS (XLSX) library loaded from CDN
+      const data = await file.arrayBuffer();
+      const workbook = XLSX.read(data, { type: 'array' });
+      const sheetName = workbook.SheetNames[0];
+      const worksheet = workbook.Sheets[sheetName];
+      const jsonData = XLSX.utils.sheet_to_json(worksheet);
+      
+      const imported = [];
+      for (const row of jsonData) {
+        // Map common column names to our fields
+        const payee = {
+          companyId: user.company.id,
+          name: row['Name'] || row['name'] || row['Payee Name'] || row['payee_name'] || row['PAYEE NAME'] || '',
+          alias: row['Alias'] || row['alias'] || row['Short Name'] || '',
+          mobile: String(row['Mobile'] || row['mobile'] || row['Phone'] || row['phone'] || row['Mobile Number'] || row['MOBILE'] || ''),
+          bankAccount: row['Bank Account'] || row['bank_account'] || row['Account Number'] || row['Account No'] || row['ACCOUNT NO'] || '',
+          ifsc: row['IFSC'] || row['ifsc'] || row['IFSC Code'] || row['ifsc_code'] || '',
+          upiId: row['UPI'] || row['upi'] || row['UPI ID'] || row['upi_id'] || row['VPA'] || ''
+        };
+        
+        if (payee.name && payee.mobile) {
+          await api.createPayee(payee);
+          imported.push(payee.name);
+        }
+      }
+      
+      if (imported.length === 0) {
+        addToast('No valid payees found. Ensure Name and Mobile columns are present.', 'error');
+      } else {
+        addToast(`Imported ${imported.length} payees from Excel`, 'success');
+        setShowImportModal(false);
+        refreshPayees();
+      }
+    } catch (error) {
+      addToast('Failed to parse Excel file: ' + error.message, 'error');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleExportPayees = () => {
+    if (payees.length === 0) {
+      addToast('No payees to export', 'error');
+      return;
+    }
+    
+    try {
+      // Create worksheet data with headers
+      const wsData = [
+        ['Payee Records - ' + user.company.name],
+        ['Exported on: ' + new Date().toLocaleString('en-IN')],
+        [],
+        ['S.No.', 'Name', 'Alias', 'Mobile', 'Bank Account', 'IFSC Code', 'UPI ID']
+      ];
+      
+      // Add payee rows
+      payees.forEach((p, idx) => {
+        wsData.push([
+          idx + 1,
+          p.name || '',
+          p.alias || '',
+          p.mobile || '',
+          p.bank_account || '',
+          p.ifsc || '',
+          p.upi_id || ''
+        ]);
+      });
+      
+      // Create workbook and worksheet
+      const wb = XLSX.utils.book_new();
+      const ws = XLSX.utils.aoa_to_sheet(wsData);
+      
+      // Set column widths
+      ws['!cols'] = [
+        { wch: 6 },   // S.No.
+        { wch: 30 },  // Name
+        { wch: 15 },  // Alias
+        { wch: 15 },  // Mobile
+        { wch: 20 },  // Bank Account
+        { wch: 15 },  // IFSC
+        { wch: 25 }   // UPI ID
+      ];
+      
+      // Merge title cell
+      ws['!merges'] = [
+        { s: { r: 0, c: 0 }, e: { r: 0, c: 6 } },
+        { s: { r: 1, c: 0 }, e: { r: 1, c: 6 } }
+      ];
+      
+      XLSX.utils.book_append_sheet(wb, ws, 'Payees');
+      
+      // Generate filename with date
+      const dateStr = new Date().toISOString().split('T')[0];
+      const filename = `Payees_${user.company.name.replace(/[^a-zA-Z0-9]/g, '_')}_${dateStr}.xlsx`;
+      
+      // Download file
+      XLSX.writeFile(wb, filename);
+      addToast('Payees exported successfully', 'success');
+    } catch (error) {
+      addToast('Failed to export: ' + error.message, 'error');
+    }
+  };
+
+  const handleDownloadPayeeTemplate = () => {
+    try {
+      // Create template with headers and sample data
+      const wsData = [
+        ['PAYEE IMPORT TEMPLATE'],
+        ['Instructions: Fill in the data starting from row 4. Name and Mobile are required fields.'],
+        [],
+        ['Name', 'Alias', 'Mobile', 'Bank Account', 'IFSC Code', 'UPI ID'],
+        ['ABC Suppliers Pvt Ltd', 'ABC Suppliers', '9876543210', '1234567890123', 'SBIN0001234', 'abc@upi'],
+        ['Kumar Electricals', 'Kumar Elec', '9876543211', '9876543210987', 'HDFC0001234', 'kumar@ybl'],
+        ['', '', '', '', '', ''],
+        ['', '', '', '', '', ''],
+        ['', '', '', '', '', '']
+      ];
+      
+      const wb = XLSX.utils.book_new();
+      const ws = XLSX.utils.aoa_to_sheet(wsData);
+      
+      // Set column widths
+      ws['!cols'] = [
+        { wch: 30 },  // Name
+        { wch: 20 },  // Alias
+        { wch: 15 },  // Mobile
+        { wch: 20 },  // Bank Account
+        { wch: 15 },  // IFSC
+        { wch: 25 }   // UPI ID
+      ];
+      
+      // Merge header rows
+      ws['!merges'] = [
+        { s: { r: 0, c: 0 }, e: { r: 0, c: 5 } },
+        { s: { r: 1, c: 0 }, e: { r: 1, c: 5 } }
+      ];
+      
+      XLSX.utils.book_append_sheet(wb, ws, 'Payee Template');
+      XLSX.writeFile(wb, 'Payee_Import_Template.xlsx');
+      addToast('Template downloaded', 'success');
+    } catch (error) {
+      addToast('Failed to download template', 'error');
+    }
+  };
+
+  if (loading) return <div className="loading-state"><ClamFlowLoader width={200} label="Loading payees"/><span>Loading payees…</span></div>;
+
+  return (
+    <div className="page-container">
+      <div className="page-header">
+        <div>
+          <h1 className="page-title">Manage Payees</h1>
+          <p className="page-subtitle">Manage vendor and payee details</p>
+        </div>
+        <div style={{display: 'flex', gap: '0.75rem'}}>
+          <button className="btn btn-secondary" onClick={handleExportPayees} disabled={payees.length === 0}>📤 Export Excel</button>
+          <button className="btn btn-secondary" onClick={() => setShowImportModal(true)}>📥 Import</button>
+          <button className="btn btn-primary" onClick={() => setShowAddModal(true)}>➕ Add Payee</button>
+        </div>
+      </div>
+
+      <div style={{marginBottom: '1rem'}}>
+        <input
+          type="text"
+          className="form-input"
+          placeholder="🔍 Search by name or mobile number…"
+          value={searchQuery}
+          onChange={e => setSearchQuery(e.target.value)}
+          style={{maxWidth: '360px'}}
+        />
+      </div>
+
+      <div className="card">
+        <div className="card-body" style={{ padding: 0 }}>
+          <div className="table-container">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Type</th>
+                  <th>Mobile</th>
+                  <th>Bank / UPI</th>
+                  <th style={{textAlign: 'center', minWidth: '90px'}}>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(() => {
+                  const q = searchQuery.trim().toLowerCase();
+                  const filtered = q
+                    ? payees.filter(p =>
+                        (p.name || '').toLowerCase().includes(q) ||
+                        (p.alias || '').toLowerCase().includes(q) ||
+                        (p.mobile || '').includes(q)
+                      )
+                    : payees;
+                  if (payees.length === 0) return (
+                    <tr><td colSpan="5" style={{textAlign: 'center', padding: '2rem', color: 'var(--text-secondary)'}}>No payees added yet. Click "Add Payee" to get started.</td></tr>
+                  );
+                  if (filtered.length === 0) return (
+                    <tr><td colSpan="5" style={{textAlign: 'center', padding: '2rem', color: 'var(--text-secondary)'}}>No payees match "{searchQuery}".</td></tr>
+                  );
+                  return filtered.map(p => (
+                    <tr key={p.id} style={p.is_global && p.company_id !== user.company.id ? {background: '#f0f9ff'} : {}}>
+                      <td className="fw-600">
+                        {p.name}
+                        {p.is_global && <span style={{marginLeft: '0.5rem', fontSize: '0.7rem', background: '#3b82f6', color: 'white', padding: '2px 6px', borderRadius: '4px'}}>🌐 Global</span>}
+                        {p.is_global && p.company_id !== user.company.id && <span style={{marginLeft: '0.25rem', fontSize: '0.65rem', color: '#666'}}>(from other company)</span>}
+                        {p.is_staff && <span style={{marginLeft: '0.5rem', fontSize: '0.7rem', background: '#10b981', color: 'white', padding: '2px 6px', borderRadius: '4px'}}>👤 Staff</span>}
+                        {p.is_staff && p.user_id && <span style={{marginLeft: '0.25rem', fontSize: '0.65rem', background: '#dbeafe', color: '#1e40af', padding: '2px 6px', borderRadius: '4px'}}>🔑 Staff-{p.name.split(' ')[0]}</span>}
+                        {p.alias && <div style={{fontSize: '0.75rem', color: '#6b7280', fontWeight: 400, marginTop: '1px'}}>{p.alias}</div>}
+                      </td>
+                      <td>
+                        {p.payee_type === 'adhoc' ? (
+                          <span style={{fontSize: '0.75rem', background: '#fef3c7', color: '#92400e', padding: '2px 8px', borderRadius: '4px'}}>📄 Ad-hoc</span>
+                        ) : (
+                          <span style={{fontSize: '0.75rem', background: '#d1fae5', color: '#059669', padding: '2px 8px', borderRadius: '4px'}}>✅ Registered</span>
+                        )}
+                      </td>
+                      <td>{p.mobile}</td>
+                      <td style={{fontSize: '0.8rem', color: '#555'}}>
+                        {p.bank_account ? <div>{p.bank_account}{p.ifsc ? ` · ${p.ifsc}` : ''}</div> : null}
+                        {p.upi_id ? <div style={{color: '#7c3aed'}}>{p.upi_id}</div> : null}
+                        {!p.bank_account && !p.upi_id ? '-' : null}
+                      </td>
+                      <td style={{textAlign: 'center'}}>
+                        {p.company_id === user.company.id ? (
+                          <div style={{display: 'flex', gap: '0.5rem', justifyContent: 'center', flexWrap: 'wrap'}}>
+                            {p.is_staff && !p.user_id && user.isSuperAdmin && (
+                              <button className="btn btn-sm" style={{background: '#2563eb', color: 'white', fontSize: '0.7rem'}} onClick={() => handleCreateStaffLogin(p)} title={`Create app login: Staff-${p.name.split(' ')[0]}`}>🔑 Login</button>
+                            )}
+                            <button className="btn btn-sm btn-secondary" onClick={() => { setEditPayee(p); setShowEditModal(true); }}>✏️</button>
+                            <button className="btn btn-sm btn-danger" onClick={() => handleDeletePayee(p.id)}>🗑️</button>
+                          </div>
+                        ) : (
+                          <span style={{fontSize: '0.75rem', color: '#888'}}>View Only</span>
+                        )}
+                      </td>
+                    </tr>
+                  ));
+                })()}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      {showStaffLoginModal && staffLoginPayee && (
+        <div className="modal-overlay" onClick={() => setShowStaffLoginModal(false)}>
+          <div className="modal" style={{maxWidth: '420px'}} onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3 className="modal-title">🔑 Create Staff Login</h3>
+              <button className="modal-close" onClick={() => setShowStaffLoginModal(false)}>×</button>
+            </div>
+            <div className="modal-body">
+              <p style={{marginBottom: '1rem', color: '#374151'}}>Creating app login for <strong>{staffLoginPayee.name}</strong></p>
+              <div style={{background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: '8px', padding: '0.75rem', marginBottom: '1.25rem', fontSize: '0.85rem', color: '#0369a1'}}>
+                Username will be: <strong>Staff-{staffLoginPayee.name.split(' ')[0]}</strong><br/>
+                Staff can log in with this username + SMS OTP on first use.
+              </div>
+              <div className="form-group">
+                <label className="form-label">Aadhar Number *</label>
+                <input className="form-control" type="text" maxLength={12} placeholder="12-digit Aadhar number" value={staffLoginAadhar} onChange={e => setStaffLoginAadhar(e.target.value.replace(/\D/g, ''))} autoFocus />
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setShowStaffLoginModal(false)}>Cancel</button>
+              <button className="btn btn-primary" onClick={handleConfirmStaffLogin} disabled={submitting || staffLoginAadhar.length < 12}>
+                {submitting ? 'Creating...' : 'Create Login'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showAddModal && (
+        <div className="modal-overlay" onClick={() => setShowAddModal(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3 className="modal-title">➕ Add Payee</h3>
+              <button className="modal-close" onClick={() => setShowAddModal(false)}>×</button>
+            </div>
+            <div className="modal-body">
+              {/* Payee Type Selector */}
+              <div className="form-group" style={{background: '#fef3c7', padding: '1rem', borderRadius: '8px', border: '1px solid #fcd34d', marginBottom: '1rem'}}>
+                <label className="form-label" style={{marginBottom: '0.75rem', fontWeight: 600, color: '#92400e'}}>📋 Payee Type</label>
+                <div style={{display: 'flex', gap: '1rem', flexWrap: 'wrap'}}>
+                  <label style={{display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', padding: '0.5rem 1rem', borderRadius: '6px', background: newPayee.payeeType === 'registered' ? '#10b981' : '#e5e7eb', color: newPayee.payeeType === 'registered' ? 'white' : '#374151'}}>
+                    <input type="radio" name="payeeType" checked={newPayee.payeeType === 'registered'} onChange={() => setNewPayee({...newPayee, payeeType: 'registered', requiresOtp: true})} style={{display: 'none'}} />
+                    ✅ Registered Vendor
+                  </label>
+                  <label style={{display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', padding: '0.5rem 1rem', borderRadius: '6px', background: newPayee.payeeType === 'adhoc' ? '#3b82f6' : '#e5e7eb', color: newPayee.payeeType === 'adhoc' ? 'white' : '#374151'}}>
+                    <input type="radio" name="payeeType" checked={newPayee.payeeType === 'adhoc'} onChange={() => setNewPayee({...newPayee, payeeType: 'adhoc', requiresOtp: false})} style={{display: 'none'}} />
+                    📄 Ad-hoc / One-time
+                  </label>
+                </div>
+                <p style={{fontSize: '0.8rem', color: '#92400e', marginTop: '0.75rem'}}>
+                  {newPayee.payeeType === 'registered' 
+                    ? '✓ OTP verification will be sent to payee mobile for payment confirmation.' 
+                    : '📄 Document upload required instead of OTP (for random shops, one-time vendors, etc.)'}
+                </p>
+              </div>
+              <div className="form-group">
+                <label className="form-label">Name *</label>
+                <input type="text" className="form-input" value={newPayee.name} onChange={e => setNewPayee({...newPayee, name: e.target.value})} placeholder="Vendor/Payee Name" />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Alias</label>
+                <input type="text" className="form-input" value={newPayee.alias} onChange={e => setNewPayee({...newPayee, alias: e.target.value})} placeholder="Short Name" />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Mobile {newPayee.payeeType === 'registered' ? '*' : '(for records)'}</label>
+                <input type="tel" className="form-input" value={newPayee.mobile} onChange={e => setNewPayee({...newPayee, mobile: e.target.value})} placeholder="10-digit mobile" />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Bank Account</label>
+                <input type="text" className="form-input" value={newPayee.bankAccount} onChange={e => setNewPayee({...newPayee, bankAccount: e.target.value})} placeholder="Account Number" />
+              </div>
+              <div className="form-group">
+                <label className="form-label">IFSC Code</label>
+                <input type="text" className="form-input" value={newPayee.ifsc} onChange={e => setNewPayee({...newPayee, ifsc: e.target.value})} placeholder="IFSC Code" />
+              </div>
+              <div className="form-group">
+                <label className="form-label">UPI ID</label>
+                <input type="text" className="form-input" value={newPayee.upiId} onChange={e => setNewPayee({...newPayee, upiId: e.target.value})} placeholder="user@bank" />
+              </div>
+              <div className="form-group" style={{background: '#f0f9ff', padding: '1rem', borderRadius: '8px', border: '1px solid #bfdbfe'}}>
+                <label style={{display: 'flex', alignItems: 'center', gap: '0.75rem', cursor: 'pointer'}}>
+                  <input type="checkbox" checked={newPayee.isGlobal} onChange={e => setNewPayee({...newPayee, isGlobal: e.target.checked})} style={{width: '18px', height: '18px'}} />
+                  <span style={{fontWeight: 500}}>🌐 Available for All Companies</span>
+                </label>
+                <p style={{fontSize: '0.8rem', color: '#666', marginTop: '0.5rem', marginLeft: '2rem'}}>
+                  If checked, this payee will be visible and selectable across all companies.
+                </p>
+              </div>
+              <div className="form-group" style={{background: '#f0fdf4', padding: '1rem', borderRadius: '8px', border: '1px solid #86efac', marginTop: '0.75rem'}}>
+                <label style={{display: 'flex', alignItems: 'center', gap: '0.75rem', cursor: 'pointer'}}>
+                  <input type="checkbox" checked={newPayee.isStaff} onChange={e => setNewPayee({...newPayee, isStaff: e.target.checked, userId: ''})} style={{width: '18px', height: '18px'}} />
+                  <span style={{fontWeight: 500}}>👤 Staff Payee (internal employee)</span>
+                </label>
+                {newPayee.isStaff && (
+                  <div style={{marginTop: '0.75rem'}}>
+                    <label className="form-label">Link to System User <span style={{fontSize: '0.78rem', color: '#6b7280', fontWeight: 400}}>(optional)</span></label>
+                    <select className="form-select" value={newPayee.userId} onChange={e => setNewPayee({...newPayee, userId: e.target.value})}>
+                      <option value="">— Not a system user —</option>
+                      {companyUsers.map(u => <option key={u.id} value={u.id}>{u.name} ({u.role})</option>)}
+                    </select>
+                    <p style={{fontSize: '0.8rem', color: '#166534', marginTop: '0.5rem'}}>Leave blank if the staff member doesn't have a system account. They'll still receive the SMS settlement link via their mobile number.</p>
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setShowAddModal(false)}>Cancel</button>
+              <button className="btn btn-primary" onClick={handleAddPayee} disabled={submitting}>{submitting ? 'Adding...' : 'Add Payee'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showEditModal && (
+        <div className="modal-overlay" onClick={() => setShowEditModal(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3 className="modal-title">✏️ Edit Payee</h3>
+              <button className="modal-close" onClick={() => setShowEditModal(false)}>×</button>
+            </div>
+            <div className="modal-body">
+              <div className="form-group">
+                <label className="form-label">Name *</label>
+                <input type="text" className="form-input" value={editPayee.name} onChange={e => setEditPayee({...editPayee, name: e.target.value})} />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Alias</label>
+                <input type="text" className="form-input" value={editPayee.alias || ''} onChange={e => setEditPayee({...editPayee, alias: e.target.value})} />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Mobile *</label>
+                <input type="tel" className="form-input" value={editPayee.mobile} onChange={e => setEditPayee({...editPayee, mobile: e.target.value})} />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Bank Account</label>
+                <input type="text" className="form-input" value={editPayee.bank_account || ''} onChange={e => setEditPayee({...editPayee, bank_account: e.target.value})} />
+              </div>
+              <div className="form-group">
+                <label className="form-label">IFSC Code</label>
+                <input type="text" className="form-input" value={editPayee.ifsc || ''} onChange={e => setEditPayee({...editPayee, ifsc: e.target.value})} />
+              </div>
+              <div className="form-group">
+                <label className="form-label">UPI ID</label>
+                <input type="text" className="form-input" value={editPayee.upi_id || ''} onChange={e => setEditPayee({...editPayee, upi_id: e.target.value})} />
+              </div>
+              <div className="form-group" style={{background: '#f0f9ff', padding: '1rem', borderRadius: '8px', border: '1px solid #bfdbfe'}}>
+                <label style={{display: 'flex', alignItems: 'center', gap: '0.75rem', cursor: 'pointer'}}>
+                  <input type="checkbox" checked={editPayee.is_global || false} onChange={e => setEditPayee({...editPayee, is_global: e.target.checked})} style={{width: '18px', height: '18px'}} />
+                  <span style={{fontWeight: 500}}>🌐 Available for All Companies</span>
+                </label>
+                <p style={{fontSize: '0.8rem', color: '#666', marginTop: '0.5rem', marginLeft: '2rem'}}>
+                  If checked, this payee will be visible and selectable across all companies.
+                </p>
+              </div>
+              <div className="form-group" style={{background: '#f0fdf4', padding: '1rem', borderRadius: '8px', border: '1px solid #86efac', marginTop: '0.75rem'}}>
+                <label style={{display: 'flex', alignItems: 'center', gap: '0.75rem', cursor: 'pointer'}}>
+                  <input type="checkbox" checked={editPayee.is_staff || false} onChange={e => setEditPayee({...editPayee, is_staff: e.target.checked, user_id: e.target.checked ? editPayee.user_id : ''})} style={{width: '18px', height: '18px'}} />
+                  <span style={{fontWeight: 500}}>👤 Staff Payee (internal employee)</span>
+                </label>
+                {editPayee.is_staff && (
+                  <div style={{marginTop: '0.75rem'}}>
+                    <label className="form-label">Linked System User <span style={{fontSize: '0.78rem', color: '#6b7280', fontWeight: 400}}>(optional)</span></label>
+                    <select className="form-select" value={editPayee.user_id || ''} onChange={e => setEditPayee({...editPayee, user_id: e.target.value})}>
+                      <option value="">— Not a system user —</option>
+                      {companyUsers.map(u => <option key={u.id} value={u.id}>{u.name} ({u.role})</option>)}
+                    </select>
+                    <p style={{fontSize: '0.8rem', color: '#166534', marginTop: '0.5rem'}}>Leave blank if the staff member doesn't have a system account. They'll still receive the SMS settlement link via their mobile number.</p>
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setShowEditModal(false)}>Cancel</button>
+              <button className="btn btn-primary" onClick={handleEditPayee} disabled={submitting}>{submitting ? 'Updating...' : 'Update'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showImportModal && (
+        <div className="modal-overlay" onClick={() => setShowImportModal(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3 className="modal-title">📥 Import Payees</h3>
+              <button className="modal-close" onClick={() => setShowImportModal(false)}>×</button>
+            </div>
+            <div className="modal-body">
+              <div style={{background: '#e0f2fe', padding: '1rem', borderRadius: '8px', marginBottom: '1rem', border: '1px solid #0ea5e9'}}>
+                <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
+                  <div>
+                    <strong style={{color: '#0369a1'}}>📋 Download Template First!</strong>
+                    <p style={{fontSize: '0.85rem', color: '#0369a1', margin: '0.25rem 0 0'}}>Use our standard format for error-free import</p>
+                  </div>
+                  <button className="btn btn-sm btn-primary" onClick={handleDownloadPayeeTemplate}>📥 Download Template</button>
+                </div>
+              </div>
+              <div style={{display: 'flex', gap: '1rem', marginBottom: '1rem'}}>
+                <button className={`btn ${importMethod === 'excel' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setImportMethod('excel')} style={{flex: 1}}>📊 Import from Excel</button>
+                <button className={`btn ${importMethod === 'paste' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setImportMethod('paste')} style={{flex: 1}}>📋 Paste CSV</button>
+              </div>
+              {importMethod === 'excel' ? (
+                <div>
+                  <p style={{marginBottom: '1rem', color: 'var(--text-secondary)'}}>Upload an Excel file (.xlsx, .xls) with payee details</p>
+                  <div className="form-group">
+                    <input type="file" accept=".xlsx,.xls,.csv" className="form-input" onChange={handleExcelImport} style={{padding: '0.75rem'}} />
+                  </div>
+                  <div style={{background: '#fef3c7', padding: '1rem', borderRadius: '8px', marginTop: '1rem', fontSize: '0.85rem', border: '1px solid #f59e0b'}}>
+                    <strong style={{color: '#92400e'}}>📋 Standard Format (Row 4 onwards):</strong>
+                    <table style={{width: '100%', marginTop: '0.5rem', fontSize: '0.8rem', borderCollapse: 'collapse'}}>
+                      <thead><tr style={{background: '#f59e0b', color: 'white'}}>
+                        <th style={{padding: '4px', border: '1px solid #d97706'}}>Name *</th>
+                        <th style={{padding: '4px', border: '1px solid #d97706'}}>Alias</th>
+                        <th style={{padding: '4px', border: '1px solid #d97706'}}>Mobile *</th>
+                        <th style={{padding: '4px', border: '1px solid #d97706'}}>Bank Account</th>
+                        <th style={{padding: '4px', border: '1px solid #d97706'}}>IFSC Code</th>
+                        <th style={{padding: '4px', border: '1px solid #d97706'}}>UPI ID</th>
+                      </tr></thead>
+                      <tbody><tr>
+                        <td style={{padding: '4px', border: '1px solid #fcd34d'}}>ABC Suppliers</td>
+                        <td style={{padding: '4px', border: '1px solid #fcd34d'}}>ABC</td>
+                        <td style={{padding: '4px', border: '1px solid #fcd34d'}}>9876543210</td>
+                        <td style={{padding: '4px', border: '1px solid #fcd34d'}}>123456789</td>
+                        <td style={{padding: '4px', border: '1px solid #fcd34d'}}>SBIN0001234</td>
+                        <td style={{padding: '4px', border: '1px solid #fcd34d'}}>abc@upi</td>
+                      </tr></tbody>
+                    </table>
+                    <p style={{marginTop: '0.5rem', color: '#92400e'}}>* Required fields</p>
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  <p style={{marginBottom: '1rem', color: 'var(--text-secondary)'}}>Paste CSV data below. First row should be headers.</p>
+                  <div className="form-group">
+                    <textarea className="form-input" rows="10" value={importData} onChange={e => setImportData(e.target.value)} placeholder="Name,Alias,Mobile,Bank Account,IFSC Code,UPI ID&#10;ABC Suppliers,ABC,9876543210,123456789,SBIN0001234,abc@upi" style={{fontFamily: 'monospace', fontSize: '0.875rem'}} />
+                  </div>
+                </div>
+              )}
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setShowImportModal(false)}>Cancel</button>
+              {importMethod === 'paste' && <button className="btn btn-primary" onClick={handleImport} disabled={submitting}>{submitting ? 'Importing...' : 'Import'}</button>}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// Pay From Accounts Management Component
+const PaymentAccountsManagement = () => {
+  const { user, addToast } = useApp();
+  const [accounts, setAccounts] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [newLabel, setNewLabel] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  const load = () => {
+    setLoading(true);
+    api.getPaymentAccounts(user.company.id).then(data => {
+      setAccounts(Array.isArray(data) ? data : []);
+    }).finally(() => setLoading(false));
+  };
+
+  useEffect(() => { load(); }, [user.company.id]);
+
+  const handleAdd = async () => {
+    if (!newLabel.trim()) { addToast('Label cannot be empty', 'error'); return; }
+    if (accounts.some(a => a.label.toLowerCase() === newLabel.trim().toLowerCase())) { addToast('Already exists', 'error'); return; }
+    setSubmitting(true);
+    try {
+      const result = await api.addPaymentAccount({ companyId: user.company.id, label: newLabel.trim() });
+      if (result.success) { addToast('Account added', 'success'); setNewLabel(''); load(); }
+      else addToast(result.error || 'Failed', 'error');
+    } catch { addToast('Failed', 'error'); }
+    setSubmitting(false);
+  };
+
+  const handleDelete = async (id, label) => {
+    if (!confirm(`Remove "${label}" from the list?`)) return;
+    try {
+      await api.deletePaymentAccount(id);
+      addToast('Removed', 'success');
+      load();
+    } catch { addToast('Failed to remove', 'error'); }
+  };
+
+  return (
+    <div>
+      <div className="page-header"><h1 className="page-title">Pay From Accounts</h1><p className="page-subtitle">Manage the list of bank accounts and director/partner accounts that payments can be sent from</p></div>
+      <div className="card" style={{marginBottom:'1.5rem'}}>
+        <div className="card-header"><h3 className="card-title">{Icons.plus} Add Account</h3></div>
+        <div className="card-body">
+          <div style={{display:'flex',gap:'0.75rem',alignItems:'flex-end'}}>
+            <div className="form-group" style={{flex:1,marginBottom:0}}>
+              <label className="form-label">Account Label</label>
+              <input type="text" className="form-input" placeholder="e.g., HDFC Current A/C, Director Ramesh Personal A/C" value={newLabel} onChange={(e) => setNewLabel(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleAdd()} />
+              <div style={{fontSize:'0.78rem',color:'#888',marginTop:'0.35rem'}}>Use a clear, consistent name — this appears as an autocomplete suggestion when creating vouchers.</div>
+            </div>
+            <button className="btn btn-primary" onClick={handleAdd} disabled={submitting || !newLabel.trim()} style={{flexShrink:0}}>{submitting && Icons.loader}Add</button>
+          </div>
+        </div>
+      </div>
+      <div className="card">
+        <div className="card-header"><h3 className="card-title">{Icons.fileText} Accounts List</h3></div>
+        <div className="card-body" style={{padding:0}}>
+          {loading ? <div style={{padding:'2rem',textAlign:'center'}}>{Icons.loader}</div> : accounts.length === 0 ? (
+            <div className="empty-state">{Icons.fileText}<p>No accounts added yet. Add your company bank accounts and director accounts above.</p></div>
+          ) : (
+            <div className="table-container">
+              <table className="table">
+                <thead><tr><th>Label</th><th>Added</th><th>Action</th></tr></thead>
+                <tbody>
+                  {accounts.map(a => (
+                    <tr key={a.id}>
+                      <td><strong>{a.label}</strong></td>
+                      <td style={{color:'#888',fontSize:'0.85rem'}}>{new Date(a.created_at).toLocaleDateString('en-IN')}</td>
+                      <td><button className="btn btn-sm btn-danger" onClick={() => handleDelete(a.id, a.label)}>🗑️ Remove</button></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// Accounts/Heads of Account Management Component
+const AccountsManagement = () => {
+  const { user, addToast } = useApp();
+  const [accounts, setAccounts] = useState([]);
+  const [subHeadsMap, setSubHeadsMap] = useState({}); // Map of headId -> subHeads array
+  const [expandedHeads, setExpandedHeads] = useState({}); // Track which heads are expanded
+  const [loading, setLoading] = useState(true);
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [showAddSubModal, setShowAddSubModal] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [showEditSubModal, setShowEditSubModal] = useState(false);
+  const [selectedHeadForSub, setSelectedHeadForSub] = useState(null);
+  const [editAccount, setEditAccount] = useState({ id: '', name: '', is_global: false });
+  const [editSubAccount, setEditSubAccount] = useState({ id: '', name: '' });
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [newAccount, setNewAccount] = useState('');
+  const [newAccountIsGlobal, setNewAccountIsGlobal] = useState(false);
+  const [newSubAccount, setNewSubAccount] = useState('');
+  const [importData, setImportData] = useState('');
+  const [importFile, setImportFile] = useState(null);
+  const [importMethod, setImportMethod] = useState('paste'); // 'paste' or 'excel'
+
+  // Load accounts and sub-heads from database (includes global heads + their sub-heads)
+  const loadAccounts = async () => {
+    try {
+      setLoading(true);
+      const data = await api.getHeadsOfAccount(user.company.id);
+      if (Array.isArray(data)) {
+        setAccounts(data.sort((a, b) => a.name.localeCompare(b.name)));
+        // Load sub-heads for own company + sub-heads of global heads from other companies
+        const subData = await api.getSubHeadsByCompany(user.company.id);
+        if (Array.isArray(subData)) {
+          const grouped = {};
+          subData.forEach(sh => {
+            if (!grouped[sh.head_id]) grouped[sh.head_id] = [];
+            grouped[sh.head_id].push(sh);
+          });
+          setSubHeadsMap(grouped);
+        }
+      } else if (data.error) {
+        addToast('Failed to load accounts: ' + data.error, 'error');
+      }
+    } catch (error) {
+      addToast('Failed to load accounts', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadAccounts();
+  }, [user.company.id]);
+
+  const toggleExpand = (headId) => {
+    setExpandedHeads(prev => ({ ...prev, [headId]: !prev[headId] }));
+  };
+
+  const handleAddAccount = async () => {
+    if (!newAccount.trim()) {
+      addToast('Account name cannot be empty', 'error');
+      return;
+    }
+    
+    if (accounts.some(a => a.name === newAccount.trim())) {
+      addToast('Account already exists', 'error');
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const result = await api.addHeadOfAccount(user.company.id, newAccount.trim(), newAccountIsGlobal);
+      if (result.error) {
+        addToast(result.error, 'error');
+      } else {
+        addToast('Account added successfully', 'success');
+        setNewAccount('');
+        setNewAccountIsGlobal(false);
+        setShowAddModal(false);
+        loadAccounts();
+      }
+    } catch (error) {
+      addToast('Failed to add account', 'error');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleAddSubAccount = async () => {
+    if (!newSubAccount.trim()) {
+      addToast('Sub-category name cannot be empty', 'error');
+      return;
+    }
+    
+    const existingSubs = subHeadsMap[selectedHeadForSub.id] || [];
+    if (existingSubs.some(s => s.name === newSubAccount.trim())) {
+      addToast('Sub-category already exists', 'error');
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const result = await api.addSubHeadOfAccount(selectedHeadForSub.id, user.company.id, newSubAccount.trim());
+      if (result.error) {
+        addToast(result.error, 'error');
+      } else {
+        addToast('Sub-category added successfully', 'success');
+        setNewSubAccount('');
+        setShowAddSubModal(false);
+        setExpandedHeads(prev => ({ ...prev, [selectedHeadForSub.id]: true }));
+        loadAccounts();
+      }
+    } catch (error) {
+      addToast('Failed to add sub-category', 'error');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleDeleteSubAccount = async (subHead) => {
+    if (!confirm(`Delete sub-category "${subHead.name}"?`)) return;
+    
+    try {
+      const result = await api.deleteSubHeadOfAccount(subHead.id);
+      if (result.error) {
+        addToast(result.error, 'error');
+      } else {
+        addToast('Sub-category deleted successfully', 'success');
+        loadAccounts();
+      }
+    } catch (error) {
+      addToast('Failed to delete sub-category', 'error');
+    }
+  };
+
+  const handleEditAccount = async () => {
+    if (!editAccount.name?.trim()) {
+      addToast('Account name cannot be empty', 'error');
+      return;
+    }
+    
+    setSubmitting(true);
+    try {
+      const result = await api.updateHeadOfAccount(editAccount.id, editAccount.name.trim(), editAccount.is_global);
+      if (result.error) {
+        addToast(result.error, 'error');
+      } else {
+        addToast('Account updated successfully', 'success');
+        setShowEditModal(false);
+        loadAccounts();
+      }
+    } catch (error) {
+      addToast('Failed to update account', 'error');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleEditSubAccount = async () => {
+    if (!editSubAccount.name?.trim()) {
+      addToast('Sub-category name cannot be empty', 'error');
+      return;
+    }
+    
+    setSubmitting(true);
+    try {
+      const result = await api.updateSubHeadOfAccount(editSubAccount.id, editSubAccount.name.trim());
+      if (result.error) {
+        addToast(result.error, 'error');
+      } else {
+        addToast('Sub-category updated successfully', 'success');
+        setShowEditSubModal(false);
+        loadAccounts();
+      }
+    } catch (error) {
+      addToast('Failed to update sub-category', 'error');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleDeleteAccount = async (account) => {
+    if (!confirm(`Delete "${account.name}"?`)) return;
+    
+    try {
+      const result = await api.deleteHeadOfAccount(account.id);
+      if (result.error) {
+        addToast(result.error, 'error');
+      } else {
+        addToast('Account deleted successfully', 'success');
+        loadAccounts();
+      }
+    } catch (error) {
+      addToast('Failed to delete account', 'error');
+    }
+  };
+
+  const handleImport = async () => {
+    if (!importData.trim()) {
+      addToast('Please paste account names to import', 'error');
+      return;
+    }
+
+    const lines = importData.trim().split('\n').map(l => l.trim()).filter(l => l);
+    
+    setSubmitting(true);
+    try {
+      const result = await api.importHeadsOfAccount(user.company.id, lines);
+      if (result.error) {
+        addToast(result.error, 'error');
+      } else {
+        addToast(`Imported ${result.imported || lines.length} accounts`, 'success');
+        setImportData('');
+        setShowImportModal(false);
+        loadAccounts();
+      }
+    } catch (error) {
+      addToast('Failed to import accounts', 'error');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleExcelImport = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    
+    setSubmitting(true);
+    try {
+      // Use SheetJS (XLSX) library loaded from CDN
+      const data = await file.arrayBuffer();
+      const workbook = XLSX.read(data, { type: 'array' });
+      const sheetName = workbook.SheetNames[0];
+      const worksheet = workbook.Sheets[sheetName];
+      const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+      
+      // Extract account names from first column, skip header if present
+      const startRow = jsonData[0] && (jsonData[0][0]?.toString().toLowerCase().includes('account') || jsonData[0][0]?.toString().toLowerCase().includes('head')) ? 1 : 0;
+      const importedAccounts = jsonData.slice(startRow).map(row => row[0]?.toString().trim()).filter(name => name && name.length > 0);
+      
+      if (importedAccounts.length === 0) {
+        addToast('No accounts found in Excel file. Ensure account names are in the first column.', 'error');
+        return;
+      }
+      
+      const result = await api.importHeadsOfAccount(user.company.id, importedAccounts);
+      if (result.error) {
+        addToast(result.error, 'error');
+      } else {
+        addToast(`Imported ${result.imported || importedAccounts.length} accounts from Excel`, 'success');
+        setShowImportModal(false);
+        setImportFile(null);
+        loadAccounts();
+      }
+    } catch (error) {
+      addToast('Failed to parse Excel file: ' + error.message, 'error');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleExportAccounts = () => {
+    if (accounts.length === 0) {
+      addToast('No accounts to export', 'error');
+      return;
+    }
+    
+    try {
+      // Create worksheet data with headers
+      const wsData = [
+        ['Heads of Account - ' + user.company.name],
+        ['Exported on: ' + new Date().toLocaleString('en-IN')],
+        [],
+        ['S.No.', 'Head of Account', 'Sub-Categories']
+      ];
+      
+      // Add account rows with sub-categories
+      accounts.forEach((acc, idx) => {
+        const subs = subHeadsMap[acc.id] || [];
+        const subNames = subs.map(s => s.name).join(', ');
+        wsData.push([
+          idx + 1,
+          acc.name,
+          subNames || '-'
+        ]);
+      });
+      
+      // Add summary
+      wsData.push([]);
+      wsData.push(['Total Heads of Account:', accounts.length]);
+      const totalSubs = Object.values(subHeadsMap).reduce((sum, arr) => sum + arr.length, 0);
+      wsData.push(['Total Sub-Categories:', totalSubs]);
+      
+      // Create workbook and worksheet
+      const wb = XLSX.utils.book_new();
+      const ws = XLSX.utils.aoa_to_sheet(wsData);
+      
+      // Set column widths
+      ws['!cols'] = [
+        { wch: 6 },   // S.No.
+        { wch: 35 },  // Head of Account
+        { wch: 60 }   // Sub-Categories
+      ];
+      
+      // Merge title cells
+      ws['!merges'] = [
+        { s: { r: 0, c: 0 }, e: { r: 0, c: 2 } },
+        { s: { r: 1, c: 0 }, e: { r: 1, c: 2 } }
+      ];
+      
+      XLSX.utils.book_append_sheet(wb, ws, 'Heads of Account');
+      
+      // Also create a detailed sheet with sub-categories
+      const detailData = [
+        ['Detailed Heads & Sub-Categories - ' + user.company.name],
+        [],
+        ['S.No.', 'Head of Account', 'Sub-Category']
+      ];
+      
+      let rowNum = 1;
+      accounts.forEach(acc => {
+        const subs = subHeadsMap[acc.id] || [];
+        if (subs.length === 0) {
+          detailData.push([rowNum++, acc.name, '-']);
+        } else {
+          subs.forEach((sub, subIdx) => {
+            detailData.push([
+              rowNum++,
+              subIdx === 0 ? acc.name : '',
+              sub.name
+            ]);
+          });
+        }
+      });
+      
+      const ws2 = XLSX.utils.aoa_to_sheet(detailData);
+      ws2['!cols'] = [
+        { wch: 6 },
+        { wch: 35 },
+        { wch: 40 }
+      ];
+      ws2['!merges'] = [
+        { s: { r: 0, c: 0 }, e: { r: 0, c: 2 } }
+      ];
+      
+      XLSX.utils.book_append_sheet(wb, ws2, 'Detailed View');
+      
+      // Generate filename with date
+      const dateStr = new Date().toISOString().split('T')[0];
+      const filename = `HeadsOfAccount_${user.company.name.replace(/[^a-zA-Z0-9]/g, '_')}_${dateStr}.xlsx`;
+      
+      // Download file
+      XLSX.writeFile(wb, filename);
+      addToast('Accounts exported successfully', 'success');
+    } catch (error) {
+      addToast('Failed to export: ' + error.message, 'error');
+    }
+  };
+
+  const handleDownloadAccountTemplate = () => {
+    try {
+      // Create template with headers and sample data
+      const wsData = [
+        ['HEADS OF ACCOUNT IMPORT TEMPLATE'],
+        ['Instructions: Enter one account name per row in Column A, starting from row 4.'],
+        [],
+        ['Head of Account'],
+        ['Salaries & Wages'],
+        ['Office Supplies'],
+        ['Transportation'],
+        ['Maintenance & Repairs'],
+        ['Professional Fees'],
+        ['Utilities'],
+        [''],
+        [''],
+        ['']
+      ];
+      
+      const wb = XLSX.utils.book_new();
+      const ws = XLSX.utils.aoa_to_sheet(wsData);
+      
+      // Set column width
+      ws['!cols'] = [{ wch: 40 }];
+      
+      // Merge header rows
+      ws['!merges'] = [
+        { s: { r: 0, c: 0 }, e: { r: 0, c: 0 } },
+        { s: { r: 1, c: 0 }, e: { r: 1, c: 0 } }
+      ];
+      
+      XLSX.utils.book_append_sheet(wb, ws, 'Account Template');
+      XLSX.writeFile(wb, 'HeadsOfAccount_Import_Template.xlsx');
+      addToast('Template downloaded', 'success');
+    } catch (error) {
+      addToast('Failed to download template', 'error');
+    }
+  };
+
+  return (
+    <div className="page-container">
+      <div className="page-header">
+        <div>
+          <h1 className="page-title">Heads of Account</h1>
+          <p className="page-subtitle">Manage expense and payment categories with sub-categories</p>
+        </div>
+        <div style={{display: 'flex', gap: '0.75rem'}}>
+          <button className="btn btn-secondary" onClick={handleExportAccounts} disabled={accounts.length === 0}>📤 Export Excel</button>
+          <button className="btn btn-secondary" onClick={() => setShowImportModal(true)}>📥 Import</button>
+          <button className="btn btn-primary" onClick={() => setShowAddModal(true)}>➕ Add Account</button>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-body">
+          {loading ? (
+            <div style={{textAlign: 'center', padding: '2rem'}}>Loading accounts...</div>
+          ) : accounts.length === 0 ? (
+            <div style={{textAlign: 'center', padding: '2rem', color: 'var(--text-secondary)'}}>No accounts found. Add your first head of account.</div>
+          ) : (
+            <div style={{display: 'grid', gap: '0.5rem'}}>
+              {accounts.map(account => {
+                const subs = subHeadsMap[account.id] || [];
+                const isExpanded = expandedHeads[account.id];
+                const isFromOtherCompany = account.is_global && account.company_id !== user.company.id;
+                return (
+                  <div key={account.id} style={{border: '1px solid var(--border-color)', borderRadius: '8px', overflow: 'hidden', background: isFromOtherCompany ? '#f0f9ff' : 'white'}}>
+                    <div style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.75rem', background: subs.length > 0 ? '#fef3c7' : (isFromOtherCompany ? '#f0f9ff' : 'white')}}>
+                      <div style={{display: 'flex', alignItems: 'center', gap: '0.5rem', flex: 1, cursor: subs.length > 0 ? 'pointer' : 'default'}} onClick={() => subs.length > 0 && toggleExpand(account.id)}>
+                        {subs.length > 0 && <span style={{fontSize: '0.8rem'}}>{isExpanded ? '▼' : '▶'}</span>}
+                        <span style={{fontWeight: 500}}>{account.name}</span>
+                        {account.is_global && <span style={{fontSize: '0.7rem', background: '#3b82f6', color: 'white', padding: '2px 6px', borderRadius: '4px'}}>🌐 Global</span>}
+                        {isFromOtherCompany && <span style={{fontSize: '0.65rem', color: '#666'}}>(from other company)</span>}
+                        {subs.length > 0 && <span style={{fontSize: '0.75rem', color: '#666', background: '#e5e7eb', padding: '0.1rem 0.4rem', borderRadius: '10px'}}>{subs.length} sub</span>}
+                      </div>
+                      {account.company_id === user.company.id ? (
+                        <div style={{display: 'flex', gap: '0.5rem'}}>
+                          <button className="btn btn-sm btn-secondary" onClick={() => { setSelectedHeadForSub(account); setShowAddSubModal(true); }} title="Add Sub-Category">➕ Sub</button>
+                          <button className="btn btn-sm btn-secondary" onClick={() => { setEditAccount({ id: account.id, name: account.name, is_global: account.is_global || false }); setShowEditModal(true); }} title="Edit">✏️</button>
+                          <button className="btn btn-sm btn-danger" onClick={() => handleDeleteAccount(account)} title="Delete">🗑️</button>
+                        </div>
+                      ) : (
+                        <span style={{fontSize: '0.75rem', color: '#888', padding: '0.25rem 0.5rem'}}>View Only</span>
+                      )}
+                    </div>
+                    {isExpanded && subs.length > 0 && (
+                      <div style={{background: '#f9fafb', borderTop: '1px solid var(--border-color)'}}>
+                        {subs.map(sub => (
+                          <div key={sub.id} style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.5rem 0.75rem 0.5rem 2rem', borderBottom: '1px solid #eee'}}>
+                            <span style={{fontSize: '0.9rem', color: '#555'}}>↳ {sub.name}</span>
+                            <div style={{display: 'flex', gap: '0.25rem'}}>
+                              <button className="btn btn-sm" onClick={() => { setEditSubAccount({ id: sub.id, name: sub.name }); setShowEditSubModal(true); }} style={{padding: '0.2rem 0.5rem', fontSize: '0.75rem', color: '#f59e0b'}}>✏️</button>
+                              <button className="btn btn-sm" onClick={() => handleDeleteSubAccount(sub)} style={{padding: '0.2rem 0.5rem', fontSize: '0.75rem', color: '#dc2626'}}>🗑️</button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {showAddModal && (
+        <div className="modal-overlay" onClick={() => setShowAddModal(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3 className="modal-title">➕ Add Head of Account</h3>
+              <button className="modal-close" onClick={() => setShowAddModal(false)}>×</button>
+            </div>
+            <div className="modal-body">
+              <div className="form-group">
+                <label className="form-label">Account Name</label>
+                <input 
+                  type="text" 
+                  className="form-input" 
+                  value={newAccount} 
+                  onChange={e => setNewAccount(e.target.value)}
+                  placeholder="e.g., Equipment Purchase"
+                  onKeyPress={e => e.key === 'Enter' && handleAddAccount()}
+                />
+              </div>
+              <div className="form-group" style={{background: '#f0f9ff', padding: '1rem', borderRadius: '8px', border: '1px solid #bfdbfe'}}>
+                <label style={{display: 'flex', alignItems: 'center', gap: '0.75rem', cursor: 'pointer'}}>
+                  <input type="checkbox" checked={newAccountIsGlobal} onChange={e => setNewAccountIsGlobal(e.target.checked)} style={{width: '18px', height: '18px'}} />
+                  <span style={{fontWeight: 500}}>🌐 Available for All Companies</span>
+                </label>
+                <p style={{fontSize: '0.8rem', color: '#666', marginTop: '0.5rem', marginLeft: '2rem'}}>
+                  If checked, this account will be visible and selectable across all companies.
+                </p>
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setShowAddModal(false)}>Cancel</button>
+              <button className="btn btn-primary" onClick={handleAddAccount}>Add</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showImportModal && (
+        <div className="modal-overlay" onClick={() => setShowImportModal(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3 className="modal-title">📥 Import Accounts</h3>
+              <button className="modal-close" onClick={() => setShowImportModal(false)}>×</button>
+            </div>
+            <div className="modal-body">
+              <div style={{background: '#e0f2fe', padding: '1rem', borderRadius: '8px', marginBottom: '1rem', border: '1px solid #0ea5e9'}}>
+                <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
+                  <div>
+                    <strong style={{color: '#0369a1'}}>📋 Download Template First!</strong>
+                    <p style={{fontSize: '0.85rem', color: '#0369a1', margin: '0.25rem 0 0'}}>Use our standard format for error-free import</p>
+                  </div>
+                  <button className="btn btn-sm btn-primary" onClick={handleDownloadAccountTemplate}>📥 Download Template</button>
+                </div>
+              </div>
+              <div style={{display: 'flex', gap: '1rem', marginBottom: '1rem'}}>
+                <button 
+                  className={`btn ${importMethod === 'excel' ? 'btn-primary' : 'btn-secondary'}`} 
+                  onClick={() => setImportMethod('excel')}
+                  style={{flex: 1}}
+                >
+                  📊 Import from Excel
+                </button>
+                <button 
+                  className={`btn ${importMethod === 'paste' ? 'btn-primary' : 'btn-secondary'}`} 
+                  onClick={() => setImportMethod('paste')}
+                  style={{flex: 1}}
+                >
+                  📋 Paste Text
+                </button>
+              </div>
+              
+              {importMethod === 'excel' ? (
+                <div>
+                  <p style={{marginBottom: '1rem', color: 'var(--text-secondary)'}}>
+                    Upload an Excel file (.xlsx, .xls) with account names in Column A
+                  </p>
+                  <div className="form-group">
+                    <input 
+                      type="file" 
+                      accept=".xlsx,.xls,.csv" 
+                      className="form-input" 
+                      onChange={handleExcelImport}
+                      style={{padding: '0.75rem'}}
+                    />
+                  </div>
+                  <div style={{background: '#fef3c7', padding: '1rem', borderRadius: '8px', marginTop: '1rem', border: '1px solid #f59e0b'}}>
+                    <strong style={{color: '#92400e'}}>📋 Standard Format (Column A, Row 4 onwards):</strong>
+                    <table style={{width: '100%', marginTop: '0.5rem', fontSize: '0.85rem', borderCollapse: 'collapse'}}>
+                      <thead><tr style={{background: '#f59e0b', color: 'white'}}>
+                        <th style={{padding: '6px', border: '1px solid #d97706', textAlign: 'left'}}>Head of Account</th>
+                      </tr></thead>
+                      <tbody>
+                        <tr><td style={{padding: '6px', border: '1px solid #fcd34d'}}>Salaries & Wages</td></tr>
+                        <tr><td style={{padding: '6px', border: '1px solid #fcd34d'}}>Office Supplies</td></tr>
+                        <tr><td style={{padding: '6px', border: '1px solid #fcd34d'}}>Transportation</td></tr>
+                        <tr><td style={{padding: '6px', border: '1px solid #fcd34d'}}>Maintenance & Repairs</td></tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  <p style={{marginBottom: '1rem', color: 'var(--text-secondary)'}}>
+                    Paste account names below (one per line)
+                  </p>
+                  <div className="form-group">
+                    <textarea 
+                      className="form-input" 
+                      rows="10" 
+                      value={importData} 
+                      onChange={e => setImportData(e.target.value)}
+                      placeholder="Salaries & Wages&#10;Office Supplies&#10;Transportation&#10;Maintenance & Repairs&#10;Professional Fees"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setShowImportModal(false)}>Cancel</button>
+              {importMethod === 'paste' && <button className="btn btn-primary" onClick={handleImport} disabled={submitting}>{submitting ? 'Importing...' : 'Import'}</button>}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showAddSubModal && selectedHeadForSub && (
+        <div className="modal-overlay" onClick={() => { setShowAddSubModal(false); setSelectedHeadForSub(null); }}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3 className="modal-title">➕ Add Sub-Category</h3>
+              <button className="modal-close" onClick={() => { setShowAddSubModal(false); setSelectedHeadForSub(null); }}>×</button>
+            </div>
+            <div className="modal-body">
+              <div style={{background: '#fef3c7', padding: '0.75rem', borderRadius: '8px', marginBottom: '1rem'}}>
+                <strong>Parent:</strong> {selectedHeadForSub.name}
+              </div>
+              <div className="form-group">
+                <label className="form-label">Sub-Category Name</label>
+                <input 
+                  type="text" 
+                  className="form-input" 
+                  value={newSubAccount} 
+                  onChange={e => setNewSubAccount(e.target.value)}
+                  placeholder="e.g., Labour Charges - Civil Work"
+                  onKeyPress={e => e.key === 'Enter' && handleAddSubAccount()}
+                />
+              </div>
+              <p style={{fontSize: '0.85rem', color: '#666', marginTop: '0.5rem'}}>
+                Example: For "Salaries & Wages", you might add "Labour Charges - Civil Work", "Labour Charges - Electrical", etc.
+              </p>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => { setShowAddSubModal(false); setSelectedHeadForSub(null); }}>Cancel</button>
+              <button className="btn btn-primary" onClick={handleAddSubAccount} disabled={submitting}>{submitting ? 'Adding...' : 'Add Sub-Category'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showEditModal && (
+        <div className="modal-overlay" onClick={() => setShowEditModal(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3 className="modal-title">✏️ Edit Head of Account</h3>
+              <button className="modal-close" onClick={() => setShowEditModal(false)}>×</button>
+            </div>
+            <div className="modal-body">
+              <div className="form-group">
+                <label className="form-label">Account Name</label>
+                <input 
+                  type="text" 
+                  className="form-input" 
+                  value={editAccount.name} 
+                  onChange={e => setEditAccount({...editAccount, name: e.target.value})}
+                  placeholder="Account name"
+                  onKeyPress={e => e.key === 'Enter' && handleEditAccount()}
+                />
+              </div>
+              <div className="form-group" style={{background: '#f0f9ff', padding: '1rem', borderRadius: '8px', border: '1px solid #bfdbfe'}}>
+                <label style={{display: 'flex', alignItems: 'center', gap: '0.75rem', cursor: 'pointer'}}>
+                  <input type="checkbox" checked={editAccount.is_global || false} onChange={e => setEditAccount({...editAccount, is_global: e.target.checked})} style={{width: '18px', height: '18px'}} />
+                  <span style={{fontWeight: 500}}>🌐 Available for All Companies</span>
+                </label>
+                <p style={{fontSize: '0.8rem', color: '#666', marginTop: '0.5rem', marginLeft: '2rem'}}>
+                  If checked, this account will be visible and selectable across all companies.
+                </p>
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setShowEditModal(false)}>Cancel</button>
+              <button className="btn btn-primary" onClick={handleEditAccount} disabled={submitting}>{submitting ? 'Updating...' : 'Update'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showEditSubModal && (
+        <div className="modal-overlay" onClick={() => setShowEditSubModal(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3 className="modal-title">✏️ Edit Sub-Category</h3>
+              <button className="modal-close" onClick={() => setShowEditSubModal(false)}>×</button>
+            </div>
+            <div className="modal-body">
+              <div className="form-group">
+                <label className="form-label">Sub-Category Name</label>
+                <input 
+                  type="text" 
+                  className="form-input" 
+                  value={editSubAccount.name} 
+                  onChange={e => setEditSubAccount({...editSubAccount, name: e.target.value})}
+                  placeholder="Sub-category name"
+                  onKeyPress={e => e.key === 'Enter' && handleEditSubAccount()}
+                />
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setShowEditSubModal(false)}>Cancel</button>
+              <button className="btn btn-primary" onClick={handleEditSubAccount} disabled={submitting}>{submitting ? 'Updating...' : 'Update'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BILL ATTACHMENT PANEL
+// ─────────────────────────────────────────────────────────────────────────────
+const BillAttachmentPanel = ({ voucherId, voucherSerialNumber, voucherType = 'regular', suspenseId, settlementId, companyId: companyIdProp }) => {
+  const { user, addToast } = useApp();
+  const isMobile = /Mobi|Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || navigator.maxTouchPoints > 1;
+  const companyId = companyIdProp || user.company.id;
+  const [attachments, setAttachments] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  // mode: null | 'camera' | 'qr'
+  const [mode, setMode] = useState(null);
+  const [cameraStream, setCameraStream] = useState(null);
+  const [cameraError, setCameraError] = useState('');
+  const [captureSession, setCaptureSession] = useState(null);
+  const [qrImageUrl, setQrImageUrl] = useState(null);
+  const [polling, setPolling] = useState(false);
+  const [pollExpiry, setPollExpiry] = useState(null);
+  const videoRef = React.useRef(null);
+  const canvasRef = React.useRef(null);
+  const pollIntervalRef = React.useRef(null);
+  const [confirmDeleteId, setConfirmDeleteId] = React.useState(null);
+  // Category required when uploading directly to a suspense voucher (not to an entry)
+  const [attachmentCategory, setAttachmentCategory] = React.useState(null);
+  const needsCategory = voucherType === 'suspense' && !settlementId;
+  // Holds encoded file data when a high-confidence voucher mismatch is detected;
+  // cleared when user dismisses the warning (Cancel) or proceeds (Upload Anyway).
+  const [mismatchWarning, setMismatchWarning] = React.useState(null);
+
+  const loadAttachments = async () => {
+    setLoading(true);
+    try {
+      const params = {};
+      if (voucherId)    params.voucherId    = voucherId;
+      if (suspenseId)   params.suspenseId   = suspenseId;
+      if (settlementId) params.settlementId = settlementId;
+      const data = await api.getAttachments(params);
+      setAttachments(data.attachments || []);
+    } catch {}
+    setLoading(false);
+  };
+
+  useEffect(() => { loadAttachments(); }, [voucherId, suspenseId, settlementId]);
+
+  // Attach camera stream to video element after render
+  useEffect(() => {
+    if (mode === 'camera' && cameraStream && videoRef.current) {
+      videoRef.current.srcObject = cameraStream;
+    }
+  }, [mode, cameraStream]);
+
+  const compressAndEncode = async (file) => {
+    let processedFile = file;
+    if (file.type.startsWith('image/') && typeof imageCompression !== 'undefined') {
+      try {
+        processedFile = await imageCompression(file, { maxSizeMB: 1, maxWidthOrHeight: 1600, useWebWorker: true });
+      } catch {}
+    }
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve({ data: reader.result, mimeType: processedFile.type, name: file.name });
+      reader.onerror = reject;
+      reader.readAsDataURL(processedFile);
+    });
+  };
+
+  const handleFileUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 10 * 1024 * 1024) { addToast('File too large (max 10 MB)', 'error'); return; }
+    setUploading(true);
+    try {
+      const { data, mimeType, name } = await compressAndEncode(file);
+
+      // Pre-upload receipt-matching check: only for regular vouchers.
+      // On any error (API failure, network issue) we silently skip the check
+      // and let the upload proceed — matching must never block an upload.
+      if (voucherType === 'regular' && voucherId) {
+        try {
+          const matchResult = await api.matchReceiptToVoucher({
+            requestedBy: user.id,
+            receiptData: data.replace(/^data:.*?;base64,/, ''),
+            receiptMimeType: mimeType,
+            companyId,
+          });
+          if (
+            matchResult.confidence === 'high' &&
+            matchResult.matchedVoucherId &&
+            matchResult.matchedVoucherId !== voucherId
+          ) {
+            // High-confidence mismatch: pause and let the user decide.
+            setUploading(false);
+            setMismatchWarning({ fileData: data, mimeType, fileName: name, extractedReference: matchResult.extractedReference });
+            e.target.value = '';
+            return;
+          }
+        } catch { /* matching failed — proceed with upload unchanged */ }
+      }
+
+      const result = await api.uploadAttachment({ fileData: data, mimeType, fileName: name, voucherId, voucherType, suspenseId, settlementId, uploadedBy: user.id, companyId, attachmentCategory: needsCategory ? attachmentCategory : undefined });
+      if (result.success) { addToast('Attachment uploaded', 'success'); loadAttachments(); if (needsCategory) setAttachmentCategory(null); }
+      else addToast(result.error || 'Upload failed', 'error');
+    } catch { addToast('Upload failed', 'error'); }
+    setUploading(false);
+    e.target.value = '';
+  };
+
+  const handleMismatchContinue = async () => {
+    const { fileData, mimeType, fileName } = mismatchWarning;
+    setMismatchWarning(null);
+    setUploading(true);
+    try {
+      const result = await api.uploadAttachment({ fileData, mimeType, fileName, voucherId, voucherType, suspenseId, settlementId, uploadedBy: user.id, companyId, attachmentCategory: needsCategory ? attachmentCategory : undefined });
+      if (result.success) { addToast('Attachment uploaded', 'success'); loadAttachments(); if (needsCategory) setAttachmentCategory(null); }
+      else addToast(result.error || 'Upload failed', 'error');
+    } catch { addToast('Upload failed', 'error'); }
+    setUploading(false);
+  };
+
+  const handleDelete = async (attId) => {
+    const result = await api.deleteAttachment(attId, user.id);
+    setConfirmDeleteId(null);
+    if (result.success) { addToast('Attachment deleted', 'success'); loadAttachments(); }
+    else addToast(result.error || 'Delete failed', 'error');
+  };
+
+  // ── CAMERA / WEBCAM / SCANNER ─────────────────────────────────────────────
+  const startCamera = async () => {
+    setCameraError('');
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 1280 }, height: { ideal: 720 } }
+      });
+      setCameraStream(stream);
+      setMode('camera');
+    } catch {
+      setCameraError('No camera or webcam detected. Please use "Upload File" to attach a scanned document.');
+    }
+  };
+
+  const stopCamera = () => {
+    if (cameraStream) cameraStream.getTracks().forEach(t => t.stop());
+    setCameraStream(null);
+    setMode(null);
+    setCameraError('');
+  };
+
+  const capturePhoto = () => {
+    if (!videoRef.current || !canvasRef.current) return;
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext('2d').drawImage(video, 0, 0);
+    if (cameraStream) cameraStream.getTracks().forEach(t => t.stop());
+    setCameraStream(null);
+    setMode(null);
+    canvas.toBlob(async (blob) => {
+      if (!blob) { addToast('Failed to capture photo', 'error'); return; }
+      setUploading(true);
+      try {
+        const file = new File([blob], `scan_${Date.now()}.jpg`, { type: 'image/jpeg' });
+        const { data, mimeType, name } = await compressAndEncode(file);
+        const result = await api.uploadAttachment({ fileData: data, mimeType, fileName: name, voucherId, voucherType, suspenseId, settlementId, uploadedBy: user.id, companyId, attachmentCategory: needsCategory ? attachmentCategory : undefined });
+        if (result.success) { addToast('Photo captured and uploaded', 'success'); loadAttachments(); if (needsCategory) setAttachmentCategory(null); }
+        else addToast(result.error || 'Upload failed', 'error');
+      } catch { addToast('Upload failed', 'error'); }
+      setUploading(false);
+    }, 'image/jpeg', 0.88);
+  };
+
+  // ── SEND TO PHONE (QR relay) ──────────────────────────────────────────────
+  const startQRCapture = async () => {
+    try {
+      const result = await api.createCaptureSession({ companyId, createdBy: user.id, voucherId, suspenseId, settlementId, contextType: voucherType, attachmentCategory: needsCategory ? attachmentCategory : undefined });
+      if (!result.success) { addToast('Failed to create session', 'error'); return; }
+      const session = result.session;
+      setCaptureSession(session);
+      const url = `${window.location.origin}/capture/${session.id}`;
+      // Use QR Server API — no JS library needed
+      setQrImageUrl(`https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(url)}&bgcolor=ffffff&color=1a1a1a&margin=10`);
+      setMode('qr');
+      setPollExpiry(new Date(session.expires_at));
+      setPolling(true);
+    } catch { addToast('Failed to start phone capture', 'error'); }
+  };
+
+  useEffect(() => {
+    if (!polling || !captureSession) return;
+    let lastKnownCount = attachments.length;
+    const stop = (msg, isError) => {
+      clearInterval(pollIntervalRef.current);
+      setPolling(false); setMode(null); setCaptureSession(null); setQrImageUrl(null);
+      addToast(msg, isError ? 'error' : 'success');
+    };
+    const poll = async () => {
+      try {
+        const data = await api.getCaptureSession(captureSession.id);
+        const s = data.session;
+        if (s.status === 'used') { stop('Photo received from phone!', false); loadAttachments(); return; }
+        if (s.status === 'expired') { stop('QR session expired', true); return; }
+        // Fallback: directly check if a new attachment appeared
+        // (handles cases where the session status update failed server-side)
+        if (voucherId || suspenseId || settlementId) {
+          try {
+            const params = {};
+            if (voucherId)    params.voucherId    = voucherId;
+            if (suspenseId)   params.suspenseId   = suspenseId;
+            if (settlementId) params.settlementId = settlementId;
+            const attData = await api.getAttachments(params);
+            const newList = attData.attachments || [];
+            if (newList.length > lastKnownCount) {
+              lastKnownCount = newList.length;
+              stop('Photo received from phone!', false);
+              setAttachments(newList);
+            }
+          } catch {}
+        }
+      } catch {}
+    };
+    pollIntervalRef.current = setInterval(poll, 4000);
+    return () => clearInterval(pollIntervalRef.current);
+  }, [polling, captureSession]);
+
+  const cancelQR = () => {
+    clearInterval(pollIntervalRef.current);
+    setMode(null); setCaptureSession(null); setQrImageUrl(null); setPolling(false);
+  };
+
+  const phoneUrl = captureSession ? `${window.location.origin}/capture/${captureSession.id}` : '';
+  const expiryMinutes = pollExpiry ? Math.max(0, Math.ceil((pollExpiry - Date.now()) / 60000)) : 0;
+
+  return (
+    <div style={{ marginTop: '1.5rem', padding: '1rem', background: '#f8f9fa', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
+        {Icons.paperclip}
+        <span style={{ fontWeight: 600, fontSize: '0.95rem' }}>Bill Attachments</span>
+        <span style={{ marginLeft: 'auto', fontSize: '0.8rem', color: '#666' }}>{attachments.length} file{attachments.length !== 1 ? 's' : ''}</span>
+      </div>
+
+      {/* Attachment list */}
+      {loading ? (
+        <div style={{ textAlign: 'center', padding: '1rem', color: '#666' }}>{Icons.loader} Loading...</div>
+      ) : attachments.length > 0 ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '1rem' }}>
+          {attachments.map(att => (
+            <div key={att.id} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.5rem 0.75rem', background: 'white', borderRadius: '6px', border: '1px solid #e2e8f0' }}>
+              <span style={{ fontSize: '1.2rem' }}>{att.mime_type?.includes('pdf') ? '📄' : '🖼️'}</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 500, fontSize: '0.85rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{att.file_name}</div>
+                <div style={{ fontSize: '0.75rem', color: '#888' }}>by {att.uploader?.name || 'Unknown'} · {new Date(att.uploaded_at).toLocaleDateString('en-IN')}</div>
+                {att.attachment_category === 'transfer_receipt' && (
+                  <span style={{ display: 'inline-block', marginTop: '2px', background: '#dbeafe', color: '#1d4ed8', fontSize: '0.65rem', padding: '1px 5px', borderRadius: '3px', fontWeight: 600 }}>🏦 Transfer Receipt</span>
+                )}
+                {att.attachment_category === 'expense_bill' && (
+                  <span style={{ display: 'inline-block', marginTop: '2px', background: '#d1fae5', color: '#065f46', fontSize: '0.65rem', padding: '1px 5px', borderRadius: '3px', fontWeight: 600 }}>🧾 Expense Bill</span>
+                )}
+              </div>
+              {confirmDeleteId !== att.id && (
+                <a href={att.public_url} target="_blank" rel="noopener noreferrer" className="btn btn-sm btn-secondary" style={{ padding: '4px 8px', fontSize: '0.75rem' }}>{Icons.eye}</a>
+              )}
+              {user.role !== 'auditor' && (att.uploaded_by === user.id || user.role === 'admin' || user.isSuperAdmin) && (
+                confirmDeleteId === att.id ? (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    <span style={{ fontSize: '0.75rem', color: '#dc2626', fontWeight: 600, whiteSpace: 'nowrap' }}>Delete?</span>
+                    <button className="btn btn-sm btn-danger" style={{ padding: '3px 8px', fontSize: '0.75rem' }} onClick={() => handleDelete(att.id)}>Yes</button>
+                    <button className="btn btn-sm btn-secondary" style={{ padding: '3px 8px', fontSize: '0.75rem' }} onClick={() => setConfirmDeleteId(null)}>No</button>
+                  </div>
+                ) : (
+                  <button className="btn btn-sm btn-danger" style={{ padding: '4px 8px', fontSize: '0.75rem' }} onClick={() => setConfirmDeleteId(att.id)}>{Icons.x}</button>
+                )
+              )}
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div style={{ textAlign: 'center', padding: '1rem', color: '#999', fontSize: '0.85rem', marginBottom: '0.75rem' }}>No attachments yet</div>
+      )}
+
+      {/* ── CAMERA / WEBCAM MODE ── */}
+      {mode === 'camera' && (
+        <div style={{ background: 'white', borderRadius: '8px', border: '2px solid #3b82f6', padding: '1rem', marginBottom: '0.75rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+            <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>📷 Position the bill in view, then click Capture</span>
+            <button className="btn btn-sm btn-secondary" onClick={stopCamera}>{Icons.x} Cancel</button>
+          </div>
+          <video ref={videoRef} autoPlay playsInline muted style={{ width: '100%', borderRadius: '6px', background: '#000', maxHeight: 300, objectFit: 'cover', display: 'block' }} />
+          <canvas ref={canvasRef} style={{ display: 'none' }} />
+          <button className="btn btn-primary" style={{ width: '100%', marginTop: '0.75rem' }} onClick={capturePhoto}>
+            📷 Capture Photo
+          </button>
+        </div>
+      )}
+
+      {cameraError && (
+        <div style={{ background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: '6px', padding: '0.5rem 0.75rem', fontSize: '0.8rem', color: '#dc2626', marginBottom: '0.75rem' }}>
+          ⚠️ {cameraError}
+        </div>
+      )}
+
+      {/* ── SEND TO PHONE (QR relay) MODE ── */}
+      {mode === 'qr' && (
+        <div style={{ background: 'white', borderRadius: '8px', border: '2px dashed #f5841f', padding: '1rem', marginBottom: '0.75rem' }}>
+          <p style={{ fontWeight: 700, fontSize: '0.95rem', marginBottom: '0.25rem', textAlign: 'center' }}>📱 How to connect your phone:</p>
+          <ol style={{ fontSize: '0.82rem', color: '#555', paddingLeft: '1.25rem', marginBottom: '0.75rem', lineHeight: 1.8 }}>
+            <li>Open your phone's camera app and scan the QR code below</li>
+            <li>A link will open in your phone's browser</li>
+            <li>Take a photo of the bill — it will appear here automatically</li>
+          </ol>
+          <div style={{ textAlign: 'center' }}>
+            {qrImageUrl
+              ? <img src={qrImageUrl} alt="QR Code" style={{ width: 200, height: 200, border: '1px solid #eee', borderRadius: 4 }} />
+              : <div style={{ width: 200, height: 200, background: '#f3f4f6', margin: '0 auto', borderRadius: 4, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#999', fontSize: '0.8rem' }}>{Icons.loader} Loading...</div>
+            }
+          </div>
+          <p style={{ fontSize: '0.75rem', color: '#888', textAlign: 'center', margin: '0.5rem 0 0.25rem' }}>Or copy this link and open it on your phone:</p>
+          <div style={{ background: '#f3f4f6', borderRadius: 6, padding: '6px 10px', fontSize: '0.72rem', color: '#444', wordBreak: 'break-all', fontFamily: 'monospace', marginBottom: '0.5rem' }}>
+            {phoneUrl}
+          </div>
+          <p style={{ fontSize: '0.75rem', color: '#aaa', textAlign: 'center', marginBottom: '0.75rem' }}>
+            {Icons.clock} Waiting for photo... (expires in {expiryMinutes}m)
+          </p>
+          <button className="btn btn-sm btn-secondary" style={{ display: 'block', margin: '0 auto' }} onClick={cancelQR}>{Icons.x} Cancel</button>
+        </div>
+      )}
+
+      {/* ── CATEGORY SELECTOR — required for suspense-level uploads ── */}
+      {!mode && user.role !== 'auditor' && needsCategory && (
+        <div style={{ background: '#fffbeb', border: '1px solid #fde68a', borderRadius: '8px', padding: '0.75rem', marginBottom: '0.75rem' }}>
+          <div style={{ fontSize: '0.8rem', fontWeight: 700, color: '#92400e', marginBottom: '0.5rem' }}>What are you uploading? *</div>
+          <div style={{ display: 'flex', gap: '0.5rem' }}>
+            <button
+              onClick={() => setAttachmentCategory('transfer_receipt')}
+              style={{ flex: 1, padding: '6px 8px', fontSize: '0.78rem', fontWeight: 600, borderRadius: '6px', border: attachmentCategory === 'transfer_receipt' ? '2px solid #1d4ed8' : '1px solid #d1d5db', background: attachmentCategory === 'transfer_receipt' ? '#dbeafe' : 'white', color: attachmentCategory === 'transfer_receipt' ? '#1d4ed8' : '#374151', cursor: 'pointer' }}
+            >🏦 Transfer Receipt</button>
+            <button
+              onClick={() => setAttachmentCategory('expense_bill')}
+              style={{ flex: 1, padding: '6px 8px', fontSize: '0.78rem', fontWeight: 600, borderRadius: '6px', border: attachmentCategory === 'expense_bill' ? '2px solid #065f46' : '1px solid #d1d5db', background: attachmentCategory === 'expense_bill' ? '#d1fae5' : 'white', color: attachmentCategory === 'expense_bill' ? '#065f46' : '#374151', cursor: 'pointer' }}
+            >🧾 Expense Bill</button>
+          </div>
+          {!attachmentCategory && <p style={{ fontSize: '0.72rem', color: '#9ca3af', margin: '0.4rem 0 0' }}>Select the document type before uploading.</p>}
+        </div>
+      )}
+
+      {/* ── RECEIPT MISMATCH WARNING ── */}
+      {mismatchWarning && (
+        <div style={{ background: '#fffbeb', border: '2px solid #f59e0b', borderRadius: '10px', padding: '1rem', marginBottom: '0.75rem' }}>
+          <p style={{ fontWeight: 700, color: '#92400e', marginBottom: '0.5rem', fontSize: '0.9rem' }}>⚠️ Receipt may belong to a different voucher</p>
+          <p style={{ fontSize: '0.875rem', color: '#78350f', lineHeight: 1.5, marginBottom: '0.75rem' }}>
+            This receipt appears to reference <strong style={{ fontFamily: 'monospace' }}>{mismatchWarning.extractedReference}</strong>,
+            {' '}but you are uploading it to <strong style={{ fontFamily: 'monospace' }}>{voucherSerialNumber}</strong>. Continue anyway?
+          </p>
+          <div style={{ display: 'flex', gap: '0.5rem' }}>
+            <button className="btn btn-sm btn-secondary" onClick={() => setMismatchWarning(null)}>Cancel</button>
+            <button className="btn btn-sm" style={{ background: '#f59e0b', color: '#fff', border: 'none', borderRadius: '6px', padding: '4px 14px', fontWeight: 600, cursor: 'pointer' }} onClick={handleMismatchContinue}>
+              {uploading ? Icons.loader : null} Upload Anyway
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── ACTION BUTTONS (shown when no mode active) ── */}
+      {!mode && user.role !== 'auditor' && (
+        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+          <label className="btn btn-sm btn-secondary" style={{ cursor: needsCategory && !attachmentCategory ? 'not-allowed' : 'pointer', display: 'inline-flex', alignItems: 'center', gap: '4px', opacity: needsCategory && !attachmentCategory ? 0.45 : 1 }}>
+            {uploading ? Icons.loader : Icons.upload} {uploading ? 'Uploading...' : 'Upload File'}
+            <input type="file" accept="image/*,.pdf" style={{ display: 'none' }} onChange={handleFileUpload} disabled={uploading || (needsCategory && !attachmentCategory)} />
+          </label>
+          {isMobile && (
+            <button className="btn btn-sm btn-secondary" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', opacity: needsCategory && !attachmentCategory ? 0.45 : 1 }} onClick={needsCategory && !attachmentCategory ? undefined : startCamera} disabled={needsCategory && !attachmentCategory}>
+              {Icons.camera} Use Camera
+            </button>
+          )}
+          <button className="btn btn-sm btn-secondary" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', opacity: needsCategory && !attachmentCategory ? 0.45 : 1 }} onClick={needsCategory && !attachmentCategory ? undefined : startQRCapture} disabled={needsCategory && !attachmentCategory}>
+            {Icons.qrCode} Send to Phone
+          </button>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SUSPENSE VOUCHER FORM
+// ─────────────────────────────────────────────────────────────────────────────
+const SuspenseVoucherForm = ({ onCreated, onViewDetail }) => {
+  const { user, addToast } = useApp();
+  const [staffPayees, setStaffPayees] = useState([]);
+  const [activeVouchers, setActiveVouchers] = useState({}); // payeeId → voucher
+  const [activeBlock, setActiveBlock] = useState(null); // the active voucher for selected payee
+  const [form, setForm] = useState({ staffPayeeId: '', purpose: '', advanceAmount: '', paymentMode: 'Cash', narration: '' });
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    api.getPayees(user.company.id).then(data => {
+      if (Array.isArray(data)) setStaffPayees(data.filter(p => p.is_staff && p.company_id === user.company.id));
+    });
+    // Load all active suspense vouchers to detect conflicts upfront
+    api.getSuspenseVouchers(user.company.id, {}).then(data => {
+      const vouchers = Array.isArray(data) ? data : (data?.vouchers || []);
+      const map = {};
+      for (const v of vouchers) {
+        if (['pending_approval', 'open', 'partial'].includes(v.status) && v.staff_payee_id) {
+          if (!map[v.staff_payee_id]) map[v.staff_payee_id] = v; // keep first (earliest)
+        }
+      }
+      setActiveVouchers(map);
+    });
+  }, [user.company.id]);
+
+  const handlePayeeChange = (payeeId) => {
+    setForm(f => ({ ...f, staffPayeeId: payeeId }));
+    setActiveBlock(payeeId && activeVouchers[payeeId] ? activeVouchers[payeeId] : null);
+  };
+
+  const handleSubmit = async () => {
+    if (!form.staffPayeeId || !form.purpose || !form.advanceAmount) {
+      addToast('Staff member, purpose and advance amount are required', 'error');
+      return;
+    }
+    if (isNaN(parseFloat(form.advanceAmount)) || parseFloat(form.advanceAmount) <= 0) {
+      addToast('Enter a valid advance amount', 'error');
+      return;
+    }
+    if (activeBlock) {
+      addToast('This staff member already has an active suspense voucher. Please close it first.', 'error');
+      return;
+    }
+    setLoading(true);
+    try {
+      const result = await api.createSuspenseVoucher({
+        companyId: user.company.id,
+        staffPayeeId: form.staffPayeeId,
+        advanceAmount: parseFloat(form.advanceAmount),
+        purpose: form.purpose,
+        narration: form.narration || null,
+        paymentMode: form.paymentMode || null,
+        createdBy: user.id
+      });
+      if (result.success) {
+        addToast(`Suspense voucher ${result.suspenseVoucher.serial_number} created`, 'success');
+        onCreated && onCreated();
+      } else if (result.activeVoucher) {
+        setActiveBlock(result.activeVoucher);
+        addToast(result.error, 'error');
+      } else {
+        addToast(result.error || 'Failed to create suspense voucher', 'error');
+      }
+    } catch { addToast('Failed to create suspense voucher', 'error'); }
+    setLoading(false);
+  };
+
+  return (
+    <div>
+      <div className="page-header">
+        <h1 className="page-title">{Icons.wallet} New Suspense Voucher</h1>
+        <p className="page-subtitle">Request an advance cash disbursement for a staff member</p>
+      </div>
+      <div className="card">
+        <div className="card-header"><h3 className="card-title">{Icons.wallet} Suspense Voucher Details</h3></div>
+        <div className="card-body">
+          <div className="form-group">
+            <label className="form-label">Staff Member *</label>
+            {staffPayees.length === 0 ? (
+              <div style={{ background: '#fef3c7', border: '1px solid #f59e0b', borderRadius: '8px', padding: '0.85rem', fontSize: '0.88rem', color: '#92400e' }}>
+                ⚠️ No staff payees found. Please go to <strong>Manage Payees</strong>, add the staff member, and check <strong>Staff Payee</strong> on their record first.
+              </div>
+            ) : (
+              <select className="form-select" value={form.staffPayeeId} onChange={e => handlePayeeChange(e.target.value)}>
+                <option value="">Select staff member</option>
+                {staffPayees.map(p => <option key={p.id} value={p.id}>{p.name}{p.mobile ? ` · ${p.mobile}` : ''}{activeVouchers[p.id] ? ' ⚠️ Active' : ''}</option>)}
+              </select>
+            )}
+            {activeBlock && (
+              <div style={{ background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: '8px', padding: '0.9rem', marginTop: '0.5rem', fontSize: '0.88rem', color: '#991b1b' }}>
+                <div style={{ fontWeight: 600, marginBottom: '0.4rem' }}>🚫 Cannot create a new voucher</div>
+                <div>This staff member already has an active suspense voucher:</div>
+                <div style={{ margin: '0.4rem 0', padding: '0.5rem 0.75rem', background: 'white', borderRadius: '6px', border: '1px solid #fca5a5', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
+                  <span><strong>{activeBlock.serial_number || activeBlock.serialNumber}</strong> · <span style={{ textTransform: 'capitalize' }}>{activeBlock.status}</span> · Balance: {formatRupees(activeBlock.balance_amount ?? activeBlock.balanceAmount ?? activeBlock.advance_amount)}</span>
+                  {onViewDetail && activeBlock.id && (
+                    <button className="btn btn-sm btn-secondary" style={{ fontSize: '0.78rem', padding: '2px 10px' }} onClick={() => onViewDetail(activeBlock.id)}>View →</button>
+                  )}
+                </div>
+                <div style={{ marginTop: '0.3rem', color: '#b91c1c' }}>Please close or fully settle this voucher before creating a new one. You can also use <strong>💰 Top Up</strong> to add more funds to the existing voucher.</div>
+              </div>
+            )}
+          </div>
+          <div className="form-group">
+            <label className="form-label">Purpose *</label>
+            <input className="form-input" type="text" placeholder="e.g. Field trip expenses" value={form.purpose} onChange={e => setForm(f => ({ ...f, purpose: e.target.value }))} />
+          </div>
+          <div className="form-row">
+            <div className="form-group">
+              <label className="form-label">Advance Amount (₹) *</label>
+              <input className="form-input" type="number" min="0" step="0.01" placeholder="0.00" value={form.advanceAmount} onChange={e => setForm(f => ({ ...f, advanceAmount: e.target.value }))} />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Payment Mode</label>
+              <select className="form-select" value={form.paymentMode} onChange={e => setForm(f => ({ ...f, paymentMode: e.target.value }))}>
+                <option value="Cash">Cash</option>
+                <option value="UPI">UPI</option>
+                <option value="Account Transfer">Account Transfer</option>
+              </select>
+            </div>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Narration (optional)</label>
+            <textarea className="form-input" rows={3} placeholder="Additional notes..." value={form.narration} onChange={e => setForm(f => ({ ...f, narration: e.target.value }))} />
+          </div>
+          <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end', marginTop: '1rem' }}>
+            <button className="btn btn-secondary" onClick={() => onCreated && onCreated()}>Cancel</button>
+            <button className="btn btn-primary" onClick={handleSubmit} disabled={loading || !!activeBlock}>{loading && Icons.loader}{Icons.send} Submit for Approval</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// PENDING TOP-UP APPROVALS PANEL (Admin / Super Admin only)
+// ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// PENDING NEW SUSPENSE VOUCHERS PANEL (Admin / Super Admin only)
+// ─────────────────────────────────────────────────────────────────────────────
+const PendingNewVouchersPanel = ({ onViewVoucher }) => {
+  const { user, addToast } = useApp();
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [actionId, setActionId] = useState(null);
+  const [showRejectModal, setShowRejectModal] = useState(false);
+  const [rejectingVoucher, setRejectingVoucher] = useState(null);
+  const [rejectReason, setRejectReason] = useState('');
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const data = await api.getSuspenseVouchers(user.company.id, { status: 'pending_approval' });
+      setItems(data.suspenseVouchers || []);
+    } catch { /* silently skip */ }
+    setLoading(false);
+  };
+
+  useEffect(() => { load(); }, [user.company.id]);
+
+  const handleApprove = async (sv) => {
+    setActionId(sv.id);
+    const result = await api.approveSuspenseVoucher(sv.id, user.id);
+    if (result.success) {
+      addToast(`${sv.serial_number} approved — OTP sent to ${result.payeeName || 'staff'} (${result.payeeMobile || ''}). Open the voucher to verify OTP and activate the settlement link.`, 'success');
+      load();
+    } else addToast(result.error || 'Approval failed', 'error');
+    setActionId(null);
+  };
+
+  const openReject = (sv) => { setRejectingVoucher(sv); setRejectReason(''); setShowRejectModal(true); };
+
+  const confirmReject = async () => {
+    setActionId(rejectingVoucher.id);
+    const result = await api.rejectSuspenseVoucher(rejectingVoucher.id, user.id, rejectReason);
+    if (result.success) { addToast(`${rejectingVoucher.serial_number} rejected`, 'success'); setShowRejectModal(false); load(); }
+    else addToast(result.error || 'Rejection failed', 'error');
+    setActionId(null);
+  };
+
+  if (!loading && items.length === 0) return null;
+
+  return (
+    <div className="card" style={{ marginBottom: '1rem', border: '2px solid #f59e0b', borderRadius: '10px' }}>
+      <div style={{ padding: '1rem' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '0.85rem' }}>
+        <span style={{ fontSize: '1.25rem' }}>💼</span>
+        <h3 style={{ fontWeight: 700, fontSize: '0.95rem', color: '#b45309', margin: 0 }}>
+          New Suspense Vouchers — Awaiting Approval
+        </h3>
+        {items.length > 0 && (
+          <span style={{ background: '#f59e0b', color: 'white', borderRadius: '12px', padding: '1px 8px', fontSize: '0.75rem', fontWeight: 700 }}>{items.length}</span>
+        )}
+      </div>
+      {loading ? (
+        <div style={{ color: '#9ca3af', fontSize: '0.85rem' }}>{Icons.loader} Loading...</div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+          {items.map(sv => (
+            <div key={sv.id} style={{ background: '#fffbeb', border: '1px solid #fde68a', borderRadius: '8px', padding: '0.75rem 1rem', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem' }}>
+              <div style={{ flex: 1, minWidth: '180px' }}>
+                <div style={{ fontWeight: 700, fontSize: '0.95rem', color: '#1f2937' }}>
+                  <button style={{ background: 'none', border: 'none', color: '#f5841f', cursor: 'pointer', padding: 0, fontWeight: 700, fontSize: '0.95rem', textDecoration: 'underline' }}
+                    onClick={() => onViewVoucher && onViewVoucher(sv.id)}>{sv.serial_number}</button>
+                  <span style={{ fontWeight: 400, color: '#6b7280', fontSize: '0.8rem', marginLeft: '0.5rem' }}>{sv.purpose}</span>
+                </div>
+                <div style={{ fontSize: '0.82rem', color: '#4b5563', marginTop: '2px' }}>
+                  <span style={{ background: '#10b981', color: 'white', fontSize: '0.68rem', padding: '1px 5px', borderRadius: '3px', fontWeight: 600, marginRight: '4px' }}>👤 Staff</span>
+                  {sv.staff_payee?.name || sv.staff?.name || 'Unknown'}
+                  {sv.payment_mode && <span style={{ color: '#9ca3af' }}> · {sv.payment_mode}</span>}
+                </div>
+                <div style={{ fontSize: '0.75rem', color: '#9ca3af', marginTop: '2px' }}>
+                  Advance: <strong style={{ color: '#f5841f' }}>{formatRupees(sv.advance_amount)}</strong>
+                  {sv.creator?.name && <span> · Requested by {sv.creator.name}</span>}
+                  {' · '}{new Date(sv.created_at).toLocaleDateString('en-IN')}
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: '0.4rem', flexShrink: 0 }}>
+                <button className="btn btn-sm btn-success" disabled={actionId === sv.id} onClick={() => handleApprove(sv)} style={{ fontSize: '0.8rem' }}>
+                  {actionId === sv.id ? Icons.loader : '✅'} Approve
+                </button>
+                <button className="btn btn-sm btn-danger" disabled={actionId === sv.id} onClick={() => openReject(sv)} style={{ fontSize: '0.8rem' }}>
+                  ✕ Reject
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      </div>
+      {showRejectModal && rejectingVoucher && (
+        <div className="modal-overlay" onClick={() => setShowRejectModal(false)}>
+          <div className="modal" style={{ maxWidth: '420px' }} onClick={e => e.stopPropagation()}>
+            <div className="modal-header" style={{ background: '#ef4444', color: 'white' }}>
+              <h3 className="modal-title" style={{ color: 'white' }}>✕ Reject Suspense Voucher</h3>
+              <button className="modal-close" style={{ color: 'white' }} onClick={() => setShowRejectModal(false)}>×</button>
+            </div>
+            <div className="modal-body">
+              <div style={{ background: '#f8fafc', borderRadius: '8px', padding: '0.75rem', marginBottom: '1rem', fontSize: '0.875rem' }}>
+                <strong>{rejectingVoucher.serial_number}</strong> · {rejectingVoucher.purpose} · {formatRupees(rejectingVoucher.advance_amount)}
+                <div style={{ marginTop: '4px', color: '#6b7280', fontSize: '0.8rem' }}>Staff: {rejectingVoucher.staff_payee?.name || rejectingVoucher.staff?.name}</div>
+              </div>
+              <div className="form-group">
+                <label className="form-label">Reason for Rejection (optional)</label>
+                <textarea className="form-input" rows={3} placeholder="Enter reason..." value={rejectReason} onChange={e => setRejectReason(e.target.value)} autoFocus />
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setShowRejectModal(false)}>Cancel</button>
+              <button className="btn btn-danger" onClick={confirmReject} disabled={!!actionId}>{actionId ? Icons.loader : '✕'} Confirm Rejection</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ── HOA Correction Panel (Admin) ─────────────────────────────────────────────
+const HoaCorrectionPanel = () => {
+  const { user, addToast } = useApp();
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [selected, setSelected] = useState(new Set());
+  const [actionId, setActionId] = useState(null);
+  const [showRejectModal, setShowRejectModal] = useState(false);
+  const [rejectingItem, setRejectingItem] = useState(null);
+  const [rejectReason, setRejectReason] = useState('');
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const data = await api.getHoaCorrections(user.company.id, 'pending');
+      setItems(data.proposals || []);
+    } catch { /* skip */ }
+    setLoading(false);
+  };
+  useEffect(() => { load(); }, [user.company.id]);
+
+  const toggleSelect = (id) => setSelected(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const toggleAll = () => setSelected(selected.size === items.length ? new Set() : new Set(items.map(i => i.id)));
+
+  const handleBatchApprove = async () => {
+    if (selected.size === 0) return;
+    setActionId('batch');
+    const result = await api.batchApproveHoaCorrections(user.company.id, Array.from(selected), user.id);
+    if (result.success) {
+      addToast(`${result.approvedCount} HOA correction(s) approved`, 'success');
+      setSelected(new Set());
+      load();
+    } else addToast(result.error || 'Batch approval failed', 'error');
+    setActionId(null);
+  };
+
+  const openReject = (item) => { setRejectingItem(item); setRejectReason(''); setShowRejectModal(true); };
+  const confirmReject = async () => {
+    if (!rejectReason.trim()) return;
+    setActionId(rejectingItem.id);
+    const result = await api.rejectHoaCorrection(rejectingItem.id, user.id, rejectReason);
+    if (result.success) {
+      addToast('Correction rejected', 'success');
+      setShowRejectModal(false);
+      setSelected(s => { const n = new Set(s); n.delete(rejectingItem.id); return n; });
+      load();
+    } else addToast(result.error || 'Rejection failed', 'error');
+    setActionId(null);
+  };
+
+  if (!loading && items.length === 0) return null;
+
+  return (
+    <div className="card" style={{ marginBottom: '1.25rem', border: '2px solid #0891b2', borderRadius: '10px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '0.85rem', flexWrap: 'wrap' }}>
+        <span style={{ fontSize: '1.25rem' }}>✏️</span>
+        <h3 style={{ fontWeight: 700, fontSize: '0.95rem', color: '#0891b2', margin: 0 }}>Pending HOA Corrections</h3>
+        {items.length > 0 && <span style={{ background: '#0891b2', color: 'white', borderRadius: '12px', padding: '1px 8px', fontSize: '0.75rem', fontWeight: 700 }}>{items.length}</span>}
+        {selected.size > 0 && (
+          <button className="btn btn-sm btn-success" style={{ marginLeft: 'auto' }} disabled={actionId === 'batch'} onClick={handleBatchApprove}>
+            {actionId === 'batch' ? Icons.loader : '✅'} Approve Selected ({selected.size})
+          </button>
+        )}
+      </div>
+      {loading ? (
+        <div style={{ color: '#9ca3af', fontSize: '0.85rem' }}>{Icons.loader} Loading...</div>
+      ) : (
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem', minWidth: '720px' }}>
+            <thead>
+              <tr style={{ background: '#ecfeff', borderBottom: '2px solid #a5f3fc' }}>
+                <th style={{ padding: '8px 10px', textAlign: 'center', width: 36 }}>
+                  <input type="checkbox" checked={selected.size === items.length && items.length > 0} onChange={toggleAll} />
+                </th>
+                <th style={{ padding: '8px 10px', textAlign: 'left' }}>Voucher</th>
+                <th style={{ padding: '8px 10px', textAlign: 'left' }}>Current HOA</th>
+                <th style={{ padding: '8px 10px', textAlign: 'left' }}>Proposed HOA</th>
+                <th style={{ padding: '8px 10px', textAlign: 'left' }}>Proposed Sub-Heading</th>
+                <th style={{ padding: '8px 10px', textAlign: 'left' }}>Reason</th>
+                <th style={{ padding: '8px 10px', textAlign: 'left' }}>By / Date</th>
+                <th style={{ padding: '8px 10px', textAlign: 'center' }}>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((item, idx) => (
+                <tr key={item.id} style={{ borderBottom: '1px solid #e0f2fe', background: idx % 2 === 0 ? '#fff' : '#f0fdfe' }}>
+                  <td style={{ padding: '8px 10px', textAlign: 'center' }}>
+                    <input type="checkbox" checked={selected.has(item.id)} onChange={() => toggleSelect(item.id)} />
+                  </td>
+                  <td style={{ padding: '8px 10px', fontWeight: 700, color: '#0369a1', whiteSpace: 'nowrap' }}>{item.voucher?.serial_number}</td>
+                  <td style={{ padding: '8px 10px', color: '#6b7280' }}>{item.current_hoa}{item.current_sub_hoa && <span style={{ color: '#9ca3af' }}> → {item.current_sub_hoa}</span>}</td>
+                  <td style={{ padding: '8px 10px', fontWeight: 600, color: '#065f46' }}>{item.proposed_hoa || <span style={{ color: '#9ca3af' }}>—</span>}</td>
+                  <td style={{ padding: '8px 10px', color: '#065f46' }}>{item.proposed_sub_hoa || <span style={{ color: '#9ca3af' }}>—</span>}</td>
+                  <td style={{ padding: '8px 10px', maxWidth: 200 }}>{item.reason}</td>
+                  <td style={{ padding: '8px 10px', whiteSpace: 'nowrap', color: '#6b7280', fontSize: '0.78rem' }}>
+                    {item.proposer?.name}<br />{new Date(item.created_at).toLocaleDateString('en-IN')}
+                  </td>
+                  <td style={{ padding: '8px 10px', textAlign: 'center' }}>
+                    <button className="btn btn-sm btn-danger" style={{ fontSize: '0.78rem' }} disabled={!!actionId} onClick={() => openReject(item)}>✕ Reject</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {showRejectModal && rejectingItem && (
+        <div className="modal-overlay" onClick={() => setShowRejectModal(false)}>
+          <div className="modal" style={{ maxWidth: '420px' }} onClick={e => e.stopPropagation()}>
+            <div className="modal-header"><h3 className="modal-title">Reject HOA Correction</h3><button className="modal-close" onClick={() => setShowRejectModal(false)}>×</button></div>
+            <div className="modal-body">
+              <p style={{ fontSize: '0.85rem', marginBottom: '0.75rem' }}>Rejecting proposal for <strong>{rejectingItem.voucher?.serial_number}</strong> by {rejectingItem.proposer?.name}.</p>
+              <div className="form-group">
+                <label className="form-label">Reason for rejection *</label>
+                <textarea className="form-input" rows={3} value={rejectReason} onChange={e => setRejectReason(e.target.value)} placeholder="e.g. The proposed HOA is also non-standard. Please resubmit with 'Conveyance Expenses'." />
+              </div>
+              <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+                <button className="btn btn-secondary" onClick={() => setShowRejectModal(false)}>Cancel</button>
+                <button className="btn btn-danger" disabled={!rejectReason.trim() || !!actionId} onClick={confirmReject}>{actionId ? Icons.loader : '✕ Confirm Reject'}</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ── Propose HOA Correction (Auditor, shown inside voucher modal) ──────────────
+const ProposeHoaCorrectionSection = ({ voucher, onProposed }) => {
+  const { user, addToast } = useApp();
+  const [headsData, setHeadsData] = useState([]);
+  const [subHeadsData, setSubHeadsData] = useState([]);
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState({ proposedHoa: '', proposedSubHoa: '', reason: '' });
+  const [loading, setLoading] = useState(false);
+  const [existingPending, setExistingPending] = useState(null);
+  const [checkingPending, setCheckingPending] = useState(false);
+
+  useEffect(() => {
+    if (user.role !== 'auditor') return;
+    api.getHeadsOfAccount(user.company.id).then(data => { if (Array.isArray(data)) setHeadsData(data); });
+    // Check if a pending proposal already exists for this voucher
+    setCheckingPending(true);
+    api.getHoaCorrections(user.company.id, 'pending').then(data => {
+      const existing = (data.proposals || []).find(p => p.voucher_id === voucher.id);
+      setExistingPending(existing || null);
+      setCheckingPending(false);
+    });
+  }, [voucher.id, user.company.id, user.role]);
+
+  useEffect(() => {
+    if (!form.proposedHoa) { setSubHeadsData([]); setForm(f => ({ ...f, proposedSubHoa: '' })); return; }
+    const head = headsData.find(h => h.name === form.proposedHoa);
+    if (head) api.getSubHeadsOfAccount(head.id).then(data => setSubHeadsData(Array.isArray(data) ? data : []));
+    else setSubHeadsData([]);
+  }, [form.proposedHoa, headsData]);
+
+  if (user.role !== 'auditor') return null;
+
+  const handleSubmit = async () => {
+    if (!form.reason.trim()) { addToast('Please provide a reason for the correction', 'error'); return; }
+    if (!form.proposedHoa && !form.proposedSubHoa) { addToast('Propose at least one change (HOA or Sub-Heading)', 'error'); return; }
+    setLoading(true);
+    const result = await api.proposeHoaCorrection(voucher.id, {
+      proposedBy: user.id,
+      proposedHoa: form.proposedHoa || null,
+      proposedSubHoa: form.proposedSubHoa || null,
+      reason: form.reason.trim(),
+    });
+    setLoading(false);
+    if (result.success) {
+      addToast('Correction proposal submitted — Admin has been notified', 'success');
+      setShowForm(false);
+      setExistingPending(result.proposal);
+      if (onProposed) onProposed();
+    } else addToast(result.error || 'Submission failed', 'error');
+  };
+
+  return (
+    <div style={{ marginTop: '1rem', padding: '0.85rem 1rem', background: '#ecfeff', borderRadius: '8px', border: '1.5px solid #a5f3fc' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: checkingPending || existingPending || showForm ? '0.75rem' : 0 }}>
+        <span style={{ fontSize: '1rem' }}>✏️</span>
+        <span style={{ fontWeight: 700, fontSize: '0.9rem', color: '#0891b2' }}>Head of Account Correction</span>
+        {!showForm && !existingPending && !checkingPending && (
+          <button className="btn btn-sm" style={{ marginLeft: 'auto', background: '#0891b2', color: 'white', border: 'none', borderRadius: '6px', padding: '0.3rem 0.75rem', fontSize: '0.8rem', cursor: 'pointer', fontWeight: 600 }} onClick={() => { setForm({ proposedHoa: voucher.head_of_account || '', proposedSubHoa: voucher.sub_head_of_account || '', reason: '' }); setShowForm(true); }}>
+            ✏️ Propose Correction
+          </button>
+        )}
+      </div>
+      {checkingPending && <div style={{ fontSize: '0.82rem', color: '#6b7280' }}>{Icons.loader} Checking...</div>}
+      {existingPending && !showForm && (
+        <div style={{ fontSize: '0.82rem', background: '#fef3c7', borderRadius: '6px', padding: '0.6rem 0.75rem', border: '1px solid #fcd34d' }}>
+          <strong style={{ color: '#92400e' }}>⏳ Pending proposal:</strong>{' '}
+          <span style={{ color: '#78350f' }}>"{existingPending.proposed_hoa || voucher.head_of_account}"</span>
+          {existingPending.proposed_sub_hoa && <span style={{ color: '#78350f' }}> → {existingPending.proposed_sub_hoa}</span>}
+          <span style={{ color: '#9ca3af', marginLeft: '0.4rem' }}>— awaiting Admin approval</span>
+        </div>
+      )}
+      {showForm && (
+        <div>
+          <div style={{ fontSize: '0.82rem', color: '#374151', marginBottom: '0.6rem' }}>
+            <strong>Current:</strong> {voucher.head_of_account}{voucher.sub_head_of_account && ` → ${voucher.sub_head_of_account}`}
+          </div>
+          <div className="form-group">
+            <label className="form-label" style={{ fontSize: '0.82rem' }}>New Head of Account</label>
+            <select className="form-select" value={form.proposedHoa} onChange={e => setForm(f => ({ ...f, proposedHoa: e.target.value, proposedSubHoa: '' }))}>
+              <option value="">— unchanged —</option>
+              {headsData.map(h => <option key={h.id} value={h.name}>{h.name}</option>)}
+            </select>
+          </div>
+          <div className="form-group">
+            <label className="form-label" style={{ fontSize: '0.82rem' }}>New Sub-Heading <span style={{ color: '#9ca3af' }}>(optional)</span></label>
+            <select className="form-select" value={form.proposedSubHoa} onChange={e => setForm(f => ({ ...f, proposedSubHoa: e.target.value }))} disabled={!form.proposedHoa && subHeadsData.length === 0}>
+              <option value="">— unchanged / none —</option>
+              {subHeadsData.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
+            </select>
+          </div>
+          <div className="form-group">
+            <label className="form-label" style={{ fontSize: '0.82rem' }}>Reason * <span style={{ color: '#9ca3af' }}>(e.g. "Should be 'Conveyance Expenses' per Tally chart")</span></label>
+            <textarea className="form-input" rows={2} value={form.reason} onChange={e => setForm(f => ({ ...f, reason: e.target.value }))} placeholder="Explain why the current HOA is incorrect..." />
+          </div>
+          <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+            <button className="btn btn-secondary btn-sm" onClick={() => setShowForm(false)}>Cancel</button>
+            <button className="btn btn-sm" style={{ background: '#0891b2', color: 'white', border: 'none', borderRadius: '6px', padding: '0.4rem 1rem', fontSize: '0.82rem', cursor: 'pointer', fontWeight: 600 }} disabled={loading} onClick={handleSubmit}>{loading ? Icons.loader : '📤 Submit Proposal'}</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const PendingCloseRequestsPanel = ({ onViewVoucher }) => {
+  const { user, addToast } = useApp();
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [actionId, setActionId] = useState(null);
+  const [showRejectModal, setShowRejectModal] = useState(false);
+  const [rejectingItem, setRejectingItem] = useState(null);
+  const [rejectReason, setRejectReason] = useState('');
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const data = await api.getPendingCloseRequests(user.company.id);
+      setItems(data.pendingCloseRequests || []);
+    } catch { /* silently skip */ }
+    setLoading(false);
+  };
+
+  useEffect(() => { load(); }, [user.company.id]);
+
+  const handleApprove = async (sv) => {
+    setActionId(sv.id);
+    const result = await api.approveSuspenseClose(sv.id, user.id);
+    if (result.success) {
+      addToast(`Closure approved${result.recoveryVoucher ? ` · Recovery voucher ${result.recoveryVoucher.serial_number} created` : ''}`, 'success');
+      load();
+    } else addToast(result.error || 'Approval failed', 'error');
+    setActionId(null);
+  };
+
+  const openReject = (sv) => { setRejectingItem(sv); setRejectReason(''); setShowRejectModal(true); };
+  const confirmReject = async () => {
+    setActionId(rejectingItem.id);
+    const result = await api.rejectSuspenseClose(rejectingItem.id, user.id, rejectReason);
+    if (result.success) { addToast('Close request rejected', 'info'); setShowRejectModal(false); load(); }
+    else addToast(result.error || 'Rejection failed', 'error');
+    setActionId(null);
+  };
+
+  if (!loading && items.length === 0) return null;
+
+  return (
+    <div className="card" style={{ marginBottom: '1.25rem', border: '2px solid #ea580c', borderRadius: '10px' }}>
+      <div style={{ padding: '1rem' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '0.85rem' }}>
+        <span style={{ fontSize: '1.25rem' }}>🔒</span>
+        <h3 style={{ fontWeight: 700, fontSize: '0.95rem', color: '#ea580c', margin: 0 }}>Pending Suspense Closure Approvals</h3>
+        {items.length > 0 && <span style={{ background: '#ea580c', color: 'white', borderRadius: '12px', padding: '1px 8px', fontSize: '0.75rem', fontWeight: 700 }}>{items.length}</span>}
+      </div>
+      {loading ? <div style={{ color: '#9ca3af', fontSize: '0.85rem' }}>{Icons.loader} Loading...</div> : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+          {items.map(sv => (
+            <div key={sv.id} style={{ background: '#fff7ed', border: '1px solid #fdba74', borderRadius: '8px', padding: '0.75rem 1rem', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem' }}>
+              <div style={{ flex: 1, minWidth: '180px' }}>
+                <div style={{ fontWeight: 700, fontSize: '0.95rem', color: '#1f2937' }}>
+                  {sv.serial_number}
+                  <span style={{ fontWeight: 400, color: '#6b7280', fontSize: '0.8rem', marginLeft: '0.5rem' }}>close request</span>
+                </div>
+                <div style={{ fontSize: '0.8rem', color: '#6b7280', marginTop: '2px' }}>
+                  Staff: {sv.staff_payee?.name || '—'} · Unspent: <strong style={{ color: '#9a3412' }}>{formatRupees(parseFloat(sv.balance_amount ?? 0))}</strong>
+                </div>
+                <div style={{ fontSize: '0.78rem', color: '#9a3412', marginTop: '2px' }}>
+                  Recovery HoA: <strong>{sv.close_hoa}</strong>{sv.close_sub_hoa ? ` → ${sv.close_sub_hoa}` : ''}
+                </div>
+                {sv.close_notes && <div style={{ fontSize: '0.78rem', color: '#6b7280', marginTop: '2px', fontStyle: 'italic' }}>{sv.close_notes}</div>}
+                <div style={{ fontSize: '0.75rem', color: '#9ca3af', marginTop: '2px' }}>Requested by {sv.requester?.name || '—'} · {sv.close_requested_at ? new Date(sv.close_requested_at).toLocaleDateString('en-IN') : ''}</div>
+              </div>
+              <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
+                {onViewVoucher && <button className="btn btn-sm btn-secondary" style={{ fontSize: '0.75rem' }} onClick={() => onViewVoucher(sv.id)}>View →</button>}
+                <button className="btn btn-sm btn-success" style={{ fontSize: '0.75rem' }} onClick={() => handleApprove(sv)} disabled={actionId === sv.id}>✅ Approve</button>
+                <button className="btn btn-sm btn-danger" style={{ fontSize: '0.75rem' }} onClick={() => openReject(sv)} disabled={actionId === sv.id}>✕ Reject</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      </div>
+      {showRejectModal && rejectingItem && (
+        <div className="modal-overlay" onClick={() => setShowRejectModal(false)}>
+          <div className="modal" style={{ maxWidth: '440px' }} onClick={e => e.stopPropagation()}>
+            <div className="modal-header" style={{ background: '#ef4444', color: 'white' }}>
+              <h3 className="modal-title" style={{ color: 'white' }}>✕ Reject Close Request — {rejectingItem.serial_number}</h3>
+              <button className="modal-close" style={{ color: 'white' }} onClick={() => setShowRejectModal(false)}>×</button>
+            </div>
+            <div className="modal-body">
+              <div className="form-group">
+                <label className="form-label">Reason <span style={{ color: '#888', fontWeight: 400 }}>(optional)</span></label>
+                <textarea className="form-input" rows={3} placeholder="Tell Accounts why the close request was rejected..." value={rejectReason} onChange={e => setRejectReason(e.target.value)} />
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setShowRejectModal(false)}>Cancel</button>
+              <button className="btn btn-danger" onClick={confirmReject} disabled={!!actionId}>{actionId ? Icons.loader : '✕'} Confirm Rejection</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const PendingTopUpsPanel = ({ onViewVoucher }) => {
+  const { user, addToast } = useApp();
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [actionId, setActionId] = useState(null);
+  const [showRejectModal, setShowRejectModal] = useState(false);
+  const [rejectingEntry, setRejectingEntry] = useState(null);
+  const [rejectReason, setRejectReason] = useState('');
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const data = await api.getPendingTopUps(user.company.id);
+      setItems(data.pendingTopUps || []);
+    } catch { /* silently skip */ }
+    setLoading(false);
+  };
+
+  useEffect(() => { load(); }, [user.company.id]);
+
+  const handleApprove = async (entry) => {
+    setActionId(entry.id);
+    const result = await api.approveTopUp(entry.id, user.id);
+    if (result.success) {
+      addToast(`Top-up of ${formatRupees(entry.amount)} approved · New balance: ${formatRupees(result.newBalance)}`, 'success');
+      load();
+    } else addToast(result.error || 'Approval failed', 'error');
+    setActionId(null);
+  };
+
+  const openReject = (entry) => { setRejectingEntry(entry); setRejectReason(''); setShowRejectModal(true); };
+
+  const confirmReject = async () => {
+    setActionId(rejectingEntry.id);
+    const result = await api.rejectTopUp(rejectingEntry.id, user.id, rejectReason);
+    if (result.success) {
+      addToast('Top-up rejected', 'success');
+      setShowRejectModal(false);
+      load();
+    } else addToast(result.error || 'Rejection failed', 'error');
+    setActionId(null);
+  };
+
+  if (!loading && items.length === 0) return null;
+
+  return (
+    <div className="card" style={{ marginBottom: '1.25rem', border: '2px solid #7c3aed', borderRadius: '10px' }}>
+      <div style={{ padding: '1rem' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '0.85rem' }}>
+        <span style={{ fontSize: '1.25rem' }}>🔐</span>
+        <h3 style={{ fontWeight: 700, fontSize: '0.95rem', color: '#7c3aed', margin: 0 }}>
+          Pending Top-Up Approvals
+        </h3>
+        {items.length > 0 && (
+          <span style={{ background: '#7c3aed', color: 'white', borderRadius: '12px', padding: '1px 8px', fontSize: '0.75rem', fontWeight: 700 }}>{items.length}</span>
+        )}
+      </div>
+      {loading ? (
+        <div style={{ color: '#9ca3af', fontSize: '0.85rem' }}>{Icons.loader} Loading...</div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+          {items.map(entry => (
+            <div key={entry.id} style={{ background: '#faf5ff', border: '1px solid #ddd6fe', borderRadius: '8px', padding: '0.75rem 1rem', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem' }}>
+              <div style={{ flex: 1, minWidth: '180px' }}>
+                <div style={{ fontWeight: 700, fontSize: '0.95rem', color: '#1f2937' }}>
+                  {formatRupees(entry.amount)}
+                  <span style={{ fontWeight: 400, color: '#6b7280', fontSize: '0.8rem', marginLeft: '0.5rem' }}>top-up</span>
+                </div>
+                <div style={{ fontSize: '0.82rem', color: '#4b5563', marginTop: '2px' }}>{entry.description}</div>
+                <div style={{ fontSize: '0.75rem', color: '#9ca3af', marginTop: '2px' }}>
+                  <button
+                    style={{ background: 'none', border: 'none', color: '#7c3aed', cursor: 'pointer', padding: 0, fontWeight: 600, fontSize: '0.78rem', textDecoration: 'underline' }}
+                    onClick={() => onViewVoucher && onViewVoucher(entry.suspense?.id)}
+                  >
+                    {entry.suspense?.serial_number}
+                  </button>
+                  {' · '}{entry.suspense?.staff_payee?.name || 'Staff'}
+                  {entry.submitter?.name && <span> · Requested by {entry.submitter.name}</span>}
+                  {' · '}{new Date(entry.created_at).toLocaleDateString('en-IN')}
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: '0.4rem', flexShrink: 0 }}>
+                <button className="btn btn-sm btn-success" disabled={actionId === entry.id} onClick={() => handleApprove(entry)} style={{ fontSize: '0.8rem' }}>
+                  {actionId === entry.id ? Icons.loader : '✅'} Approve
+                </button>
+                <button className="btn btn-sm btn-danger" disabled={actionId === entry.id} onClick={() => openReject(entry)} style={{ fontSize: '0.8rem' }}>
+                  ✕ Reject
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      </div>
+      {showRejectModal && rejectingEntry && (
+        <div className="modal-overlay" onClick={() => setShowRejectModal(false)}>
+          <div className="modal" style={{ maxWidth: '420px' }} onClick={e => e.stopPropagation()}>
+            <div className="modal-header" style={{ background: '#ef4444', color: 'white' }}>
+              <h3 className="modal-title" style={{ color: 'white' }}>✕ Reject Top-Up</h3>
+              <button className="modal-close" style={{ color: 'white' }} onClick={() => setShowRejectModal(false)}>×</button>
+            </div>
+            <div className="modal-body">
+              <div style={{ background: '#f8fafc', borderRadius: '8px', padding: '0.75rem', marginBottom: '1rem', fontSize: '0.875rem' }}>
+                <strong>{formatRupees(rejectingEntry.amount)}</strong> top-up for <strong>{rejectingEntry.suspense?.serial_number}</strong> — {rejectingEntry.description}
+              </div>
+              <div className="form-group">
+                <label className="form-label">Reason for Rejection (optional)</label>
+                <textarea className="form-input" rows={3} placeholder="Enter reason..." value={rejectReason} onChange={e => setRejectReason(e.target.value)} autoFocus />
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setShowRejectModal(false)}>Cancel</button>
+              <button className="btn btn-danger" onClick={confirmReject} disabled={!!actionId}>{actionId ? Icons.loader : '✕'} Confirm Rejection</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// SUSPENSE VOUCHER LIST
+// ─────────────────────────────────────────────────────────────────────────────
+const SuspenseVoucherList = ({ onViewDetail }) => {
+  const { user, addToast } = useApp();
+  const [vouchers, setVouchers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [statusFilter, setStatusFilter] = useState('');
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const params = statusFilter ? { status: statusFilter } : {};
+      const data = await api.getSuspenseVouchers(user.company.id, params);
+      setVouchers(data.suspenseVouchers || []);
+    } catch { addToast('Failed to load suspense vouchers', 'error'); }
+    setLoading(false);
+  };
+
+  useEffect(() => { load(); }, [user.company.id, statusFilter]);
+
+  const statusBadge = (status) => {
+    const map = { pending_approval: ['Pending Approval', '#f59e0b', '#fffbeb'], open: ['Open', '#10b981', '#ecfdf5'], partial: ['Partial', '#3b82f6', '#eff6ff'], pending_close_approval: ['Close Pending', '#ea580c', '#fff7ed'], closed: ['Closed', '#6b7280', '#f3f4f6'], rejected: ['Rejected', '#ef4444', '#fef2f2'] };
+    const [label, color, bg] = map[status] || [status, '#666', '#eee'];
+    return <span style={{ background: bg, color, padding: '2px 8px', borderRadius: '4px', fontSize: '0.75rem', fontWeight: 600 }}>{label}</span>;
+  };
+
+  return (
+    <div>
+      <div className="page-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.75rem' }}>
+        <div>
+          <h1 className="page-title">{Icons.wallet} Suspense Vouchers</h1>
+          <p className="page-subtitle">Track advance disbursements and settlements</p>
+        </div>
+        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+          <select className="form-select" style={{ width: 'auto', padding: '6px 10px', fontSize: '0.85rem' }} value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
+            <option value="">All Status</option>
+            <option value="pending_approval">Pending Approval</option>
+            <option value="open">Open</option>
+            <option value="partial">Partial</option>
+            <option value="closed">Closed</option>
+            <option value="rejected">Rejected</option>
+          </select>
+          <button className="btn btn-sm btn-secondary" onClick={load}>{Icons.refresh}</button>
+        </div>
+      </div>
+
+      {(user.role === 'admin' || user.isSuperAdmin) && (
+        <>
+          <PendingNewVouchersPanel onViewVoucher={(id) => onViewDetail && onViewDetail(id)} />
+          <PendingCloseRequestsPanel onViewVoucher={(id) => onViewDetail && onViewDetail(id)} />
+          <PendingTopUpsPanel onViewVoucher={(id) => onViewDetail && onViewDetail(id)} />
+        </>
+      )}
+
+      {loading ? (
+        <div className="loading-state"><ClamFlowLoader width={200} label="Loading"/><span>Loading…</span></div>
+      ) : vouchers.length === 0 ? (
+        <div className="empty-state">{Icons.wallet}<p>No suspense vouchers found</p></div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+          {vouchers.map(sv => (
+            <div key={sv.id} className="card" style={{ cursor: 'pointer', transition: 'box-shadow 0.15s' }} onClick={() => onViewDetail && onViewDetail(sv.id)}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '0.5rem', padding: '1rem' }}>
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: '1rem', color: '#f5841f' }}>{sv.serial_number}</div>
+                  <div style={{ fontSize: '0.9rem', fontWeight: 500, marginTop: '2px' }}>{sv.purpose}</div>
+                  <div style={{ fontSize: '0.8rem', color: '#666', marginTop: '2px' }}>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}>
+                      <span style={{ background: '#10b981', color: 'white', fontSize: '0.68rem', padding: '1px 6px', borderRadius: '4px', fontWeight: 600 }}>👤 Staff</span>
+                      {sv.staff_payee?.name || sv.staff?.name || 'Unknown'}
+                    </span>
+                    {' · '} Created by: {sv.creator?.name || 'Unknown'}
+                  </div>
+                  <div style={{ fontSize: '0.75rem', color: '#999', marginTop: '2px' }}>{new Date(sv.created_at).toLocaleDateString('en-IN')}</div>
+                </div>
+                <div style={{ textAlign: 'right' }}>
+                  {statusBadge(sv.status)}
+                  <div style={{ fontWeight: 700, fontSize: '1.1rem', marginTop: '0.5rem' }}>{formatRupees(sv.advance_amount)}</div>
+                  {sv.status !== 'closed' && sv.balance_amount != null && (
+                    <div style={{ fontSize: '0.8rem', color: '#3b82f6' }}>Balance: {formatRupees(sv.balance_amount)}</div>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SETTLEMENT ENTRY FORM (modal)
+// ─────────────────────────────────────────────────────────────────────────────
+const SettlementEntryForm = ({ suspenseId, onDone, onClose }) => {
+  const { user, addToast } = useApp();
+  const [form, setForm] = useState({ entryType: 'expense', amount: '', description: '', headOfAccount: '', referenceNumber: '' });
+  const [loading, setLoading] = useState(false);
+
+  const handleSubmit = async () => {
+    if (!form.amount || !form.description) { addToast('Amount and description are required', 'error'); return; }
+    if (isNaN(parseFloat(form.amount)) || parseFloat(form.amount) <= 0) { addToast('Enter a valid amount', 'error'); return; }
+    setLoading(true);
+    try {
+      const result = await api.addSuspenseSettlement(suspenseId, {
+        entryType: form.entryType,
+        amount: parseFloat(form.amount),
+        description: form.description,
+        headOfAccount: form.headOfAccount || null,
+        referenceNumber: form.referenceNumber || null,
+        submittedBy: user.id
+      });
+      if (result.success) {
+        addToast('Settlement entry added', 'success');
+        onDone && onDone(result);
+      } else {
+        addToast(result.error || 'Failed to add settlement', 'error');
+      }
+    } catch { addToast('Failed to add settlement', 'error'); }
+    setLoading(false);
+  };
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" onClick={e => e.stopPropagation()}>
+        <div className="modal-header" style={{ background: '#3b82f6', color: 'white' }}>
+          <h3 className="modal-title" style={{ color: 'white' }}>Add Settlement Entry</h3>
+          <button className="modal-close" style={{ color: 'white' }} onClick={onClose}>×</button>
+        </div>
+        <div className="modal-body">
+          <div className="form-group">
+            <label className="form-label">Entry Type *</label>
+            <select className="form-input" value={form.entryType} onChange={e => setForm(f => ({ ...f, entryType: e.target.value }))}>
+              <option value="expense">Expense (deducted from balance)</option>
+              <option value="refund">Refund (added back to balance)</option>
+              <option value="topup">Top-up (additional advance)</option>
+            </select>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Amount (₹) *</label>
+            <input className="form-input" type="number" min="0" step="0.01" placeholder="0.00" value={form.amount} onChange={e => setForm(f => ({ ...f, amount: e.target.value }))} />
+          </div>
+          <div className="form-group">
+            <label className="form-label">Description *</label>
+            <input className="form-input" type="text" placeholder="What was this for?" value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} />
+          </div>
+          <div className="form-group">
+            <label className="form-label">Head of Account</label>
+            <input className="form-input" type="text" placeholder="e.g. Travel" value={form.headOfAccount} onChange={e => setForm(f => ({ ...f, headOfAccount: e.target.value }))} />
+          </div>
+          <div className="form-group">
+            <label className="form-label">Reference / Receipt No.</label>
+            <input className="form-input" type="text" placeholder="Optional" value={form.referenceNumber} onChange={e => setForm(f => ({ ...f, referenceNumber: e.target.value }))} />
+          </div>
+        </div>
+        <div className="modal-footer">
+          <button className="btn btn-secondary" onClick={onClose}>Cancel</button>
+          <button className="btn btn-primary" onClick={handleSubmit} disabled={loading}>{loading && Icons.loader}Add Entry</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SUSPENSE VOUCHER DETAIL
+// ─────────────────────────────────────────────────────────────────────────────
+const SuspenseVoucherDetail = ({ suspenseId, onBack }) => {
+  const { user, addToast, pendingShareForConfirmation, consumePendingShare } = useApp();
+  const [sv, setSv] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [showSettlement, setShowSettlement] = useState(false);
+  const [actionLoading, setActionLoading] = useState(false);
+  const [showRejectModal, setShowRejectModal] = useState(false);
+  const [rejectReason, setRejectReason] = useState('');
+  const [showApproveModal, setShowApproveModal] = useState(false);
+  const [approvingEntry, setApprovingEntry] = useState(null);
+  const [approveForm, setApproveForm] = useState({ headOfAccount: '', subHeadOfAccount: '', narration: '', invoiceReference: '', paymentMode: 'UPI', createVoucher: true });
+  const [heads, setHeads] = useState([]);
+  const [resendLoading, setResendLoading] = useState(false);
+  const [showShareModal, setShowShareModal] = useState(false);
+  const [shareUrl, setShareUrl] = useState('');
+  const [shareSmsStatus, setShareSmsStatus] = useState(null); // 'sent' | 'failed' | null
+  const [showTopUp, setShowTopUp] = useState(false);
+  const [topUpForm, setTopUpForm] = useState({ amount: '', description: '' });
+  const [topUpLoading, setTopUpLoading] = useState(false);
+  const [closeLoading, setCloseLoading] = useState(false);
+  const [showCloseModal, setShowCloseModal] = useState(false);
+  const [closeHoa, setCloseHoa] = useState('');
+  const [closeSubHoa, setCloseSubHoa] = useState('');
+  const [closeNotes, setCloseNotes] = useState('');
+  const [showRejectCloseModal, setShowRejectCloseModal] = useState(false);
+  const [rejectCloseReason, setRejectCloseReason] = useState('');
+  const [showRejectTopUpModal, setShowRejectTopUpModal] = useState(false);
+  const [rejectingTopUpEntry, setRejectingTopUpEntry] = useState(null);
+  const [rejectTopUpReason, setRejectTopUpReason] = useState('');
+  const [selectedSettlements, setSelectedSettlements] = useState(new Set());
+  const [showCombineModal, setShowCombineModal] = useState(false);
+  const [combineForm, setCombineForm] = useState({ headOfAccount: '', subHeadOfAccount: '', narration: '', invoiceReference: '', paymentMode: 'UPI' });
+  const [combineLoading, setCombineLoading] = useState(false);
+  const [showAdvanceOtpModal, setShowAdvanceOtpModal] = useState(false);
+  const [advanceOtp, setAdvanceOtp] = useState('');
+  const [advanceOtpLoading, setAdvanceOtpLoading] = useState(false);
+
+  // Top-up Pay Now / Mark Paid state
+  const [payNowTopup, setPayNowTopup] = useState(null);       // synthetic obj for Pay Now modal
+  const [topupPaidEntry, setTopupPaidEntry] = useState(null); // settlement entry being marked paid
+  const [showTopupPaidModal, setShowTopupPaidModal] = useState(false);
+  const [topupPaymentRef, setTopupPaymentRef] = useState('');
+  const [topupPaymentNotes, setTopupPaymentNotes] = useState('');
+  const [topupReceiptData, setTopupReceiptData] = useState('');
+  const [topupReceiptMimeType, setTopupReceiptMimeType] = useState('');
+  const [topupReceiptPreview, setTopupReceiptPreview] = useState('');
+  const [topupPaidLoading, setTopupPaidLoading] = useState(false);
+
+  // Initial advance Pay Now / Mark Paid state
+  const [payNowAdvance, setPayNowAdvance] = useState(false);
+  const [showAdvancePaidModal, setShowAdvancePaidModal] = useState(false);
+  const [advancePaidRef, setAdvancePaidRef] = useState('');
+  const [advancePaidNotes, setAdvancePaidNotes] = useState('');
+  const [advancePaidReceiptData, setAdvancePaidReceiptData] = useState('');
+  const [advancePaidReceiptMimeType, setAdvancePaidReceiptMimeType] = useState('');
+  const [advancePaidReceiptPreview, setAdvancePaidReceiptPreview] = useState('');
+  const [advancePaidLoading, setAdvancePaidLoading] = useState(false);
+
+  // Linked voucher viewer (drill-through from settlement entry → voucher detail)
+  const [linkedVoucher, setLinkedVoucher] = useState(null);
+  const [linkedVoucherLoading, setLinkedVoucherLoading] = useState(false);
+
+  const openLinkedVoucher = async (voucherId) => {
+    setLinkedVoucherLoading(true);
+    try {
+      const data = await api.getVoucher(voucherId);
+      setLinkedVoucher(data);
+    } catch { addToast('Failed to load voucher', 'error'); }
+    setLinkedVoucherLoading(false);
+  };
+
+  // Approve a pending suspense-settlement voucher directly from this context.
+  // The server fast-path (is_suspense_settlement=true) immediately marks it
+  // completed — no OTP required since the advance was already pre-authorised.
+  const approveLinkedVoucher = async (voucherId, serialNumber) => {
+    setLinkedVoucherLoading(true);
+    try {
+      const result = await api.approveVoucher(voucherId, user.id);
+      if (result.success) {
+        addToast(`${serialNumber} approved ✔`, 'success');
+        await load(); // refresh the suspense detail so badges update
+      } else {
+        addToast(result.error || 'Approval failed', 'error');
+      }
+    } catch (e) { addToast(e.message || 'Approval failed', 'error'); }
+    setLinkedVoucherLoading(false);
+  };
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const data = await api.getSuspenseVoucher(suspenseId);
+      setSv(data.suspenseVoucher);
+    } catch { addToast('Failed to load suspense voucher', 'error'); }
+    setLoading(false);
+  };
+
+  useEffect(() => { load(); }, [suspenseId]);
+
+  // Write pending-confirmation context to localStorage when advance/topup Pay Now
+  // modal opens so a bank receipt shared from the mobile share-sheet routes back here.
+  React.useEffect(() => {
+    if (!payNowAdvance || !sv) return;
+    const _ctx = { type: 'advance', entityId: sv.id, suspenseId: sv.id };
+    try { localStorage.setItem('relish_share_context', JSON.stringify({ ..._ctx, expires: Date.now() + 15 * 60 * 1000 })); } catch {}
+    api.setPendingShareContext(user.id, _ctx).catch(() => {}); // cross-device server copy
+    return () => {
+      try { const _r = localStorage.getItem('relish_share_context'); if (_r) { const _c = JSON.parse(_r); if (_c?.type === 'advance' && _c?.entityId === sv?.id) localStorage.removeItem('relish_share_context'); } } catch {}
+      api.clearPendingShareContext(user.id).catch(() => {});
+    };
+  }, [payNowAdvance]);
+
+  React.useEffect(() => {
+    if (!payNowTopup) return;
+    const _ctx = { type: 'topup', entityId: payNowTopup._topupId, suspenseId: suspenseId };
+    try { localStorage.setItem('relish_share_context', JSON.stringify({ ..._ctx, expires: Date.now() + 15 * 60 * 1000 })); } catch {}
+    api.setPendingShareContext(user.id, _ctx).catch(() => {}); // cross-device server copy
+    return () => {
+      try { const _r = localStorage.getItem('relish_share_context'); if (_r) { const _c = JSON.parse(_r); if (_c?.type === 'topup' && _c?.entityId === payNowTopup?._topupId) localStorage.removeItem('relish_share_context'); } } catch {}
+      api.clearPendingShareContext(user.id).catch(() => {});
+    };
+  }, [payNowTopup?._topupId]);
+
+  // Consume a shared receipt routed to this suspense voucher's advance/topup confirmation.
+  React.useEffect(() => {
+    if (!pendingShareForConfirmation || !sv) return;
+    const _psc = pendingShareForConfirmation;
+    const _b64 = _psc.receipt.dataUrl.replace(/^data:.*?;base64,/, '');
+    const _isImg = _psc.receipt.mimeType.startsWith('image/');
+    if (_psc.type === 'topup' && _psc.entityId) {
+      const _entry = (sv.settlements || []).find(s => s.id === _psc.entityId && s.entry_type === 'topup');
+      if (!_entry) return;
+      setTopupReceiptData(_b64);
+      setTopupReceiptMimeType(_psc.receipt.mimeType);
+      setTopupReceiptPreview(_isImg ? _psc.receipt.dataUrl : 'pdf');
+      setTopupPaidEntry(_entry);
+      setShowTopupPaidModal(true);
+      consumePendingShare();
+    } else if (_psc.type === 'advance') {
+      setAdvancePaidReceiptData(_b64);
+      setAdvancePaidReceiptMimeType(_psc.receipt.mimeType);
+      setAdvancePaidReceiptPreview(_isImg ? _psc.receipt.dataUrl : 'pdf');
+      setShowAdvancePaidModal(true);
+      consumePendingShare();
+    }
+  }, [sv, pendingShareForConfirmation]);
+
+  const handleApprove = async () => {
+    setActionLoading(true);
+    const result = await api.approveSuspenseVoucher(suspenseId, user.id);
+    if (result.success && result.requiresOtp) {
+      addToast(`${sv.serial_number} approved — OTP sent to ${result.payeeName} (${result.payeeMobile}). Please verify OTP to activate the settlement link.`, 'success');
+      setAdvanceOtp('');
+      setShowAdvanceOtpModal(true);
+      load();
+    } else if (result.success) {
+      addToast('Suspense voucher approved', 'success');
+      load();
+    } else {
+      addToast(result.error || 'Approval failed', 'error');
+    }
+    setActionLoading(false);
+  };
+
+  const handleVerifyAdvanceOtp = async () => {
+    if (advanceOtp.length < 6) { addToast('Enter the complete 6-digit OTP', 'error'); return; }
+    setAdvanceOtpLoading(true);
+    const result = await api.verifyAdvanceOtp(suspenseId, advanceOtp, user.id);
+    if (result.success) {
+      addToast('OTP verified — settlement link sent to staff' + (result.smsSent ? '' : ' (SMS failed — share link manually)'), result.smsSent ? 'success' : 'warning');
+      setShowAdvanceOtpModal(false);
+      setAdvanceOtp('');
+      if (!result.smsSent && result.settlementUrl) {
+        setShareUrl(result.settlementUrl);
+        setShareSmsStatus('failed');
+        setShowShareModal(true);
+      }
+      load();
+    } else {
+      addToast(result.error || 'OTP verification failed', 'error');
+    }
+    setAdvanceOtpLoading(false);
+  };
+
+  const handleResendAdvanceOtp = async () => {
+    const result = await api.resendAdvanceOtp(suspenseId, user.id);
+    if (result.success) addToast(`OTP resent to ${result.payeeMobile}`, 'success');
+    else addToast(result.error || 'Failed to resend OTP', 'error');
+  };
+
+  const handleReject = async () => {
+    setActionLoading(true);
+    const result = await api.rejectSuspenseVoucher(suspenseId, user.id, rejectReason);
+    if (result.success) { addToast('Suspense voucher rejected', 'success'); setShowRejectModal(false); load(); }
+    else addToast(result.error || 'Rejection failed', 'error');
+    setActionLoading(false);
+  };
+
+  const handleResendLink = async () => {
+    setResendLoading(true);
+    const result = await api.resendSettlementLink(suspenseId, user.id);
+    if (result.success) {
+      setShareUrl(result.settlementUrl);
+      setShareSmsStatus(result.smsSent === false ? 'failed' : 'sent');
+      setShowShareModal(true);
+    } else {
+      addToast(result.error || 'Failed to resend link', 'error');
+    }
+    setResendLoading(false);
+  };
+
+  const handleTopUp = async () => {
+    if (!topUpForm.amount || isNaN(parseFloat(topUpForm.amount)) || parseFloat(topUpForm.amount) <= 0) {
+      addToast('Enter a valid top-up amount', 'error'); return;
+    }
+    if (!topUpForm.description.trim()) { addToast('Description is required', 'error'); return; }
+    setTopUpLoading(true);
+    const result = await api.topUpSuspenseVoucher(suspenseId, { amount: parseFloat(topUpForm.amount), description: topUpForm.description, addedBy: user.id });
+    if (result.success) {
+      addToast(`Top-up of ₹${parseFloat(topUpForm.amount).toFixed(2)} submitted — awaiting Admin approval`, 'success');
+      setShowTopUp(false);
+      setTopUpForm({ amount: '', description: '' });
+      load();
+    } else addToast(result.error || 'Top-up failed', 'error');
+    setTopUpLoading(false);
+  };
+
+  const handleApproveTopUp = async (entry) => {
+    setActionLoading(true);
+    const result = await api.approveTopUp(entry.id, user.id);
+    if (result.success) {
+      addToast(`Top-up of ₹${parseFloat(entry.amount).toFixed(2)} approved · New balance: ₹${result.newBalance?.toFixed(2)}${result.reopened ? ' · Voucher reopened' : ''}`, 'success');
+      load();
+    } else addToast(result.error || 'Approval failed', 'error');
+    setActionLoading(false);
+  };
+
+  const handleRejectTopUp = (entry) => {
+    setRejectingTopUpEntry(entry);
+    setRejectTopUpReason('');
+    setShowRejectTopUpModal(true);
+  };
+
+  const confirmRejectTopUp = async () => {
+    if (!rejectingTopUpEntry) return;
+    setActionLoading(true);
+    const result = await api.rejectTopUp(rejectingTopUpEntry.id, user.id, rejectTopUpReason);
+    if (result.success) {
+      addToast('Top-up rejected', 'success');
+      setShowRejectTopUpModal(false);
+      setRejectingTopUpEntry(null);
+      load();
+    } else addToast(result.error || 'Rejection failed', 'error');
+    setActionLoading(false);
+  };
+
+  // Build a voucher-like object so the shared Pay Now modal can render top-up payment details
+  const buildTopupPayNow = (entry) => ({
+    _isTopup: true,
+    _topupId: entry.id,
+    serial_number: sv.serial_number,
+    _topupDescription: entry.description,
+    payee_name: sv.staff_payee?.name || sv.staff?.name || 'Staff',
+    amount: entry.amount,
+    payment_mode: sv.payment_mode || 'Account Transfer',
+    payee_upi_id: sv.staff_payee?.upi_id || null,
+    payee_bank_account: sv.staff_payee?.bank_account || null,
+    payee_ifsc: sv.staff_payee?.ifsc || null,
+    payee_bank_name: sv.staff_payee?.bank_name || null,
+    paid_from_account: null,
+    status: 'approved'
+  });
+
+  const handleTopupReceiptUpload = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) { addToast('Receipt must be under 5 MB', 'error'); return; }
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const base64 = ev.target.result.split(',')[1];
+      setTopupReceiptData(base64);
+      setTopupReceiptMimeType(file.type);
+      setTopupReceiptPreview(file.type.startsWith('image/') ? ev.target.result : 'pdf');
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const clearTopupPaidModal = () => {
+    setShowTopupPaidModal(false);
+    setTopupPaidEntry(null);
+    setTopupPaymentRef('');
+    setTopupPaymentNotes('');
+    setTopupReceiptData('');
+    setTopupReceiptMimeType('');
+    setTopupReceiptPreview('');
+  };
+
+  const handleTopupMarkPaid = async () => {
+    if (!topupPaymentRef.trim() && !topupReceiptData) {
+      addToast('Enter a UTR reference or upload a receipt — at least one is required', 'error');
+      return;
+    }
+    setTopupPaidLoading(true);
+    const result = await api.markTopupPaid(topupPaidEntry.id, user.id, topupPaymentRef.trim(), topupPaymentNotes.trim(), topupReceiptData, topupReceiptMimeType);
+    if (result.success) {
+      addToast('Top-up payment confirmed ✅', 'success');
+      clearTopupPaidModal();
+      load();
+    } else addToast(result.error || 'Failed to confirm payment', 'error');
+    setTopupPaidLoading(false);
+  };
+
+  const handleAdvanceReceiptUpload = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) { addToast('Receipt must be under 5 MB', 'error'); return; }
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const base64 = ev.target.result.split(',')[1];
+      setAdvancePaidReceiptData(base64);
+      setAdvancePaidReceiptMimeType(file.type);
+      setAdvancePaidReceiptPreview(file.type.startsWith('image/') ? ev.target.result : 'pdf');
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const clearAdvancePaidModal = () => {
+    setShowAdvancePaidModal(false);
+    setAdvancePaidRef('');
+    setAdvancePaidNotes('');
+    setAdvancePaidReceiptData('');
+    setAdvancePaidReceiptMimeType('');
+    setAdvancePaidReceiptPreview('');
+  };
+
+  const handleMarkAdvancePaid = async () => {
+    if (!advancePaidRef.trim() && !advancePaidReceiptData) {
+      addToast('Enter a UTR reference or upload a receipt — at least one is required', 'error');
+      return;
+    }
+    setAdvancePaidLoading(true);
+    const result = await api.markAdvancePaid(suspenseId, user.id, advancePaidRef.trim(), advancePaidNotes.trim(), advancePaidReceiptData, advancePaidReceiptMimeType);
+    if (result.success) {
+      addToast('Advance payment confirmed ✅', 'success');
+      clearAdvancePaidModal();
+      load();
+    } else addToast(result.error || 'Failed to confirm advance payment', 'error');
+    setAdvancePaidLoading(false);
+  };
+
+  const handleCloseVoucher = async () => {
+    const balance = parseFloat(sv.balance_amount ?? 0);
+    if (balance > 0 && !closeHoa.trim()) {
+      addToast('Select a Head of Account for the recovery voucher', 'error');
+      return;
+    }
+    setCloseLoading(true);
+    const result = await api.closeSuspenseVoucher(suspenseId, user.id, closeHoa.trim() || undefined, closeSubHoa.trim() || undefined, closeNotes.trim() || undefined);
+    if (result.success) {
+      if (result.pendingApproval) {
+        addToast(`Close request submitted — Admin approval required. Recovery voucher will be created for ${formatRupees(balance)}.`, 'success');
+      } else {
+        addToast('Suspense voucher closed', 'success');
+      }
+      setShowCloseModal(false);
+      setCloseHoa(''); setCloseSubHoa(''); setCloseNotes('');
+      load();
+    } else addToast(result.error || 'Failed to close voucher', 'error');
+    setCloseLoading(false);
+  };
+
+  const handleApproveClose = async () => {
+    setActionLoading(true);
+    const result = await api.approveSuspenseClose(suspenseId, user.id);
+    if (result.success) {
+      addToast(`Closure approved${result.recoveryVoucher ? ` · Recovery voucher ${result.recoveryVoucher.serial_number} created` : ''}`, 'success');
+      load();
+    } else addToast(result.error || 'Approval failed', 'error');
+    setActionLoading(false);
+  };
+
+  const handleRejectClose = async () => {
+    setActionLoading(true);
+    const result = await api.rejectSuspenseClose(suspenseId, user.id, rejectCloseReason);
+    if (result.success) {
+      addToast('Close request rejected — voucher returned to active state', 'info');
+      setShowRejectCloseModal(false);
+      setRejectCloseReason('');
+      load();
+    } else addToast(result.error || 'Rejection failed', 'error');
+    setActionLoading(false);
+  };
+
+  const handleRecalculateBalance = async () => {
+    setActionLoading(true);
+    const result = await api.recalculateSuspenseBalance(suspenseId, user.id);
+    if (result.success) {
+      addToast(`Balance corrected to ${formatRupees(result.correctedBalance)}`, 'success');
+      load();
+    } else addToast(result.error || 'Failed to recalculate balance', 'error');
+    setActionLoading(false);
+  };
+
+  const toggleSelectSettlement = (id) => {
+    setSelectedSettlements(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const openCombineModal = () => {
+    const selected = (sv.settlements || []).filter(s => selectedSettlements.has(s.id));
+    const defaultNarration = selected.map(s => s.description).join(' | ');
+    api.getHeadsOfAccount(user.company.id).then(data => { if (Array.isArray(data)) setHeads(data.sort((a, b) => a.name.localeCompare(b.name))); });
+    setCombineForm({ headOfAccount: '', subHeadOfAccount: '', narration: defaultNarration, invoiceReference: '', paymentMode: sv?.payment_mode || 'UPI' });
+    setShowCombineModal(true);
+  };
+
+  const handleCombineSettlements = async () => {
+    if (!combineForm.headOfAccount) { addToast('Please select a Head of Account', 'error'); return; }
+    setCombineLoading(true);
+    const result = await api.combineSettlements(suspenseId, {
+      approvedBy: user.id,
+      settlementIds: Array.from(selectedSettlements),
+      voucherData: { headOfAccount: combineForm.headOfAccount, subHeadOfAccount: combineForm.subHeadOfAccount || null, narration: combineForm.narration, invoiceReference: combineForm.invoiceReference || null, paymentMode: combineForm.paymentMode }
+    });
+    if (result.success) {
+      addToast(`${result.combinedCount} entries combined → Voucher ${result.voucher.serial_number} created (${formatRupees(result.totalAmount)})`, 'success');
+      setShowCombineModal(false);
+      setSelectedSettlements(new Set());
+      load();
+    } else {
+      addToast(result.error || 'Combine failed', 'error');
+    }
+    setCombineLoading(false);
+  };
+
+  const openApproveModal = (entry) => {
+    setApprovingEntry(entry);
+    setApproveForm({ headOfAccount: entry.head_of_account || '', subHeadOfAccount: '', narration: entry.description, invoiceReference: entry.reference_number || '', paymentMode: sv?.payment_mode || 'UPI', createVoucher: true });
+    api.getHeadsOfAccount(user.company.id).then(data => { if (Array.isArray(data)) setHeads(data.sort((a, b) => a.name.localeCompare(b.name))); });
+    setShowApproveModal(true);
+  };
+
+  const handleApproveSettlement = async () => {
+    if (!approveForm.headOfAccount) { addToast('Please select a Head of Account', 'error'); return; }
+    setActionLoading(true);
+    const result = await api.approveSettlementEntry(approvingEntry.id, {
+      approvedBy: user.id,
+      createVoucher: approveForm.createVoucher,
+      voucherData: { headOfAccount: approveForm.headOfAccount, subHeadOfAccount: approveForm.subHeadOfAccount || null, narration: approveForm.narration, invoiceReference: approveForm.invoiceReference || null, paymentMode: approveForm.paymentMode }
+    });
+    if (result.success) { addToast('Settlement entry approved' + (result.voucher ? ` · Voucher ${result.voucher.serial_number} created (completed)` : ''), 'success'); setShowApproveModal(false); load(); }
+    else addToast(result.error || 'Approval failed', 'error');
+    setActionLoading(false);
+  };
+
+  const statusBadge = (status) => {
+    const map = { pending_approval: ['Pending Approval', '#f59e0b', '#fffbeb'], awaiting_payee_otp: ['Awaiting Advance OTP', '#ea580c', '#fff7ed'], open: ['Open', '#10b981', '#ecfdf5'], partial: ['Partial', '#3b82f6', '#eff6ff'], pending_close_approval: ['Close Pending Admin', '#ea580c', '#fff7ed'], closed: ['Closed', '#6b7280', '#f3f4f6'], rejected: ['Rejected', '#ef4444', '#fef2f2'] };
+    const [label, color, bg] = map[status] || [status, '#666', '#eee'];
+    return <span style={{ background: bg, color, padding: '3px 10px', borderRadius: '4px', fontSize: '0.8rem', fontWeight: 600 }}>{label}</span>;
+  };
+
+  const entryTypeColor = (t) => t === 'expense' ? '#ef4444' : t === 'refund' ? '#10b981' : '#3b82f6';
+  const entryTypeLabel = (t) => t === 'expense' ? '↓ Expense' : t === 'refund' ? '↑ Refund' : '↑ Top-up';
+  const settlementStatusBadge = (status) => {
+    if (status === 'approved') return <span style={{ background: '#d1fae5', color: '#059669', padding: '2px 8px', borderRadius: '4px', fontSize: '0.72rem', fontWeight: 600 }}>✅ Approved</span>;
+    if (status === 'rejected') return <span style={{ background: '#fee2e2', color: '#dc2626', padding: '2px 8px', borderRadius: '4px', fontSize: '0.72rem', fontWeight: 600 }}>❌ Rejected</span>;
+    if (status === 'pending_approval') return <span style={{ background: '#ede9fe', color: '#7c3aed', padding: '2px 8px', borderRadius: '4px', fontSize: '0.72rem', fontWeight: 600 }}>🔐 Awaiting Admin</span>;
+    return <span style={{ background: '#fef3c7', color: '#d97706', padding: '2px 8px', borderRadius: '4px', fontSize: '0.72rem', fontWeight: 600 }}>⏳ Pending Review</span>;
+  };
+
+  if (loading) return <div className="loading-state"><ClamFlowLoader width={200} label="Loading"/><span>Loading…</span></div>;
+  if (!sv) return <div className="empty-state"><p>Suspense voucher not found</p></div>;
+
+  const isAdmin = user.role === 'admin' || user.isSuperAdmin;
+  const canSettle = (sv.status === 'open' || sv.status === 'partial');
+
+  return (
+    <div>
+      <div className="page-header suspense-detail-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.75rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+          <button className="btn btn-sm btn-secondary" onClick={onBack}>← Back</button>
+          <div>
+            <h1 className="page-title" style={{ marginBottom: '0.25rem' }}>{Icons.wallet} {sv.serial_number} {statusBadge(sv.status)}</h1>
+            <p className="page-subtitle">{sv.purpose}</p>
+          </div>
+        </div>
+        <div className="suspense-action-bar" style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+          {isAdmin && sv.status === 'pending_approval' && (
+            <>
+              <button className="btn btn-sm btn-danger" onClick={() => setShowRejectModal(true)} disabled={actionLoading}>{Icons.x} Reject</button>
+              <button className="btn btn-sm btn-success" onClick={handleApprove} disabled={actionLoading}>{actionLoading ? Icons.loader : Icons.check} Approve</button>
+            </>
+          )}
+          {(user.role === 'accounts' || user.isSuperAdmin || isAdmin) && sv.status === 'awaiting_payee_otp' && (
+            <button className="btn btn-sm btn-warning" style={{ background: '#ea580c', color: 'white', border: 'none' }} onClick={() => { setAdvanceOtp(''); setShowAdvanceOtpModal(true); }}>🔐 Verify Advance OTP</button>
+          )}
+          {(user.role === 'accounts' || user.isSuperAdmin || isAdmin) && (sv.status === 'open' || sv.status === 'partial') && (
+            <button className="btn btn-sm btn-secondary" onClick={handleResendLink} disabled={resendLoading}>{resendLoading ? Icons.loader : '📲'} Resend Link</button>
+          )}
+          {(user.role === 'admin' || user.isSuperAdmin) && !sv.advance_payment_status && sv.status !== 'pending_approval' && sv.status !== 'rejected' && sv.status !== 'closed' && sv.status !== 'pending_close_approval' && (
+            <button className="btn btn-sm" style={{ background: '#16a34a', color: 'white', border: 'none', borderRadius: '8px', fontWeight: 600 }} onClick={() => setPayNowAdvance(true)}>💳 Pay Advance</button>
+          )}
+          {(user.role === 'accounts' || user.isSuperAdmin) && (sv.status === 'open' || sv.status === 'partial') && (
+            <button className="btn btn-sm btn-success" onClick={() => { setTopUpForm({ amount: '', description: `Additional advance for ${sv.purpose}` }); setShowTopUp(true); }}>💰 Top Up</button>
+          )}
+          {(user.role === 'accounts' || user.isSuperAdmin) && (sv.status === 'open' || sv.status === 'partial') && (
+            <button className="btn btn-sm btn-danger" onClick={() => setShowCloseModal(true)}>🔒 Close Voucher</button>
+          )}
+          {(user.role === 'admin' || user.isSuperAdmin) && sv.status === 'pending_close_approval' && (
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <button className="btn btn-sm btn-success" onClick={handleApproveClose} disabled={actionLoading}>✅ Approve Closure</button>
+              <button className="btn btn-sm btn-danger" onClick={() => { setRejectCloseReason(''); setShowRejectCloseModal(true); }} disabled={actionLoading}>✕ Reject</button>
+            </div>
+          )}
+          {(user.role === 'accounts' || user.isSuperAdmin) && sv.status !== 'pending_approval' && sv.status !== 'rejected' && sv.status !== 'awaiting_payee_otp' && (
+            <button className="btn btn-sm btn-secondary" onClick={handleRecalculateBalance} disabled={actionLoading} title="Recompute balance from approved settlement entries">🔄 Fix Balance</button>
+          )}
+          {canSettle && <button className="btn btn-sm btn-primary" onClick={() => setShowSettlement(true)}>{Icons.plus} Add Settlement</button>}
+        </div>
+      </div>
+
+      <div className="card" style={{ marginBottom: '1rem' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem', padding: '1rem' }}>
+          <div><div style={{ fontSize: '0.75rem', color: '#999', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Staff Member</div><div style={{ fontWeight: 600, marginTop: '2px', display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}><span style={{ background: '#10b981', color: 'white', fontSize: '0.68rem', padding: '2px 7px', borderRadius: '4px', fontWeight: 600 }}>👤 Staff</span>{sv.staff_payee?.name || sv.staff?.name || 'Unknown'}{sv.staff_payee?.mobile && <span style={{ fontWeight: 400, color: '#6b7280', fontSize: '0.85rem' }}>· {sv.staff_payee.mobile}</span>}</div></div>
+          <div><div style={{ fontSize: '0.75rem', color: '#999', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Purpose</div><div style={{ fontWeight: 600, marginTop: '2px' }}>{sv.purpose}</div></div>
+          <div>
+            <div style={{ fontSize: '0.75rem', color: '#999', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Total Suspense Sent</div>
+            <div style={{ fontWeight: 700, fontSize: '1.1rem', color: '#f5841f', marginTop: '2px' }}>
+              {formatRupees(sv.total_suspense_sent ?? sv.advance_amount)}
+            </div>
+            {sv.total_suspense_sent != null && sv.total_suspense_sent > parseFloat(sv.advance_amount) && (
+              <div style={{ fontSize: '0.75rem', color: '#6b7280', marginTop: '2px' }}>
+                Initial {formatRupees(sv.advance_amount)} + Top-ups {formatRupees(sv.total_suspense_sent - parseFloat(sv.advance_amount))}
+              </div>
+            )}
+          </div>
+          <div>
+            <div style={{ fontSize: '0.75rem', color: '#999', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Balance Remaining</div>
+            <div style={{ fontWeight: 700, fontSize: '1.1rem', color: parseFloat(sv.balance_amount ?? sv.advance_amount) < 0 ? '#ef4444' : '#3b82f6', marginTop: '2px' }}>
+              {formatRupees(sv.balance_amount ?? sv.advance_amount)}
+            </div>
+            {parseFloat(sv.balance_amount ?? sv.advance_amount) < 0 && (
+              <div style={{ fontSize: '0.75rem', color: '#ef4444', marginTop: '2px', fontWeight: 600 }}>⚠️ Over-spent</div>
+            )}
+          </div>
+          {sv.total_expenses_approved != null && (
+            <div>
+              <div style={{ fontSize: '0.75rem', color: '#999', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Expenses Approved</div>
+              <div style={{ fontWeight: 700, fontSize: '1.1rem', color: '#374151', marginTop: '2px' }}>{formatRupees(sv.total_expenses_approved)}</div>
+            </div>
+          )}
+          {sv.total_expenses_pending != null && sv.total_expenses_pending > 0 && (
+            <div>
+              <div style={{ fontSize: '0.75rem', color: '#999', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Expenses Pending</div>
+              <div style={{ fontWeight: 700, fontSize: '1.1rem', color: '#d97706', marginTop: '2px' }}>{formatRupees(sv.total_expenses_pending)}</div>
+            </div>
+          )}
+          {sv.payment_mode && <div><div style={{ fontSize: '0.75rem', color: '#999', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Payment Mode</div><div style={{ marginTop: '2px' }}>{sv.payment_mode}</div></div>}
+          <div>
+            <div style={{ fontSize: '0.75rem', color: '#999', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Advance Payment</div>
+            {sv.advance_payment_status === 'paid' ? (
+              <div style={{ marginTop: '2px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                <span style={{ background: 'rgba(16,185,129,0.12)', color: '#065f46', fontWeight: 600, fontSize: '0.8rem', padding: '2px 8px', borderRadius: '10px', display: 'inline-flex', alignItems: 'center', gap: '4px', width: 'fit-content' }}>✅ Paid</span>
+                {sv.advance_payment_reference && <span style={{ fontSize: '0.75rem', color: '#6b7280', fontFamily: 'monospace' }}>UTR: {sv.advance_payment_reference}</span>}
+                {sv.advance_payer && <span style={{ fontSize: '0.75rem', color: '#6b7280' }}>by {sv.advance_payer.name} · {sv.advance_paid_at ? new Date(sv.advance_paid_at).toLocaleDateString('en-IN') : ''}</span>}
+                {sv.advance_payment_receipt_url && <a href={sv.advance_payment_receipt_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: '0.75rem', color: '#2563eb' }}>📎 Receipt</a>}
+              </div>
+            ) : sv.status === 'closed' ? (
+              <div style={{ marginTop: '2px', display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                <span style={{ background: '#f3f4f6', color: '#9ca3af', fontWeight: 500, fontSize: '0.8rem', padding: '2px 8px', borderRadius: '10px' }}>— Not recorded</span>
+                {(user.role === 'admin' || user.isSuperAdmin) && (
+                  <button style={{ background: 'none', border: '1px solid #d1d5db', color: '#374151', fontSize: '0.75rem', cursor: 'pointer', fontWeight: 600, padding: '2px 8px', borderRadius: '6px' }} onClick={() => setShowAdvancePaidModal(true)}>📝 Record UTR / Receipt</button>
+                )}
+              </div>
+            ) : (
+              <div style={{ marginTop: '2px', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <span style={{ background: 'rgba(245,158,11,0.12)', color: '#b45309', fontWeight: 600, fontSize: '0.8rem', padding: '2px 8px', borderRadius: '10px' }}>⏳ Pending</span>
+                {(user.role === 'admin' || user.isSuperAdmin) && ['awaiting_payee_otp', 'open', 'partial'].includes(sv.status) && (
+                  <button style={{ background: 'none', border: 'none', color: '#16a34a', fontSize: '0.8rem', cursor: 'pointer', fontWeight: 600, padding: 0 }} onClick={() => setPayNowAdvance(true)}>💳 Pay Now</button>
+                )}
+              </div>
+            )}
+          </div>
+          <div><div style={{ fontSize: '0.75rem', color: '#999', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Created By</div><div style={{ marginTop: '2px' }}>{sv.creator?.name || 'Unknown'} · {new Date(sv.created_at).toLocaleDateString('en-IN')}</div></div>
+          {sv.approver && <div><div style={{ fontSize: '0.75rem', color: '#999', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Approved By</div><div style={{ marginTop: '2px' }}>{sv.approver.name} · {new Date(sv.approved_at).toLocaleDateString('en-IN')}</div></div>}
+          {sv.narration && <div style={{ gridColumn: '1 / -1' }}><div style={{ fontSize: '0.75rem', color: '#999', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Narration</div><div style={{ marginTop: '2px' }}>{sv.narration}</div></div>}
+        </div>
+      </div>
+
+      {/* ── Linked Regular Vouchers summary card ───────────────────────────── */}
+      {(() => {
+        const linked = [];
+        const seen = new Set();
+        for (const s of (sv.settlements || [])) {
+          if (s.entry_type === 'expense' && s.voucher_id && !seen.has(s.voucher_id)) {
+            seen.add(s.voucher_id);
+            linked.push(s.linked_voucher || { id: s.voucher_id, serial_number: '—', status: '—', amount: null });
+          }
+        }
+        if (!linked.length) return null;
+        return (
+          <div className="card" style={{ marginBottom: '1rem', border: '1.5px solid #f5841f' }}>
+            <div style={{ padding: '0.75rem 1rem', borderBottom: '1px solid #fde8d0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <span style={{ fontWeight: 600, fontSize: '0.95rem', color: '#92400e', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>🧾 Linked Regular Vouchers <span style={{ background: '#f5841f', color: 'white', fontSize: '0.72rem', borderRadius: '10px', padding: '1px 8px', fontWeight: 700 }}>{linked.length}</span></span>
+              <span style={{ fontSize: '0.78rem', color: '#9a3412' }}>Created from expense settlements in this suspense account</span>
+            </div>
+            <div style={{ padding: '0.5rem 1rem' }}>
+              {linked.map(v => (
+                <div key={v.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.5rem 0', borderBottom: '1px solid #fef3e2', flexWrap: 'wrap', gap: '0.5rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+                    <span style={{ fontFamily: 'monospace', fontWeight: 700, color: '#92400e', fontSize: '0.9rem' }}>{v.serial_number}</span>
+                    {v.amount != null && <span style={{ fontWeight: 600, color: '#374151' }}>{formatRupees(v.amount)}</span>}
+                    {v.status && <span className={`status-badge status-${v.status}`} style={{ fontSize: '0.72rem' }}>{v.status.replace(/_/g, ' ')}</span>}
+                    {v.payment_mode && <span style={{ fontSize: '0.75rem', color: '#6b7280' }}>{v.payment_mode}</span>}
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
+                    {(user.role === 'admin' || user.isSuperAdmin) && v.status === 'pending' && (
+                      <button
+                        className="btn btn-sm"
+                        style={{ fontSize: '0.78rem', padding: '3px 12px', fontWeight: 600, background: '#16a34a', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer' }}
+                        onClick={() => approveLinkedVoucher(v.id, v.serial_number)}
+                        disabled={linkedVoucherLoading}
+                        title="Approve this voucher — marks it completed immediately (pre-paid via suspense advance)">
+                        ✔ Approve
+                      </button>
+                    )}
+                    <button className="btn btn-sm btn-secondary" style={{ fontSize: '0.78rem', padding: '3px 12px', fontWeight: 600 }} onClick={() => openLinkedVoucher(v.id)} disabled={linkedVoucherLoading}>🧾 View →</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
+
+      {sv.settlements && sv.settlements.length > 0 && (
+        <div className="card" style={{ marginBottom: '1rem' }}>
+          <h3 style={{ fontWeight: 600, fontSize: '0.95rem', marginBottom: '0.75rem', padding: '0.75rem 1rem 0' }}>Settlement Entries</h3>
+          {(user.role === 'accounts' || user.isSuperAdmin) && selectedSettlements.size >= 2 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '8px', padding: '0.6rem 1rem', margin: '0 1rem 0.75rem', flexWrap: 'wrap' }}>
+              <span style={{ fontSize: '0.85rem', color: '#1d4ed8', fontWeight: 600 }}>
+                🔗 {selectedSettlements.size} entries selected · Total: {formatRupees((sv.settlements || []).filter(s => selectedSettlements.has(s.id)).reduce((sum, s) => sum + parseFloat(s.amount), 0))}
+              </span>
+              <button className="btn btn-sm btn-primary" style={{ fontSize: '0.8rem' }} onClick={openCombineModal}>🔗 Combine into One Voucher</button>
+              <button className="btn btn-sm btn-secondary" style={{ fontSize: '0.8rem' }} onClick={() => setSelectedSettlements(new Set())}>✕ Clear Selection</button>
+            </div>
+          )}
+          {sv.total_expenses_approved != null && sv.total_suspense_sent != null && sv.total_expenses_approved > sv.total_suspense_sent && (
+            <div style={{ background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: '8px', padding: '0.75rem 1rem', margin: '0 1rem 0.75rem', fontSize: '0.85rem', color: '#991b1b' }}>
+              ⚠️ <strong>Over-spending detected.</strong> Total approved expenses ({formatRupees(sv.total_expenses_approved)}) exceed total suspense sent ({formatRupees(sv.total_suspense_sent)}) by <strong>{formatRupees(sv.total_expenses_approved - sv.total_suspense_sent)}</strong>. Staff may have spent from their own funds. Please review and close the voucher when settled.
+            </div>
+          )}
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem', minWidth: '600px' }}>
+              <thead>
+                <tr style={{ background: '#f8f9fa' }}>
+                  {(user.role === 'accounts' || user.isSuperAdmin) && <th style={{ padding: '8px 8px', textAlign: 'center', borderBottom: '1px solid #e2e8f0', width: '36px' }}></th>}
+                  <th style={{ padding: '8px 12px', textAlign: 'left', borderBottom: '1px solid #e2e8f0' }}>Date</th>
+                  <th style={{ padding: '8px 12px', textAlign: 'left', borderBottom: '1px solid #e2e8f0' }}>Type</th>
+                  <th style={{ padding: '8px 12px', textAlign: 'left', borderBottom: '1px solid #e2e8f0' }}>Description</th>
+                  <th style={{ padding: '8px 12px', textAlign: 'left', borderBottom: '1px solid #e2e8f0' }}>By</th>
+                  <th style={{ padding: '8px 12px', textAlign: 'right', borderBottom: '1px solid #e2e8f0' }}>Amount</th>
+                  <th style={{ padding: '8px 12px', textAlign: 'left', borderBottom: '1px solid #e2e8f0' }}>Status</th>
+                  <th style={{ padding: '8px 12px', textAlign: 'center', borderBottom: '1px solid #e2e8f0' }}>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sv.settlements.map((s, i) => (
+                  <tr key={s.id} style={{ background: i % 2 === 0 ? 'white' : '#f8f9fa' }}>
+                    {(user.role === 'accounts' || user.isSuperAdmin) && (
+                      <td style={{ padding: '8px 8px', borderBottom: '1px solid #f0f0f0', textAlign: 'center' }}>
+                        {s.status === 'pending_review' && s.entry_type === 'expense' && (
+                          <input type="checkbox" checked={selectedSettlements.has(s.id)} onChange={() => toggleSelectSettlement(s.id)} style={{ width: '15px', height: '15px', cursor: 'pointer' }} title="Select to combine" />
+                        )}
+                      </td>
+                    )}
+                    <td style={{ padding: '8px 12px', borderBottom: '1px solid #f0f0f0' }}>{new Date(s.created_at).toLocaleDateString('en-IN')}</td>
+                    <td style={{ padding: '8px 12px', borderBottom: '1px solid #f0f0f0' }}><span style={{ color: entryTypeColor(s.entry_type), fontWeight: 600, fontSize: '0.8rem' }}>{entryTypeLabel(s.entry_type)}</span></td>
+                    <td style={{ padding: '8px 12px', borderBottom: '1px solid #f0f0f0' }}>{s.description}{s.head_of_account && <span style={{ color: '#888', fontSize: '0.75rem' }}> · {s.head_of_account}</span>}</td>
+                    <td style={{ padding: '8px 12px', borderBottom: '1px solid #f0f0f0', color: '#666' }}>
+                      {(s.payee?.name || s.submitter?.name) ? (
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', flexWrap: 'wrap' }}>
+                          {s.payee?.name && <span style={{ background: '#10b981', color: 'white', fontSize: '0.65rem', padding: '1px 5px', borderRadius: '3px', fontWeight: 600 }}>👤</span>}
+                          {s.payee?.name || s.submitter?.name}
+                        </span>
+                      ) : '—'}
+                    </td>
+                    <td style={{ padding: '8px 12px', borderBottom: '1px solid #f0f0f0', textAlign: 'right', fontWeight: 600, color: entryTypeColor(s.entry_type) }}>{formatRupees(s.amount)}</td>
+                    <td style={{ padding: '8px 12px', borderBottom: '1px solid #f0f0f0' }}>{settlementStatusBadge(s.status)}</td>
+                    <td style={{ padding: '8px 12px', borderBottom: '1px solid #f0f0f0', textAlign: 'center' }}>
+                      {(user.role === 'accounts' || user.isSuperAdmin) && s.status === 'pending_review' && s.entry_type !== 'topup' && (
+                        <button className="btn btn-sm btn-success" style={{ fontSize: '0.75rem', padding: '3px 10px' }} onClick={() => openApproveModal(s)}>✅ Review</button>
+                      )}
+                      {s.entry_type !== 'topup' && s.status === 'approved' && s.voucher_id && (
+                        <button className="btn btn-sm btn-secondary" style={{ fontSize: '0.75rem', padding: '3px 10px', display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: '1px', lineHeight: 1.2 }} onClick={() => openLinkedVoucher(s.voucher_id)} disabled={linkedVoucherLoading}>
+                          <span>🧾 {s.linked_voucher?.serial_number || 'View Voucher'}</span>
+                          {s.linked_voucher?.status && <span style={{ fontSize: '0.65rem', opacity: 0.8, textTransform: 'capitalize' }}>{s.linked_voucher.status}</span>}
+                        </button>
+                      )}
+                      {(user.role === 'admin' || user.isSuperAdmin) && s.entry_type === 'topup' && s.status === 'pending_approval' && (
+                        <div style={{ display: 'flex', gap: '0.35rem', justifyContent: 'center' }}>
+                          <button className="btn btn-sm btn-success" style={{ fontSize: '0.75rem', padding: '3px 10px' }} onClick={() => handleApproveTopUp(s)} disabled={actionLoading}>✅ Approve</button>
+                          <button className="btn btn-sm btn-danger" style={{ fontSize: '0.75rem', padding: '3px 10px' }} onClick={() => handleRejectTopUp(s)} disabled={actionLoading}>✕ Reject</button>
+                        </div>
+                      )}
+                      {(user.role === 'admin' || user.isSuperAdmin) && s.entry_type === 'topup' && s.status === 'approved' && !s.payment_status && (
+                        <button className="btn btn-sm" style={{ background: '#16a34a', color: 'white', border: 'none', borderRadius: '6px', padding: '3px 10px', fontSize: '0.75rem', cursor: 'pointer', fontWeight: 600 }} onClick={() => setPayNowTopup(buildTopupPayNow(s))}>💳 Pay Now</button>
+                      )}
+                      {s.entry_type === 'topup' && s.payment_status === 'paid' && (
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px' }}>
+                          <span style={{ background: 'rgba(16,185,129,0.12)', color: '#065f46', fontWeight: 600, fontSize: '0.72rem', padding: '2px 8px', borderRadius: '10px', display: 'inline-flex', alignItems: 'center', gap: '3px' }}>✅ Paid</span>
+                          {s.payment_reference && <span style={{ fontSize: '0.68rem', color: '#6b7280', fontFamily: 'monospace' }}>UTR: {s.payment_reference}</span>}
+                          {s.payment_receipt_url && <a href={s.payment_receipt_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: '0.68rem', color: '#2563eb' }}>📎 Receipt</a>}
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      <BillAttachmentPanel suspenseId={suspenseId} voucherType="suspense" companyId={user.company.id} />
+
+      {showSettlement && (
+        <SettlementEntryForm
+          suspenseId={suspenseId}
+          onDone={() => { setShowSettlement(false); load(); }}
+          onClose={() => setShowSettlement(false)}
+        />
+      )}
+
+      {showTopUp && (
+        <div className="modal-overlay" onClick={() => setShowTopUp(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header" style={{ background: '#10b981', color: 'white' }}>
+              <h3 className="modal-title" style={{ color: 'white' }}>💰 Top Up Suspense Funds</h3>
+              <button className="modal-close" style={{ color: 'white' }} onClick={() => setShowTopUp(false)}>×</button>
+            </div>
+            <div className="modal-body">
+              <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '8px', padding: '0.75rem', marginBottom: '1rem', fontSize: '0.85rem', color: '#166534' }}>
+                Current balance: <strong>{formatRupees(sv.balance_amount ?? sv.advance_amount)}</strong> · The top-up request will be sent to Admin for approval. Funds will be credited to the staff member only after Admin approves &amp; OTP is successfully verified.
+              </div>
+              <div className="form-group">
+                <label className="form-label">Top-up Amount (₹) *</label>
+                <input className="form-input" type="number" min="0.01" step="0.01" placeholder="0.00" value={topUpForm.amount} onChange={e => setTopUpForm(f => ({ ...f, amount: e.target.value }))} autoFocus />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Description / Reason *</label>
+                <input className="form-input" type="text" placeholder="e.g. Additional advance for field expenses" value={topUpForm.description} onChange={e => setTopUpForm(f => ({ ...f, description: e.target.value }))} />
+              </div>
+              {topUpForm.amount && !isNaN(parseFloat(topUpForm.amount)) && parseFloat(topUpForm.amount) > 0 && (
+                <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '8px', padding: '0.6rem 0.85rem', fontSize: '0.85rem', color: '#1d4ed8' }}>
+                  Projected balance if approved: <strong>{formatRupees((parseFloat(sv.balance_amount ?? sv.advance_amount) + parseFloat(topUpForm.amount)))}</strong>
+                </div>
+              )}
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setShowTopUp(false)}>Cancel</button>
+              <button className="btn btn-success" onClick={handleTopUp} disabled={topUpLoading}>{topUpLoading ? Icons.loader : '💰'} Submit for Approval</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showCloseModal && (
+        <div className="modal-overlay" onClick={() => setShowCloseModal(false)}>
+          <div className="modal" style={{ maxWidth: '480px' }} onClick={e => e.stopPropagation()}>
+            {(() => {
+              const balance = parseFloat(sv.balance_amount ?? 0);
+              const isOverspend = balance < 0;
+              const hasUnspent = balance > 0;
+              return (<>
+                <div className="modal-header" style={{ background: hasUnspent ? '#ea580c' : '#ef4444', color: 'white' }}>
+                  <h3 className="modal-title" style={{ color: 'white' }}>🔒 Close Suspense Voucher</h3>
+                  <button className="modal-close" style={{ color: 'white' }} onClick={() => setShowCloseModal(false)}>×</button>
+                </div>
+                <div className="modal-body">
+                  <div style={{ background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: '8px', padding: '0.85rem', marginBottom: '1rem', fontSize: '0.9rem', color: '#7f1d1d' }}>
+                    This will close <strong>{sv.serial_number}</strong>. The staff member's settlement link will stop working.
+                  </div>
+
+                  {/* ── Balance = 0 ── */}
+                  {balance === 0 && (
+                    <div style={{ background: '#f0fdf4', border: '1px solid #86efac', borderRadius: '8px', padding: '0.75rem', marginBottom: '1rem', fontSize: '0.9rem', color: '#166534' }}>
+                      ✅ Balance is <strong>₹0.00</strong> — advance fully accounted for. Safe to close.
+                    </div>
+                  )}
+
+                  {/* ── Balance < 0 (overspend) ── */}
+                  {isOverspend && (
+                    <div style={{ background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: '8px', padding: '0.85rem', marginBottom: '1rem', fontSize: '0.9rem', color: '#92400e' }}>
+                      ⚠️ Staff is owed <strong>{formatRupees(Math.abs(balance))}</strong> out-of-pocket.<br />
+                      <span style={{ fontSize: '0.82rem' }}>Ensure this reimbursement has been paid (or will be paid) before closing.</span>
+                      {!sv.advance_payment_status && (
+                        <div style={{ marginTop: '0.5rem' }}>
+                          <button className="btn btn-sm" style={{ background: '#16a34a', color: 'white', border: 'none', fontSize: '0.8rem' }} onClick={() => { setShowCloseModal(false); setPayNowAdvance(true); }}>
+                            💳 Pay Reimbursement First →
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* ── Balance > 0 (unspent) ── */}
+                  {hasUnspent && (
+                    <div style={{ background: '#fff7ed', border: '1px solid #fdba74', borderRadius: '8px', padding: '0.85rem', marginBottom: '1rem', fontSize: '0.9rem', color: '#9a3412' }}>
+                      <strong>Unspent advance: {formatRupees(balance)}</strong><br />
+                      <span style={{ fontSize: '0.82rem' }}>Admin approval is required. A <em>Staff Advance Recovery</em> voucher will be auto-created for this amount.</span>
+                    </div>
+                  )}
+
+                  {/* ── HoA required only for balance > 0 ── */}
+                  {hasUnspent && (
+                    <>
+                      <div className="form-group">
+                        <label className="form-label">Head of Account for Recovery Voucher <span style={{ color: '#ef4444' }}>*</span></label>
+                        <input className="form-input" type="text" placeholder="e.g. Staff Advances Recovered" value={closeHoa} onChange={e => setCloseHoa(e.target.value)} autoFocus />
+                      </div>
+                      <div className="form-group">
+                        <label className="form-label">Sub-Head <span style={{ color: '#888', fontWeight: 400 }}>(optional)</span></label>
+                        <input className="form-input" type="text" placeholder="e.g. Advances Receivable" value={closeSubHoa} onChange={e => setCloseSubHoa(e.target.value)} />
+                      </div>
+                      <div className="form-group">
+                        <label className="form-label">Notes <span style={{ color: '#888', fontWeight: 400 }}>(optional)</span></label>
+                        <textarea className="form-input" rows={2} placeholder="Any remarks for Admin..." value={closeNotes} onChange={e => setCloseNotes(e.target.value)} />
+                      </div>
+                    </>
+                  )}
+
+                  {sv.settlements?.some(s => s.status === 'pending_review') && (
+                    <div style={{ background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: '8px', padding: '0.75rem', fontSize: '0.85rem', color: '#92400e' }}>
+                      ⚠️ <strong>{sv.settlements.filter(s => s.status === 'pending_review').length}</strong> entries still pending review. Approve or reject them before closing.
+                    </div>
+                  )}
+                </div>
+                <div className="modal-footer">
+                  <button className="btn btn-secondary" onClick={() => setShowCloseModal(false)}>Cancel</button>
+                  <button className="btn btn-danger" onClick={handleCloseVoucher} disabled={closeLoading || (hasUnspent && !closeHoa.trim())}>
+                    {closeLoading ? Icons.loader : (hasUnspent ? '📤 Submit for Approval' : '🔒 Confirm Close')}
+                  </button>
+                </div>
+              </>);
+            })()}
+          </div>
+        </div>
+      )}
+
+      {showRejectCloseModal && (
+        <div className="modal-overlay" onClick={() => setShowRejectCloseModal(false)}>
+          <div className="modal" style={{ maxWidth: '440px' }} onClick={e => e.stopPropagation()}>
+            <div className="modal-header" style={{ background: '#ef4444', color: 'white' }}>
+              <h3 className="modal-title" style={{ color: 'white' }}>✕ Reject Close Request</h3>
+              <button className="modal-close" style={{ color: 'white' }} onClick={() => setShowRejectCloseModal(false)}>×</button>
+            </div>
+            <div className="modal-body">
+              <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '0.85rem', marginBottom: '1rem', fontSize: '0.875rem' }}>
+                <div style={{ color: '#64748b', fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.3rem' }}>Voucher</div>
+                <div style={{ fontWeight: 700 }}>{sv.serial_number}</div>
+                <div style={{ color: '#64748b', fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.05em', marginTop: '0.5rem', marginBottom: '0.3rem' }}>Unspent Balance</div>
+                <div style={{ fontWeight: 700 }}>{formatRupees(parseFloat(sv.balance_amount ?? 0))}</div>
+              </div>
+              <div className="form-group">
+                <label className="form-label">Reason for Rejection <span style={{ color: '#888', fontWeight: 400 }}>(optional)</span></label>
+                <textarea className="form-input" rows={3} placeholder="Tell Accounts why the close request was rejected..." value={rejectCloseReason} onChange={e => setRejectCloseReason(e.target.value)} />
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setShowRejectCloseModal(false)}>Cancel</button>
+              <button className="btn btn-danger" onClick={handleRejectClose} disabled={actionLoading}>{actionLoading ? Icons.loader : '✕'} Confirm Rejection</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Linked Voucher Viewer (settlement entry drill-through) ────────── */}
+      {linkedVoucher && (
+        <div className="modal-overlay" onClick={() => setLinkedVoucher(null)}>
+          <div className="modal modal-lg" onClick={e => e.stopPropagation()}>
+            <div className="modal-header" style={{ background: '#f5841f', color: 'white' }}>
+              <h3 className="modal-title" style={{ color: 'white' }}>🧾 Voucher Details — {linkedVoucher.serial_number}</h3>
+              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                <span style={{ background: 'rgba(255,255,255,0.15)', borderRadius: '6px', padding: '2px 8px', fontSize: '0.78rem', fontWeight: 600 }}>Source: {sv.serial_number}</span>
+                <button className="modal-close" style={{ color: 'white' }} onClick={() => setLinkedVoucher(null)}>×</button>
+              </div>
+            </div>
+            <div className="modal-body">
+              <VoucherPreview voucher={linkedVoucher} />
+              <BillAttachmentPanel voucherId={linkedVoucher.id} voucherSerialNumber={linkedVoucher.serial_number} voucherType="regular" companyId={user.company.id} />
+              {linkedVoucher.status === 'paid' && (linkedVoucher.payment_reference || linkedVoucher.payment_receipt_url) && (
+                <div style={{ background: '#f0fdf4', border: '1px solid #86efac', borderRadius: '8px', padding: '1rem', marginTop: '1rem' }}>
+                  <p style={{ fontWeight: 600, color: '#166534', marginBottom: '0.6rem' }}>✅ Payment Record</p>
+                  {linkedVoucher.payment_reference && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.9rem', marginBottom: '0.3rem' }}>
+                      <span style={{ color: '#166534' }}>UTR / Ref</span>
+                      <strong style={{ fontFamily: 'monospace' }}>{linkedVoucher.payment_reference}</strong>
+                    </div>
+                  )}
+                  {linkedVoucher.payment_notes && <div style={{ fontSize: '0.85rem', color: '#166534', marginBottom: '0.5rem' }}>{linkedVoucher.payment_notes}</div>}
+                  {linkedVoucher.payment_receipt_url && (
+                    <a href={linkedVoucher.payment_receipt_url} target="_blank" rel="noopener noreferrer" className="btn btn-secondary" style={{ width: '100%', justifyContent: 'center', fontSize: '0.85rem', marginTop: '0.5rem' }}>
+                      📄 View Payment Receipt
+                    </a>
+                  )}
+                </div>
+              )}
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setLinkedVoucher(null)}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Initial Advance Pay Now Modal ───────────────────────────────────── */}
+      {payNowAdvance && sv && (() => {
+        const payee = sv.staff_payee;
+        const upiUrl = sv.payment_mode === 'UPI' && payee?.upi_id
+          ? `upi://pay?${new URLSearchParams({ pa: payee.upi_id, pn: payee.name, am: parseFloat(sv.advance_amount).toFixed(2), cu: 'INR', tn: `Advance ${sv.serial_number}` }).toString()}`
+          : null;
+        const qrSrc = upiUrl
+          ? `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(upiUrl)}&bgcolor=ffffff&color=1a1a1a&margin=10`
+          : null;
+        const copyBankDetails = () => {
+          const text = [`Payee: ${payee?.name}`, `Account No: ${payee?.bank_account || '—'}`, `IFSC: ${payee?.ifsc || '—'}`, `Bank: ${payee?.bank_name || '—'}`, `Amount: ₹${parseFloat(sv.advance_amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, `Reference: ${sv.serial_number} (Advance)`].join('\n');
+          navigator.clipboard.writeText(text).then(() => addToast('Bank details copied', 'success'));
+        };
+        return (
+          <div className="modal-overlay" onClick={() => setPayNowAdvance(false)}>
+            <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '440px' }}>
+              <div className="modal-header" style={{ background: '#16a34a', color: 'white' }}>
+                <h3 className="modal-title" style={{ color: 'white' }}>💳 Pay Advance — {sv.serial_number}</h3>
+                <button className="modal-close" style={{ color: 'white' }} onClick={() => setPayNowAdvance(false)}>×</button>
+              </div>
+              <div className="modal-body">
+                <div style={{ marginBottom: '1rem', padding: '0.75rem', background: '#f0fdf4', borderRadius: '8px', border: '1px solid #86efac', fontSize: '0.9rem' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.3rem' }}><span style={{ color: '#166534' }}>Payee (Staff)</span><strong>{payee?.name || sv.staff?.name || 'Unknown'}</strong></div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.3rem' }}><span style={{ color: '#166534' }}>Advance Amount</span><strong style={{ fontFamily: 'monospace', fontSize: '1.1rem' }}>₹{parseFloat(sv.advance_amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</strong></div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#166534' }}>Mode</span><strong>{sv.payment_mode}</strong></div>
+                </div>
+
+                {sv.payment_mode === 'UPI' && !payee?.upi_id && (
+                  <div style={{ padding: '1rem', background: '#fef9c3', borderRadius: '8px', border: '1px solid #fde047', textAlign: 'center', fontSize: '0.88rem', color: '#713f12' }}>
+                    ⚠️ No UPI ID recorded for this staff payee. Edit the payee to add their UPI ID.
+                  </div>
+                )}
+                {sv.payment_mode === 'UPI' && payee?.upi_id && (
+                  <div style={{ textAlign: 'center' }}>
+                    <p style={{ fontSize: '0.85rem', color: '#555', marginBottom: '0.75rem' }}>Scan this QR code with a second device using any UPI app.</p>
+                    <img src={qrSrc} alt="UPI QR Code" style={{ width: 220, height: 220, border: '1px solid #e5e7eb', borderRadius: '8px' }} />
+                    <p style={{ fontSize: '0.75rem', color: '#888', marginTop: '0.5rem' }}>UPI ID: <code>{payee.upi_id}</code></p>
+                    <button
+                      className="btn btn-sm"
+                      style={{ marginTop: '0.65rem', background: '#f0fdf4', border: '1px solid #86efac', color: '#15803d', fontWeight: 600, borderRadius: '6px', padding: '6px 14px', cursor: 'pointer', fontSize: '0.82rem' }}
+                      onClick={() => downloadQrCard({ qrSrc, serial: sv.serial_number, payeeName: payee.name, amount: sv.advance_amount, upiId: payee.upi_id, label: 'Advance' })}
+                    >💾 Save QR to Phone</button>
+                    <p style={{ fontSize: '0.72rem', color: '#9ca3af', marginTop: '0.35rem' }}>Upload in GPay → Pay → Scan QR (under ₹2,000 only)</p>
+                  </div>
+                )}
+                {sv.payment_mode === 'Account Transfer' && (
+                  <div>
+                    <p style={{ fontSize: '0.85rem', color: '#555', marginBottom: '0.75rem' }}>Use these details in your banking app (NEFT / IMPS / RTGS).</p>
+                    <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '1rem', fontSize: '0.9rem' }}>
+                      {[['Payee', payee?.name || '—'], ['Account No', payee?.bank_account || '—'], ['IFSC', payee?.ifsc || '—'], ['Bank', payee?.bank_name || '—'], ['Amount', `₹${parseFloat(sv.advance_amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`], ['Reference', `${sv.serial_number} (Advance)`]].map(([label, val]) => (
+                        <div key={label} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.35rem 0', borderBottom: '1px solid #e2e8f0' }}>
+                          <span style={{ color: '#64748b' }}>{label}</span><strong style={{ textAlign: 'right', maxWidth: '60%', wordBreak: 'break-all' }}>{val}</strong>
+                        </div>
+                      ))}
+                    </div>
+                    <button className="btn btn-secondary" style={{ width: '100%', marginTop: '0.75rem' }} onClick={copyBankDetails}>📋 Copy All Details</button>
+                  </div>
+                )}
+                {sv.payment_mode === 'Cash' && (
+                  <div style={{ padding: '1rem', background: '#f8fafc', borderRadius: '8px', border: '1px solid #e2e8f0', textAlign: 'center', fontSize: '0.88rem', color: '#374151' }}>
+                    Hand ₹{parseFloat(sv.advance_amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })} cash to <strong>{payee?.name || sv.staff?.name}</strong> and confirm below.
+                  </div>
+                )}
+              </div>
+              <div className="modal-footer">
+                <button className="btn btn-secondary" onClick={() => setPayNowAdvance(false)}>Close</button>
+                <button className="btn btn-success" onClick={() => { setPayNowAdvance(false); setShowAdvancePaidModal(true); }}>✅ Confirm Payment →</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── Initial Advance Mark Paid Modal ──────────────────────────────────── */}
+      {showAdvancePaidModal && sv && (
+        <div className="modal-overlay" onClick={clearAdvancePaidModal}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '480px' }}>
+            <div className="modal-header" style={{ background: '#16a34a', color: 'white' }}>
+              <h3 className="modal-title" style={{ color: 'white' }}>✅ Confirm Advance Payment — {sv.serial_number}</h3>
+              <button className="modal-close" style={{ color: 'white' }} onClick={clearAdvancePaidModal}>×</button>
+            </div>
+            <div className="modal-body">
+              <div style={{ background: '#f0fdf4', border: '1px solid #86efac', borderRadius: '8px', padding: '0.75rem', marginBottom: '1rem', fontSize: '0.9rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem' }}><span style={{ color: '#166534' }}>Staff Payee</span><strong>{sv.staff_payee?.name || sv.staff?.name}</strong></div>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#166534' }}>Advance Amount</span><strong style={{ fontFamily: 'monospace' }}>₹{parseFloat(sv.advance_amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</strong></div>
+              </div>
+              {(() => { const _fd = new Date(); const _fds = `${String(_fd.getDate()).padStart(2,'0')}-${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][_fd.getMonth()]}-${_fd.getFullYear()}`; const _fnm = `${(sv.serial_number||'SV').replace(/[^A-Za-z0-9-]/g,'-')}-ADV-${_fds}`; return (
+              <div style={{ background: '#f0fdf4', border: '1px solid #86efac', borderRadius: '6px', padding: '0.45rem 0.75rem', marginBottom: '1rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem' }}>
+                <div style={{ fontSize: '0.78rem', overflow: 'hidden' }}><span style={{ color: '#166534', fontWeight: 600 }}>📁 Stored as: </span><code style={{ color: '#14532d', fontSize: '0.75rem', wordBreak: 'break-all' }}>{_fnm}.<span style={{ color: '#6b7280' }}>pdf/img</span></code></div>
+                <button style={{ background: 'none', border: '1px solid #86efac', borderRadius: '4px', padding: '2px 8px', cursor: 'pointer', fontSize: '0.73rem', color: '#166534', fontWeight: 600, flexShrink: 0, whiteSpace: 'nowrap' }} onClick={() => navigator.clipboard.writeText(_fnm+'.pdf').then(() => addToast('Filename copied', 'success'))}>📋 Copy</button>
+              </div>
+              ); })()}
+              <div className="form-group">
+                <label className="form-label">UTR / Transaction ID <span style={{ color: '#888', fontWeight: 400 }}>(optional if receipt uploaded)</span></label>
+                <input className="form-input" type="text" placeholder="e.g. 426123456789" value={advancePaidRef} onChange={e => setAdvancePaidRef(e.target.value)} autoFocus />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Payment Receipt / Screenshot <span style={{ color: '#888', fontWeight: 400 }}>(optional if UTR entered)</span></label>
+                {advancePaidReceiptPreview ? (
+                  <div style={{ position: 'relative', marginBottom: '0.5rem' }}>
+                    {advancePaidReceiptPreview === 'pdf' ? (
+                      <div style={{ background: '#f3f4f6', border: '1px solid #d1d5db', borderRadius: '8px', padding: '1rem', textAlign: 'center', fontSize: '0.9rem', color: '#374151' }}>📄 PDF receipt selected</div>
+                    ) : (
+                      <img src={advancePaidReceiptPreview} alt="Receipt preview" style={{ width: '100%', maxHeight: '180px', objectFit: 'contain', borderRadius: '8px', border: '1px solid #d1d5db', background: '#f9fafb' }} />
+                    )}
+                    <button onClick={() => { setAdvancePaidReceiptData(''); setAdvancePaidReceiptMimeType(''); setAdvancePaidReceiptPreview(''); }} style={{ position: 'absolute', top: '6px', right: '6px', background: 'rgba(0,0,0,0.55)', color: 'white', border: 'none', borderRadius: '50%', width: '24px', height: '24px', cursor: 'pointer', fontSize: '0.85rem', lineHeight: '1' }}>×</button>
+                  </div>
+                ) : (
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.65rem 1rem', border: '2px dashed #d1d5db', borderRadius: '8px', cursor: 'pointer', color: '#6b7280', fontSize: '0.9rem' }}>
+                    📎 Click to upload receipt (image or PDF, max 5 MB)
+                    <input type="file" accept="image/*,.pdf" style={{ display: 'none' }} onChange={handleAdvanceReceiptUpload} />
+                  </label>
+                )}
+              </div>
+              <div className="form-group">
+                <label className="form-label">Notes <span style={{ color: '#888', fontWeight: 400 }}>(optional)</span></label>
+                <textarea className="form-input" rows={2} placeholder="e.g. Paid via HDFC Net Banking on 05-Jul-2026" value={advancePaidNotes} onChange={e => setAdvancePaidNotes(e.target.value)} />
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={clearAdvancePaidModal}>Cancel</button>
+              <button className="btn btn-success" onClick={handleMarkAdvancePaid} disabled={advancePaidLoading || (!advancePaidRef.trim() && !advancePaidReceiptData)}>{advancePaidLoading && Icons.loader}✅ Confirm Payment</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Top-Up Pay Now Modal ─────────────────────────────────────────── */}
+      {payNowTopup && (() => {
+        const v = payNowTopup;
+        const upiUrl = v.payment_mode === 'UPI' && v.payee_upi_id
+          ? `upi://pay?${new URLSearchParams({ pa: v.payee_upi_id, pn: v.payee_name, am: parseFloat(v.amount).toFixed(2), cu: 'INR', tn: `Top-Up ${v.serial_number}` }).toString()}`
+          : null;
+        const qrSrc = upiUrl
+          ? `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(upiUrl)}&bgcolor=ffffff&color=1a1a1a&margin=10`
+          : null;
+        const copyBankDetails = () => {
+          const text = [`Payee: ${v.payee_name}`, `Account No: ${v.payee_bank_account || '—'}`, `IFSC: ${v.payee_ifsc || '—'}`, `Bank: ${v.payee_bank_name || '—'}`, `Amount: ₹${parseFloat(v.amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, `Reference: ${v.serial_number} (Top-Up)`].join('\n');
+          navigator.clipboard.writeText(text).then(() => addToast('Bank details copied', 'success'));
+        };
+        return (
+          <div className="modal-overlay" onClick={() => setPayNowTopup(null)}>
+            <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '440px' }}>
+              <div className="modal-header" style={{ background: '#16a34a', color: 'white' }}>
+                <h3 className="modal-title" style={{ color: 'white' }}>💳 Pay Top-Up — {v.serial_number}</h3>
+                <button className="modal-close" style={{ color: 'white' }} onClick={() => setPayNowTopup(null)}>×</button>
+              </div>
+              <div className="modal-body">
+                <div style={{ marginBottom: '1rem', padding: '0.75rem', background: '#f0fdf4', borderRadius: '8px', border: '1px solid #86efac', fontSize: '0.9rem' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.3rem' }}><span style={{ color: '#166534' }}>Payee (Staff)</span><strong>{v.payee_name}</strong></div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.3rem' }}><span style={{ color: '#166534' }}>Top-Up Amount</span><strong style={{ fontFamily: 'monospace', fontSize: '1.1rem' }}>₹{parseFloat(v.amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</strong></div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.3rem' }}><span style={{ color: '#166534' }}>Mode</span><strong>{v.payment_mode}</strong></div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#166534' }}>Reason</span><span style={{ textAlign: 'right', maxWidth: '60%', color: '#374151', fontSize: '0.85rem' }}>{v._topupDescription}</span></div>
+                </div>
+
+                {v.payment_mode === 'UPI' && !v.payee_upi_id && (
+                  <div style={{ padding: '1rem', background: '#fef9c3', borderRadius: '8px', border: '1px solid #fde047', textAlign: 'center', fontSize: '0.88rem', color: '#713f12' }}>
+                    ⚠️ No UPI ID recorded for this staff payee. Edit the payee to add their UPI ID.
+                  </div>
+                )}
+                {v.payment_mode === 'UPI' && v.payee_upi_id && (
+                  <div style={{ textAlign: 'center' }}>
+                    <p style={{ fontSize: '0.85rem', color: '#555', marginBottom: '0.75rem' }}>Scan this QR code with a second device using any UPI app.</p>
+                    <img src={qrSrc} alt="UPI QR Code" style={{ width: 220, height: 220, border: '1px solid #e5e7eb', borderRadius: '8px' }} />
+                    <p style={{ fontSize: '0.75rem', color: '#888', marginTop: '0.5rem' }}>UPI ID: <code>{v.payee_upi_id}</code></p>
+                    <button
+                      className="btn btn-sm"
+                      style={{ marginTop: '0.65rem', background: '#f0fdf4', border: '1px solid #86efac', color: '#15803d', fontWeight: 600, borderRadius: '6px', padding: '6px 14px', cursor: 'pointer', fontSize: '0.82rem' }}
+                      onClick={() => downloadQrCard({ qrSrc, serial: v.serial_number, payeeName: v.payee_name, amount: v.amount, upiId: v.payee_upi_id, label: 'Top-Up' })}
+                    >💾 Save QR to Phone</button>
+                    <p style={{ fontSize: '0.72rem', color: '#9ca3af', marginTop: '0.35rem' }}>Upload in GPay → Pay → Scan QR (under ₹2,000 only)</p>
+                  </div>
+                )}
+                {v.payment_mode === 'Account Transfer' && (
+                  <div>
+                    <p style={{ fontSize: '0.85rem', color: '#555', marginBottom: '0.75rem' }}>Use these details in your banking app (NEFT / IMPS / RTGS).</p>
+                    <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '1rem', fontSize: '0.9rem' }}>
+                      {[['Payee', v.payee_name], ['Account No', v.payee_bank_account || '—'], ['IFSC', v.payee_ifsc || '—'], ['Bank', v.payee_bank_name || '—'], ['Amount', `₹${parseFloat(v.amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`], ['Reference', `${v.serial_number} (Top-Up)`]].map(([label, val]) => (
+                        <div key={label} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.35rem 0', borderBottom: '1px solid #e2e8f0' }}>
+                          <span style={{ color: '#64748b' }}>{label}</span><strong style={{ textAlign: 'right', maxWidth: '60%', wordBreak: 'break-all' }}>{val}</strong>
+                        </div>
+                      ))}
+                    </div>
+                    <button className="btn btn-secondary" style={{ width: '100%', marginTop: '0.75rem' }} onClick={copyBankDetails}>📋 Copy All Details</button>
+                  </div>
+                )}
+                {v.payment_mode === 'Cash' && (
+                  <div style={{ padding: '1rem', background: '#f8fafc', borderRadius: '8px', border: '1px solid #e2e8f0', textAlign: 'center', fontSize: '0.88rem', color: '#374151' }}>
+                    Hand ₹{parseFloat(v.amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })} cash to <strong>{v.payee_name}</strong> and then confirm below.
+                  </div>
+                )}
+              </div>
+              <div className="modal-footer">
+                <button className="btn btn-secondary" onClick={() => setPayNowTopup(null)}>Close</button>
+                <button className="btn btn-success" onClick={() => { setPayNowTopup(null); setTopupPaidEntry(sv.settlements.find(s => s.id === v._topupId)); setShowTopupPaidModal(true); }}>✅ Confirm Payment →</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── Top-Up Mark Paid Modal ────────────────────────────────────────── */}
+      {showTopupPaidModal && topupPaidEntry && (
+        <div className="modal-overlay" onClick={clearTopupPaidModal}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '480px' }}>
+            <div className="modal-header" style={{ background: '#16a34a', color: 'white' }}>
+              <h3 className="modal-title" style={{ color: 'white' }}>✅ Confirm Top-Up Payment — {sv.serial_number}</h3>
+              <button className="modal-close" style={{ color: 'white' }} onClick={clearTopupPaidModal}>×</button>
+            </div>
+            <div className="modal-body">
+              <div style={{ background: '#f0fdf4', border: '1px solid #86efac', borderRadius: '8px', padding: '0.75rem', marginBottom: '1rem', fontSize: '0.9rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem' }}><span style={{ color: '#166534' }}>Staff Payee</span><strong>{sv.staff_payee?.name || sv.staff?.name}</strong></div>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#166534' }}>Amount</span><strong style={{ fontFamily: 'monospace' }}>₹{parseFloat(topupPaidEntry.amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</strong></div>
+              </div>
+              {(() => { const _fd = new Date(); const _fds = `${String(_fd.getDate()).padStart(2,'0')}-${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][_fd.getMonth()]}-${_fd.getFullYear()}`; const _fnm = `${(sv.serial_number||'SV').replace(/[^A-Za-z0-9-]/g,'-')}-TOPUP-${_fds}`; return (
+              <div style={{ background: '#f0fdf4', border: '1px solid #86efac', borderRadius: '6px', padding: '0.45rem 0.75rem', marginBottom: '1rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem' }}>
+                <div style={{ fontSize: '0.78rem', overflow: 'hidden' }}><span style={{ color: '#166534', fontWeight: 600 }}>📁 Stored as: </span><code style={{ color: '#14532d', fontSize: '0.75rem', wordBreak: 'break-all' }}>{_fnm}.<span style={{ color: '#6b7280' }}>pdf/img</span></code></div>
+                <button style={{ background: 'none', border: '1px solid #86efac', borderRadius: '4px', padding: '2px 8px', cursor: 'pointer', fontSize: '0.73rem', color: '#166634', fontWeight: 600, flexShrink: 0, whiteSpace: 'nowrap' }} onClick={() => navigator.clipboard.writeText(_fnm+'.pdf').then(() => addToast('Filename copied', 'success'))}>📋 Copy</button>
+              </div>
+              ); })()}
+              <div className="form-group">
+                <label className="form-label">UTR / Transaction ID <span style={{ color: '#888', fontWeight: 400 }}>(optional if receipt uploaded)</span></label>
+                <input className="form-input" type="text" placeholder="e.g. 426123456789" value={topupPaymentRef} onChange={e => setTopupPaymentRef(e.target.value)} autoFocus />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Payment Receipt / Screenshot <span style={{ color: '#888', fontWeight: 400 }}>(optional if UTR entered)</span></label>
+                {topupReceiptPreview ? (
+                  <div style={{ position: 'relative', marginBottom: '0.5rem' }}>
+                    {topupReceiptPreview === 'pdf' ? (
+                      <div style={{ background: '#f3f4f6', border: '1px solid #d1d5db', borderRadius: '8px', padding: '1rem', textAlign: 'center', fontSize: '0.9rem', color: '#374151' }}>📄 PDF receipt selected</div>
+                    ) : (
+                      <img src={topupReceiptPreview} alt="Receipt preview" style={{ width: '100%', maxHeight: '180px', objectFit: 'contain', borderRadius: '8px', border: '1px solid #d1d5db', background: '#f9fafb' }} />
+                    )}
+                    <button onClick={() => { setTopupReceiptData(''); setTopupReceiptMimeType(''); setTopupReceiptPreview(''); }} style={{ position: 'absolute', top: '6px', right: '6px', background: 'rgba(0,0,0,0.55)', color: 'white', border: 'none', borderRadius: '50%', width: '24px', height: '24px', cursor: 'pointer', fontSize: '0.85rem', lineHeight: '1' }}>×</button>
+                  </div>
+                ) : (
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.65rem 1rem', border: '2px dashed #d1d5db', borderRadius: '8px', cursor: 'pointer', color: '#6b7280', fontSize: '0.9rem' }}>
+                    📎 Click to upload receipt (image or PDF, max 5 MB)
+                    <input type="file" accept="image/*,.pdf" style={{ display: 'none' }} onChange={handleTopupReceiptUpload} />
+                  </label>
+                )}
+              </div>
+              <div className="form-group">
+                <label className="form-label">Notes <span style={{ color: '#888', fontWeight: 400 }}>(optional)</span></label>
+                <textarea className="form-input" rows={2} placeholder="e.g. Paid via HDFC Net Banking on 04-Jul-2026" value={topupPaymentNotes} onChange={e => setTopupPaymentNotes(e.target.value)} />
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={clearTopupPaidModal}>Cancel</button>
+              <button className="btn btn-success" onClick={handleTopupMarkPaid} disabled={topupPaidLoading || (!topupPaymentRef.trim() && !topupReceiptData)}>{topupPaidLoading && Icons.loader}✅ Confirm Payment</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showRejectTopUpModal && rejectingTopUpEntry && (
+        <div className="modal-overlay" onClick={() => setShowRejectTopUpModal(false)}>
+          <div className="modal" style={{ maxWidth: '440px' }} onClick={e => e.stopPropagation()}>
+            <div className="modal-header" style={{ background: '#ef4444', color: 'white' }}>
+              <h3 className="modal-title" style={{ color: 'white' }}>✕ Reject Top-Up Request</h3>
+              <button className="modal-close" style={{ color: 'white' }} onClick={() => setShowRejectTopUpModal(false)}>×</button>
+            </div>
+            <div className="modal-body">
+              <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '0.85rem', marginBottom: '1rem', fontSize: '0.875rem' }}>
+                <div style={{ color: '#64748b', fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.3rem' }}>Top-Up Amount</div>
+                <div style={{ fontWeight: 700, fontSize: '1rem' }}>{formatRupees(rejectingTopUpEntry.amount)}</div>
+                <div style={{ color: '#64748b', fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.05em', marginTop: '0.6rem', marginBottom: '0.3rem' }}>Reason Submitted</div>
+                <div>{rejectingTopUpEntry.description}</div>
+              </div>
+              <div className="form-group">
+                <label className="form-label">Reason for Rejection (optional)</label>
+                <textarea className="form-input" rows={3} placeholder="Enter reason for rejecting this top-up..." value={rejectTopUpReason} onChange={e => setRejectTopUpReason(e.target.value)} />
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setShowRejectTopUpModal(false)}>Cancel</button>
+              <button className="btn btn-danger" onClick={confirmRejectTopUp} disabled={actionLoading}>{actionLoading ? Icons.loader : '✕'} Confirm Rejection</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showShareModal && (
+        <div className="modal-overlay" onClick={() => setShowShareModal(false)}>
+          <div className="modal" style={{ maxWidth: '480px' }} onClick={e => e.stopPropagation()}>
+            <div className="modal-header" style={{ background: shareSmsStatus === 'sent' ? '#10b981' : '#f59e0b', color: 'white' }}>
+              <h3 className="modal-title" style={{ color: 'white' }}>{shareSmsStatus === 'sent' ? '📲 Settlement Link Sent' : '⚠️ SMS Failed — Share Manually'}</h3>
+              <button className="modal-close" style={{ color: 'white' }} onClick={() => setShowShareModal(false)}>×</button>
+            </div>
+            <div className="modal-body">
+              {shareSmsStatus === 'sent' ? (
+                <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '8px', padding: '0.75rem', marginBottom: '1rem', fontSize: '0.85rem', color: '#166534' }}>
+                  ✅ SMS sent successfully to <strong>{sv.staff_payee?.mobile || sv.staff?.mobile || 'payee'}</strong>. You can also share this link directly:
+                </div>
+              ) : (
+                <div style={{ background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: '8px', padding: '0.75rem', marginBottom: '1rem', fontSize: '0.85rem', color: '#92400e' }}>
+                  ⚠️ SMS could not be delivered. Please share this link directly with <strong>{sv.staff_payee?.name || sv.staff?.name || 'the staff member'}</strong> via WhatsApp or any other channel.
+                </div>
+              )}
+              <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
+                <input
+                  className="form-input"
+                  readOnly
+                  value={shareUrl}
+                  style={{ flex: 1, fontSize: '0.8rem', background: '#f8fafc' }}
+                  onFocus={e => e.target.select()}
+                />
+                <button
+                  className="btn btn-secondary"
+                  style={{ whiteSpace: 'nowrap' }}
+                  onClick={() => {
+                    navigator.clipboard.writeText(shareUrl).then(() => addToast('Link copied!', 'success')).catch(() => addToast('Copy failed — select and copy manually', 'error'));
+                  }}
+                >📋 Copy</button>
+              </div>
+              <a
+                href={`https://wa.me/${(sv.staff_payee?.mobile || '').replace(/\D/g, '')}?text=${encodeURIComponent('Your settlement form for ' + sv.serial_number + ' is ready. Open it here: ' + shareUrl)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="btn btn-success"
+                style={{ width: '100%', display: 'block', textAlign: 'center', textDecoration: 'none' }}
+              >💬 Share via WhatsApp</a>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setShowShareModal(false)}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showRejectModal && (
+        <div className="modal-overlay" onClick={() => setShowRejectModal(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header"><h3 className="modal-title">Reject Suspense Voucher</h3><button className="modal-close" onClick={() => setShowRejectModal(false)}>×</button></div>
+            <div className="modal-body">
+              <div className="form-group"><label className="form-label">Reason for rejection</label><textarea className="form-input" rows={3} placeholder="Enter reason..." value={rejectReason} onChange={e => setRejectReason(e.target.value)} /></div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setShowRejectModal(false)}>Cancel</button>
+              <button className="btn btn-danger" onClick={handleReject} disabled={actionLoading}>{actionLoading && Icons.loader} Confirm Rejection</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showAdvanceOtpModal && (
+        <div className="modal-overlay" onClick={() => setShowAdvanceOtpModal(false)}>
+          <div className="modal" style={{ maxWidth: '420px' }} onClick={e => e.stopPropagation()}>
+            <div className="modal-header" style={{ background: '#ea580c', color: 'white' }}>
+              <h3 className="modal-title" style={{ color: 'white' }}>🔐 Verify Advance Receipt OTP</h3>
+              <button className="modal-close" style={{ color: 'white' }} onClick={() => setShowAdvanceOtpModal(false)}>×</button>
+            </div>
+            <div className="modal-body">
+              <div style={{ background: '#fff7ed', border: '1px solid #fdba74', borderRadius: '8px', padding: '0.85rem', marginBottom: '1rem', fontSize: '0.85rem', color: '#9a3412' }}>
+                An OTP has been sent to <strong>{sv.staff_payee?.name || sv.staff?.name || 'the staff member'}</strong> ({sv.staff_payee?.mobile || sv.staff?.mobile || ''}). Ask them to share the OTP to confirm they have received the advance of <strong>{formatRupees(sv.advance_amount)}</strong>. The settlement form link will only be sent after this step.
+              </div>
+              <div className="form-group" style={{ textAlign: 'center' }}>
+                <label className="form-label" style={{ marginBottom: '0.75rem', display: 'block' }}>Enter OTP received by staff</label>
+                <OTPInput value={advanceOtp} onChange={setAdvanceOtp} />
+              </div>
+              <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1rem' }}>
+                <button className="btn btn-secondary btn-sm" style={{ flex: 1 }} onClick={handleResendAdvanceOtp}>🔄 Resend OTP</button>
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setShowAdvanceOtpModal(false)}>Cancel</button>
+              <button className="btn btn-success" onClick={handleVerifyAdvanceOtp} disabled={advanceOtpLoading || advanceOtp.length < 6}>{advanceOtpLoading ? Icons.loader : Icons.check} Verify & Activate</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showCombineModal && (
+        <div className="modal-overlay" onClick={() => setShowCombineModal(false)}>
+          <div className="modal" style={{ maxWidth: '560px' }} onClick={e => e.stopPropagation()}>
+            <div className="modal-header" style={{ background: '#2563eb', color: 'white' }}>
+              <h3 className="modal-title" style={{ color: 'white' }}>🔗 Combine Entries into One Voucher</h3>
+              <button className="modal-close" style={{ color: 'white' }} onClick={() => setShowCombineModal(false)}>×</button>
+            </div>
+            <div className="modal-body">
+              {/* Summary of selected entries */}
+              <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '0.85rem', marginBottom: '1rem' }}>
+                <div style={{ fontSize: '0.72rem', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.5rem' }}>Entries being combined</div>
+                {(sv.settlements || []).filter(s => selectedSettlements.has(s.id)).map(s => (
+                  <div key={s.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', padding: '3px 0', borderBottom: '1px solid #f1f5f9' }}>
+                    <span style={{ color: '#374151' }}>{s.description}</span>
+                    <span style={{ fontWeight: 600, color: '#ef4444' }}>{formatRupees(s.amount)}</span>
+                  </div>
+                ))}
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.9rem', fontWeight: 700, marginTop: '0.5rem', paddingTop: '0.4rem', borderTop: '2px solid #e2e8f0' }}>
+                  <span>Combined Total</span>
+                  <span style={{ color: '#1d4ed8' }}>{formatRupees((sv.settlements || []).filter(s => selectedSettlements.has(s.id)).reduce((sum, s) => sum + parseFloat(s.amount), 0))}</span>
+                </div>
+              </div>
+              <div style={{ background: '#f0fdf4', border: '1px solid #86efac', borderRadius: '8px', padding: '0.75rem', marginBottom: '1rem', fontSize: '0.82rem', color: '#166534' }}>
+                ✅ One <strong>Completed</strong> payment voucher will be created for the combined total. All bill attachments from each expense entry will be carried over to this voucher.
+              </div>
+              <div className="form-group">
+                <label className="form-label">Head of Account <span style={{ color: '#ef4444' }}>*</span></label>
+                <select className="form-select" value={combineForm.headOfAccount} onChange={e => setCombineForm(f => ({...f, headOfAccount: e.target.value}))}>
+                  <option value="">— Select Head of Account —</option>
+                  {heads.map(h => <option key={h.id} value={h.name}>{h.name}</option>)}
+                </select>
+              </div>
+              <div className="form-group">
+                <label className="form-label">Sub-Head (optional)</label>
+                <input className="form-input" type="text" placeholder="Sub-head of account" value={combineForm.subHeadOfAccount} onChange={e => setCombineForm(f => ({...f, subHeadOfAccount: e.target.value}))} />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Narration</label>
+                <textarea className="form-input" rows={3} value={combineForm.narration} onChange={e => setCombineForm(f => ({...f, narration: e.target.value}))} />
+              </div>
+              <div className="form-row">
+                <div className="form-group">
+                  <label className="form-label">Payment Mode</label>
+                  <select className="form-select" value={combineForm.paymentMode} onChange={e => setCombineForm(f => ({...f, paymentMode: e.target.value}))}>
+                    <option value="Cash">Cash</option>
+                    <option value="UPI">UPI</option>
+                    <option value="Account Transfer">Account Transfer</option>
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Invoice Ref. (optional)</label>
+                  <input className="form-input" type="text" placeholder="Invoice / Bill No." value={combineForm.invoiceReference} onChange={e => setCombineForm(f => ({...f, invoiceReference: e.target.value}))} />
+                </div>
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setShowCombineModal(false)}>Cancel</button>
+              <button className="btn btn-primary" onClick={handleCombineSettlements} disabled={combineLoading}>{combineLoading ? Icons.loader : '🔗'} Combine & Create Voucher</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showApproveModal && approvingEntry && (
+        <div className="modal-overlay" onClick={() => setShowApproveModal(false)}>
+          <div className="modal" style={{ maxWidth: '520px' }} onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3 className="modal-title">✅ Review & Approve Settlement Entry</h3>
+              <button className="modal-close" onClick={() => setShowApproveModal(false)}>×</button>
+            </div>
+            <div className="modal-body">
+              <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '1rem', marginBottom: '1rem' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', fontSize: '0.875rem' }}>
+                  <div><div style={{ color: '#64748b', fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Entry Type</div><div style={{ fontWeight: 600, color: entryTypeColor(approvingEntry.entry_type), marginTop: '2px' }}>{entryTypeLabel(approvingEntry.entry_type)}</div></div>
+                  <div><div style={{ color: '#64748b', fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Amount</div><div style={{ fontWeight: 700, fontSize: '1rem', marginTop: '2px' }}>{formatRupees(approvingEntry.amount)}</div></div>
+                  <div style={{ gridColumn: '1 / -1' }}><div style={{ color: '#64748b', fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Staff Description</div><div style={{ marginTop: '2px' }}>{approvingEntry.description}</div></div>
+                  {approvingEntry.reference_number && <div style={{ gridColumn: '1 / -1' }}><div style={{ color: '#64748b', fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Ref No.</div><div style={{ marginTop: '2px' }}>{approvingEntry.reference_number}</div></div>}
+                </div>
+              </div>
+              <div className="form-group" style={{ background: '#f0fdf4', border: '1px solid #86efac', borderRadius: '8px', padding: '1rem', marginBottom: '1rem' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={approveForm.createVoucher} onChange={e => setApproveForm(f => ({...f, createVoucher: e.target.checked}))} style={{ width: '18px', height: '18px' }} />
+                  <span style={{ fontWeight: 600 }}>📋 Create Payment Voucher from this entry</span>
+                </label>
+              {approveForm.createVoucher && (
+                <p style={{ fontSize: '0.8rem', color: '#166534', marginTop: '0.5rem', marginLeft: '2rem' }}>
+                  A voucher will be created and marked <strong>Completed</strong> immediately — payment was already disbursed as the suspense advance. Bills attached by the staff member will be copied to this voucher for traceability.
+                </p>
+              )}
+              </div>
+              {/* Head of Account is ALWAYS required — Accounts must classify every expense */}
+              <div className="form-group">
+                <label className="form-label">Head of Account <span style={{ color: '#ef4444' }}>*</span></label>
+                <select className="form-select" value={approveForm.headOfAccount} onChange={e => setApproveForm(f => ({...f, headOfAccount: e.target.value}))}>
+                  <option value="">— Select Head of Account —</option>
+                  {heads.map(h => <option key={h.id} value={h.name}>{h.name}</option>)}
+                </select>
+                <p style={{ fontSize: '0.78rem', color: '#64748b', marginTop: '0.4rem' }}>ℹ️ Accounts must classify the expense head — staff cannot set this.</p>
+              </div>
+              <div className="form-group">
+                <label className="form-label">Sub-Head (optional)</label>
+                <input className="form-input" type="text" placeholder="Sub-head of account" value={approveForm.subHeadOfAccount} onChange={e => setApproveForm(f => ({...f, subHeadOfAccount: e.target.value}))} />
+              </div>
+              {approveForm.createVoucher && (
+                <>
+                  <div className="form-group">
+                    <label className="form-label">Narration</label>
+                    <textarea className="form-input" rows={2} value={approveForm.narration} onChange={e => setApproveForm(f => ({...f, narration: e.target.value}))} />
+                  </div>
+                  <div className="form-row">
+                    <div className="form-group">
+                      <label className="form-label">Payment Mode</label>
+                      <select className="form-select" value={approveForm.paymentMode} onChange={e => setApproveForm(f => ({...f, paymentMode: e.target.value}))}>
+                        <option value="Cash">Cash</option>
+                        <option value="UPI">UPI</option>
+                        <option value="Account Transfer">Account Transfer</option>
+                      </select>
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">Invoice Ref.</label>
+                      <input className="form-input" type="text" placeholder="Invoice / Bill No." value={approveForm.invoiceReference} onChange={e => setApproveForm(f => ({...f, invoiceReference: e.target.value}))} />
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setShowApproveModal(false)}>Cancel</button>
+              <button className="btn btn-success" onClick={handleApproveSettlement} disabled={actionLoading}>{actionLoading ? Icons.loader : Icons.check} Approve{approveForm.createVoucher ? ' & Create Voucher' : ' Entry'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SETTLEMENT SESSION PAGE (public — no auth)
+// ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// SETTLEMENT INSTALL BANNER
+// Shown inside the settlement page to nudge staff to install the PWA.
+// Handles Android (beforeinstallprompt) and iOS (manual share instructions).
+// ─────────────────────────────────────────────────────────────────────────────
+const SettlementInstallBanner = () => {
+  const [deferredPrompt, setDeferredPrompt] = useState(null);
+  const [show, setShow] = useState(false);
+  const [mode, setMode] = useState(null); // 'android' | 'ios' | null
+  const [iosExpanded, setIosExpanded] = useState(false);
+
+  useEffect(() => {
+    // Already installed as standalone PWA — don't show
+    if (window.matchMedia('(display-mode: standalone)').matches) return;
+    // User dismissed before — don't show
+    if (localStorage.getItem('settlement-install-dismissed')) return;
+
+    const isIos = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+    const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+
+    if (isIos && isSafari) {
+      setMode('ios');
+      setShow(true);
+      return;
+    }
+
+    // Android / desktop Chrome: listen for beforeinstallprompt
+    const handler = (e) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+      setMode('android');
+      setShow(true);
+    };
+    window.addEventListener('beforeinstallprompt', handler);
+    return () => window.removeEventListener('beforeinstallprompt', handler);
+  }, []);
+
+  const handleInstall = async () => {
+    if (!deferredPrompt) return;
+    deferredPrompt.prompt();
+    const { outcome } = await deferredPrompt.userChoice;
+    setDeferredPrompt(null);
+    setShow(false);
+    if (outcome === 'accepted') localStorage.setItem('settlement-install-dismissed', '1');
+  };
+
+  const handleDismiss = () => {
+    localStorage.setItem('settlement-install-dismissed', '1');
+    setShow(false);
+  };
+
+  if (!show) return null;
+
+  const bannerStyle = {
+    background: 'linear-gradient(135deg, #1e3a5f 0%, #1d4ed8 100%)',
+    borderRadius: '12px', padding: '1rem', marginBottom: '1.5rem',
+    color: 'white', textAlign: 'left', position: 'relative'
+  };
+  const dismissBtn = {
+    position: 'absolute', top: '0.6rem', right: '0.75rem',
+    background: 'none', border: 'none', color: 'rgba(255,255,255,0.7)',
+    fontSize: '1.1rem', cursor: 'pointer', lineHeight: 1, padding: '0.2rem 0.4rem'
+  };
+
+  if (mode === 'android') return (
+    <div style={bannerStyle}>
+      <button style={dismissBtn} onClick={handleDismiss} aria-label="Dismiss">✕</button>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.75rem' }}>
+        <span style={{ fontSize: '1.6rem' }}>📲</span>
+        <div>
+          <div style={{ fontWeight: 700, fontSize: '0.95rem' }}>Install Relish Approvals</div>
+          <div style={{ fontSize: '0.82rem', opacity: 0.85 }}>Add to your home screen for quick access — no App Store needed.</div>
+        </div>
+      </div>
+      <button onClick={handleInstall} style={{ background: '#f5841f', color: 'white', border: 'none', borderRadius: '8px', padding: '0.65rem 1.25rem', fontWeight: 700, cursor: 'pointer', fontSize: '0.9rem', width: '100%' }}>
+        ➕ Add to Home Screen
+      </button>
+    </div>
+  );
+
+  if (mode === 'ios') return (
+    <div style={bannerStyle}>
+      <button style={dismissBtn} onClick={handleDismiss} aria-label="Dismiss">✕</button>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.75rem' }}>
+        <span style={{ fontSize: '1.6rem' }}>📲</span>
+        <div>
+          <div style={{ fontWeight: 700, fontSize: '0.95rem' }}>Install Relish Approvals</div>
+          <div style={{ fontSize: '0.82rem', opacity: 0.85 }}>Save this form to your home screen for instant access.</div>
+        </div>
+      </div>
+      {!iosExpanded ? (
+        <button onClick={() => setIosExpanded(true)} style={{ background: '#f5841f', color: 'white', border: 'none', borderRadius: '8px', padding: '0.65rem 1.25rem', fontWeight: 700, cursor: 'pointer', fontSize: '0.9rem', width: '100%' }}>
+          Show me how
+        </button>
+      ) : (
+        <ol style={{ margin: '0', paddingLeft: '1.25rem', fontSize: '0.88rem', lineHeight: 1.7, opacity: 0.95 }}>
+          <li>Tap the <strong>Share</strong> button <span style={{ fontSize: '1rem' }}>⎙</span> at the bottom of Safari</li>
+          <li>Scroll down and tap <strong>"Add to Home Screen"</strong></li>
+          <li>Tap <strong>Add</strong> — done! Open it like any app.</li>
+        </ol>
+      )}
+    </div>
+  );
+
+  return null;
+};
+
+const SettlementSessionPage = ({ token }) => {
+  const [session, setSession] = useState(null);
+  const [status, setStatus] = useState('loading'); // loading | ready | submitting | submitted | error | expired | used
+  const [error, setError] = useState('');
+  const [entryType, setEntryType] = useState('expense');
+  const [amount, setAmount] = useState('');
+  const [description, setDescription] = useState('');
+  const [headOfAccount, setHeadOfAccount] = useState('');
+  const [referenceNumber, setReferenceNumber] = useState('');
+  const [requiresInvoice, setRequiresInvoice] = useState(true);
+  const [invoiceMissingReason, setInvoiceMissingReason] = useState('');
+  const [pendingFiles, setPendingFiles] = useState([]); // files staged before submission
+  const [pendingUploading, setPendingUploading] = useState(false);
+  const [settlement, setSettlement] = useState(null);
+  const [attachments, setAttachments] = useState([]);
+  const [attachmentLoading, setAttachmentLoading] = useState(false);
+  const [attachmentUploading, setAttachmentUploading] = useState(false);
+  const [attachmentError, setAttachmentError] = useState('');
+  const [captureSession, setCaptureSession] = useState(null);
+  const [qrImageUrl, setQrImageUrl] = useState(null);
+  const [showQr, setShowQr] = useState(false);
+  const [polling, setPolling] = useState(false);
+  const [pollExpiry, setPollExpiry] = useState(null);
+  const [history, setHistory] = useState([]); // all settlement entries for this voucher
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const pollIntervalRef = React.useRef(null);
+  const takePhotoRef1 = React.useRef(null); // pre-submission camera input
+  const takePhotoRef2 = React.useRef(null); // post-submission camera input
+  const [cameraError, setCameraError] = useState('');
+
+  // Detect if this page was reached via an authenticated staff login (not a raw SMS link)
+  const isStaffLogin = (() => {
+    try { const s = localStorage.getItem('relish_session'); if (!s) return false; const u = JSON.parse(s); return u?.role === 'staff'; } catch { return false; }
+  })();
+  const handleStaffLogout = () => {
+    try { localStorage.removeItem('relish_session'); localStorage.removeItem('relish_settlement_token'); localStorage.removeItem('relish_page'); } catch {}
+    window.location.reload();
+  };
+
+  const loadHistory = async () => {
+    setHistoryLoading(true);
+    try { const data = await api.getSettlementEntries(token); setHistory(data.entries || []); } catch {}
+    setHistoryLoading(false);
+  };
+
+  // Request camera permission explicitly, then trigger the file input.
+  // This surfaces the browser permission prompt instead of silently failing.
+  const requestCameraAndClick = async (inputRef, setErr) => {
+    setErr('');
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      // Browser doesn't support getUserMedia — fall back directly to file input
+      inputRef.current && inputRef.current.click();
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+      stream.getTracks().forEach(t => t.stop()); // permission granted — stop preview stream
+      inputRef.current && inputRef.current.click();
+    } catch (err) {
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+        setErr('Camera access was denied. Please allow camera permission in your browser/phone settings, then try again. Or use "Upload from Gallery" instead.');
+      } else {
+        // Device has no camera or other hardware error — still try the file input
+        inputRef.current && inputRef.current.click();
+      }
+    }
+  };
+
+  const loadAttachments = async (settlementId) => {
+    if (!settlementId) return;
+    setAttachmentLoading(true);
+    try {
+      const data = await api.getAttachments({ settlementId });
+      setAttachments(data.attachments || []);
+    } catch {
+      setAttachments([]);
+    }
+    setAttachmentLoading(false);
+  };
+
+  const compressAndEncode = async (file) => {
+    let processedFile = file;
+    if (file.type.startsWith('image/') && typeof imageCompression !== 'undefined') {
+      try {
+        processedFile = await imageCompression(file, { maxSizeMB: 1, maxWidthOrHeight: 1600, useWebWorker: true });
+      } catch {}
+    }
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve({ data: reader.result, mimeType: processedFile.type, name: file.name });
+      reader.onerror = reject;
+      reader.readAsDataURL(processedFile);
+    });
+  };
+
+  const handlePendingFileAdd = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 10 * 1024 * 1024) { setError('File too large (max 10 MB)'); return; }
+    try {
+      const { data, mimeType, name } = await compressAndEncode(file);
+      const previewUrl = file.type.startsWith('image/') ? data : null;
+      setPendingFiles(prev => [...prev, { data, mimeType, name, previewUrl }]);
+    } catch { setError('Failed to process file'); }
+    e.target.value = '';
+  };
+
+  const handleFileUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file || !settlement) return;
+    if (file.size > 10 * 1024 * 1024) { setAttachmentError('File too large (max 10 MB)'); return; }
+    setAttachmentUploading(true);
+    setAttachmentError('');
+    try {
+      const { data, mimeType, name } = await compressAndEncode(file);
+      const result = await api.uploadAttachment({ fileData: data, mimeType, fileName: name, settlementId: settlement.id, suspenseId: session.suspense.id, uploadedBy: session.payee?.user_id || null, companyId: session.suspense.company_id });
+      if (result.success) {
+        setAttachmentError('');
+        await loadAttachments(settlement.id);
+      } else {
+        setAttachmentError(result.error || 'Upload failed');
+      }
+    } catch {
+      setAttachmentError('Upload failed');
+    }
+    setAttachmentUploading(false);
+    e.target.value = '';
+  };
+
+  const startQRCapture = async () => {
+    if (!settlement) return;
+    setShowQr(false);
+    try {
+      const result = await api.createCaptureSession({ companyId: session.suspense.company_id, createdBy: session.payee?.user_id || null, voucherId: null, suspenseId: session.suspense.id, settlementId: settlement.id, contextType: 'settlement' });
+      if (!result.success) { setAttachmentError('Failed to create session'); return; }
+      const newSession = result.session;
+      setCaptureSession(newSession);
+      const url = `${window.location.origin}/capture/${newSession.id}`;
+      setQrImageUrl(`https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(url)}&bgcolor=ffffff&color=1a1a1a&margin=10`);
+      setShowQr(true);
+      setPollExpiry(new Date(newSession.expires_at));
+      setPolling(true);
+      setAttachmentError('');
+    } catch {
+      setAttachmentError('Failed to start phone capture');
+    }
+  };
+
+  useEffect(() => {
+    if (!polling || !captureSession || !settlement) return;
+    const stopPolling = (message, isError) => {
+      clearInterval(pollIntervalRef.current);
+      setPolling(false);
+      setShowQr(false);
+      setCaptureSession(null);
+      setQrImageUrl(null);
+      if (message) setAttachmentError(isError ? message : '');
+      if (!isError) loadAttachments(settlement.id);
+    };
+    const poll = async () => {
+      try {
+        const data = await api.getCaptureSession(captureSession.id);
+        const sessionData = data.session;
+        if (sessionData?.status === 'used') { stopPolling('Photo received from phone!', false); return; }
+        if (sessionData?.status === 'expired') { stopPolling('QR session expired', true); return; }
+      } catch {
+        // ignore polling errors
+      }
+    };
+    pollIntervalRef.current = setInterval(poll, 4000);
+    return () => clearInterval(pollIntervalRef.current);
+  }, [polling, captureSession, settlement]);
+
+  useEffect(() => {
+    api.getSettlementSession(token).then(data => {
+      if (data.settlementSession) {
+        setSession(data.settlementSession);
+        setStatus('ready');
+        // Persist token so PWA launched from home screen (start_url='/') can restore it
+        try { localStorage.setItem('relish_settlement_token', token); } catch {}
+        // Load expense history for this voucher
+        loadHistory();
+      } else {
+        setError(data.error || 'Settlement session not found');
+        setStatus('error');
+        // If session is expired/invalid, clear any saved token
+        try { localStorage.removeItem('relish_settlement_token'); } catch {}
+      }
+    }).catch(() => { setError('Failed to load settlement session'); setStatus('error'); });
+  }, [token]);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!amount || !description.trim()) {
+      setError('Amount and description are required.');
+      return;
+    }
+    setError('');
+    setStatus('submitting');
+    try {
+      const result = await api.submitSettlementSession(token, {
+        entryType,
+        amount,
+        description,
+        headOfAccount,
+        referenceNumber,
+        requiresInvoice,
+        invoiceMissingReason: requiresInvoice ? null : invoiceMissingReason
+      });
+      if (result.success) {
+        setSettlement(result.settlement);
+        setStatus('submitted');
+        // Upload any files staged inside the form
+        if (pendingFiles.length > 0) {
+          setPendingUploading(true);
+          for (const pf of pendingFiles) {
+            try {
+              await api.uploadAttachment({ fileData: pf.data, mimeType: pf.mimeType, fileName: pf.name, settlementId: result.settlement.id, suspenseId: session.suspense.id, uploadedBy: session.payee?.user_id || null, companyId: session.suspense.company_id });
+            } catch {}
+          }
+          setPendingFiles([]);
+          setPendingUploading(false);
+        }
+        await loadAttachments(result.settlement.id);
+        setTimeout(() => {
+          const el = document.getElementById('attachment-panel');
+          if (el) el.scrollIntoView({ behavior: 'smooth' });
+        }, 250);
+      } else {
+        setError(result.error || 'Failed to submit settlement entry');
+        setStatus('error');
+      }
+    } catch (err) {
+      setError(err.message || 'Failed to submit settlement entry');
+      setStatus('error');
+    }
+  };
+
+  const containerStyle = { minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '2rem', background: '#f8f9fa', fontFamily: 'Outfit, sans-serif', textAlign: 'center' };
+  const cardStyle = { background: 'white', borderRadius: '16px', padding: '2rem', boxShadow: '0 4px 24px rgba(0,0,0,0.08)', maxWidth: '520px', width: '100%' };
+  const fieldStyle = { width: '100%', marginBottom: '1rem', textAlign: 'left' };
+  const labelStyle = { display: 'block', marginBottom: '0.35rem', fontWeight: 600, color: '#333' };
+  const inputStyle = { width: '100%', padding: '0.85rem 1rem', borderRadius: '10px', border: '1px solid #d6d6d6', fontSize: '1rem' };
+  const buttonStyle = { width: '100%', background: '#f5841f', color: 'white', border: 'none', borderRadius: '10px', padding: '0.95rem 1rem', fontWeight: 700, cursor: 'pointer', fontSize: '1rem' };
+
+  if (status === 'loading') return <div style={containerStyle}><div style={cardStyle}>{Icons.loader}<p style={{ marginTop: '1rem', color: '#666' }}>Loading settlement session...</p></div></div>;
+  if (status === 'error') return <div style={containerStyle}><div style={cardStyle}><div style={{ fontSize: '3rem' }}>❌</div><h2 style={{ marginTop: '1rem' }}>Session Error</h2><p style={{ color: '#666', marginTop: '0.5rem' }}>{error}</p></div></div>;
+  if (!session) return null;
+  if (new Date(session.expires_at) < new Date()) return <div style={containerStyle}><div style={cardStyle}><div style={{ fontSize: '3rem' }}>⏰</div><h2 style={{ marginTop: '1rem' }}>Link Expired</h2><p style={{ color: '#666', marginTop: '0.5rem' }}>This settlement link has expired. Ask your approver to generate a new link.</p></div></div>;
+
+  return (
+    <div style={containerStyle}>
+      <div style={cardStyle}>
+        <SettlementInstallBanner />
+        {isStaffLogin && (
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '0.5rem' }}>
+            <button onClick={handleStaffLogout} style={{ background: 'none', border: '1px solid #d1d5db', borderRadius: '6px', padding: '0.35rem 0.8rem', cursor: 'pointer', fontSize: '0.8rem', color: '#6b7280', fontWeight: 500 }}>
+              ↩ Sign Out
+            </button>
+          </div>
+        )}
+        <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>🧾 Submit Settlement Details</div>
+        <p style={{ color: '#666', fontSize: '0.95rem', marginBottom: '1.5rem' }}>
+          Hello {session.payee?.name || 'staff payee'}, please provide the required settlement details for suspense voucher <strong>{session.suspense.serial_number}</strong>.
+        </p>
+        <div style={{ display: 'grid', gap: '0.75rem', marginBottom: '1.5rem' }}>
+          <div style={{ display: 'grid', gap: '0.35rem' }}>
+            <span style={labelStyle}>Voucher</span>
+            <div style={{ color: '#1f2937', fontWeight: 700 }}>{session.suspense.serial_number}</div>
+          </div>
+          <div style={{ display: 'grid', gap: '0.35rem' }}>
+            <span style={labelStyle}>Available Balance</span>
+            <div style={{ color: '#1f2937', fontWeight: 700 }}>{formatRupees(session.suspense.balance_amount || session.suspense.advance_amount || 0)}</div>
+          </div>
+          <div style={{ display: 'grid', gap: '0.35rem' }}>
+            <span style={labelStyle}>Payee</span>
+            <div style={{ color: '#1f2937' }}>{session.payee?.name || session.payee?.mobile}</div>
+          </div>
+          <div style={{ display: 'grid', gap: '0.35rem' }}>
+            <span style={labelStyle}>Expires At</span>
+            <div style={{ color: '#6b7280' }}>{new Date(session.expires_at).getFullYear() >= 2099 ? 'Active until voucher is closed' : new Date(session.expires_at).toLocaleString('en-IN')}</div>
+          </div>
+        </div>
+        {status !== 'submitted' ? (
+          <form onSubmit={handleSubmit}>
+            <div style={fieldStyle}>
+              <label style={labelStyle}>Settlement Type</label>
+              <select style={inputStyle} value={entryType} onChange={e => setEntryType(e.target.value)}>
+                <option value="expense">Expense</option>
+                <option value="advance_adjustment">Advance Adjustment</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+            <div style={fieldStyle}>
+              <label style={labelStyle}>Amount</label>
+              <input style={inputStyle} type="number" min="0" step="0.01" value={amount} onChange={e => setAmount(e.target.value)} placeholder="Enter settlement amount" />
+            </div>
+            <div style={fieldStyle}>
+              <label style={labelStyle}>Description / Purpose</label>
+              <textarea style={{ ...inputStyle, minHeight: '110px' }} value={description} onChange={e => setDescription(e.target.value)} placeholder="Describe the expense or adjustment" />
+            </div>
+            <div style={fieldStyle}>
+              <label style={labelStyle}>Reference Number (optional)</label>
+              <input style={inputStyle} type="text" value={referenceNumber} onChange={e => setReferenceNumber(e.target.value)} placeholder="Invoice / bill reference" />
+            </div>
+            <div style={{ ...fieldStyle, display: 'grid', gap: '0.35rem' }}>
+              <label style={labelStyle}>Invoice Available?</label>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                <button type="button" onClick={() => setRequiresInvoice(true)} style={{ ...inputStyle, background: requiresInvoice ? '#f5841f' : 'white', color: requiresInvoice ? 'white' : '#111', border: requiresInvoice ? 'none' : '1px solid #d6d6d6' }}>Yes</button>
+                <button type="button" onClick={() => setRequiresInvoice(false)} style={{ ...inputStyle, background: !requiresInvoice ? '#f5841f' : 'white', color: !requiresInvoice ? 'white' : '#111', border: !requiresInvoice ? 'none' : '1px solid #d6d6d6' }}>No</button>
+              </div>
+            </div>
+            {!requiresInvoice && (
+              <div style={fieldStyle}>
+                <label style={labelStyle}>If invoice is not available, explain why</label>
+                <textarea style={{ ...inputStyle, minHeight: '90px' }} value={invoiceMissingReason} onChange={e => setInvoiceMissingReason(e.target.value)} placeholder="Reason for missing invoice" />
+              </div>
+            )}
+            {error && <div style={{ color: '#b91c1c', marginBottom: '1rem' }}>{error}</div>}
+            <div style={{ ...fieldStyle, background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '1rem' }}>
+              <div style={{ fontWeight: 600, color: '#374151', marginBottom: '0.75rem' }}>📎 Attach Invoice / Receipt</div>
+              {pendingFiles.length > 0 && (
+                <div style={{ display: 'grid', gap: '0.5rem', marginBottom: '0.75rem' }}>
+                  {pendingFiles.map((pf, idx) => (
+                    <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', background: 'white', borderRadius: '8px', border: '1px solid #e2e8f0', padding: '0.5rem 0.75rem' }}>
+                      {pf.previewUrl ? <img src={pf.previewUrl} alt="" style={{ width: 40, height: 40, objectFit: 'cover', borderRadius: 6 }} /> : <span style={{ fontSize: '1.4rem' }}>📄</span>}
+                      <span style={{ flex: 1, fontSize: '0.85rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{pf.name}</span>
+                      <button type="button" onClick={() => setPendingFiles(prev => prev.filter((_, i) => i !== idx))} style={{ background: 'none', border: 'none', color: '#b91c1c', cursor: 'pointer', fontWeight: 700, fontSize: '1.1rem', lineHeight: 1 }}>✕</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div style={{ display: 'grid', gap: '0.5rem' }}>
+                <button type="button" onClick={() => requestCameraAndClick(takePhotoRef1, setError)} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', background: '#f5841f', color: 'white', padding: '0.7rem 1rem', borderRadius: '8px', cursor: 'pointer', width: '100%', justifyContent: 'center', boxSizing: 'border-box', fontSize: '0.9rem', fontWeight: 600, border: 'none' }}>
+                  📷 Take Photo of Invoice
+                </button>
+                <input ref={takePhotoRef1} type="file" accept="image/*" capture="environment" style={{ display: 'none' }} onChange={handlePendingFileAdd} />
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', background: '#1f2937', color: 'white', padding: '0.7rem 1rem', borderRadius: '8px', cursor: 'pointer', width: '100%', justifyContent: 'center', boxSizing: 'border-box', fontSize: '0.9rem', fontWeight: 600 }}>
+                  {Icons.upload} Upload from Gallery / PDF
+                  <input type="file" accept="image/*,.pdf" style={{ display: 'none' }} onChange={handlePendingFileAdd} />
+                </label>
+              </div>
+              <div style={{ fontSize: '0.8rem', color: '#9ca3af', marginTop: '0.5rem' }}>Optional — you can also add more attachments after submitting.</div>
+            </div>
+            <button style={buttonStyle} type="submit" disabled={status === 'submitting' || pendingUploading}>{pendingUploading ? 'Uploading attachments...' : status === 'submitting' ? 'Submitting...' : 'Submit Settlement'}</button>
+          </form>
+          ) : null}
+        {settlement && (
+          <div id="attachment-panel" style={{ marginTop: '1.5rem', textAlign: 'left' }}>
+            <div style={{ background: '#ecfdf5', border: '1px solid #d1fae5', borderRadius: '12px', padding: '1rem', marginBottom: '1rem' }}>
+              <div style={{ fontWeight: 700, marginBottom: '0.25rem' }}>✅ Settlement Submitted</div>
+              <div style={{ color: '#064e3b', fontSize: '0.95rem' }}>You can now attach the invoice or receipt for this settlement.</div>
+              <button type="button" onClick={async () => {
+                setSettlement(null); setAmount(''); setDescription(''); setHeadOfAccount(''); setReferenceNumber(''); setRequiresInvoice(true); setInvoiceMissingReason(''); setPendingFiles([]);
+                const data = await api.getSettlementSession(token);
+                if (data.settlementSession) setSession(data.settlementSession);
+                await loadHistory();
+                setStatus('ready');
+              }} style={{ marginTop: '0.75rem', background: '#1d4ed8', color: 'white', border: 'none', borderRadius: '8px', padding: '0.6rem 1.25rem', fontWeight: 600, cursor: 'pointer', fontSize: '0.9rem' }}>
+                ➕ Submit Another Entry
+              </button>
+            </div>
+            <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '1rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', gap: '1rem' }}>
+                <div>
+                  <div style={{ fontWeight: 700, color: '#111827' }}>Invoice / Receipt Upload</div>
+                  <div style={{ fontSize: '0.9rem', color: '#6b7280' }}>Upload directly or send a capture link to your phone.</div>
+                </div>
+                <div style={{ fontSize: '0.85rem', color: '#475569' }}>{attachments.length} attachment{attachments.length !== 1 ? 's' : ''}</div>
+              </div>
+              {attachmentLoading ? (
+                <div style={{ color: '#6b7280', padding: '1rem 0', textAlign: 'center' }}>{Icons.loader} Loading attachments...</div>
+              ) : attachments.length > 0 ? (
+                <div style={{ display: 'grid', gap: '0.75rem' }}>
+                  {attachments.map(att => (
+                    <div key={att.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', background: 'white', borderRadius: '10px', border: '1px solid #e2e8f0', padding: '0.75rem' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', minWidth: 0 }}>
+                        <span style={{ fontSize: '1.2rem' }}>{att.mime_type?.includes('pdf') ? '📄' : '🖼️'}</span>
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontWeight: 600, fontSize: '0.9rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{att.file_name}</div>
+                          <div style={{ fontSize: '0.78rem', color: '#6b7280' }}>{new Date(att.uploaded_at).toLocaleDateString('en-IN')}</div>
+                        </div>
+                      </div>
+                      <a href={att.public_url} target="_blank" rel="noopener noreferrer" style={{ color: '#1d4ed8', fontWeight: 700, fontSize: '0.82rem' }}>View</a>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div style={{ color: '#6b7280', padding: '1rem 0' }}>No invoice attachments uploaded yet.</div>
+              )}
+              <div style={{ display: 'grid', gap: '0.75rem', marginTop: '1rem' }}>
+                <button type="button" onClick={() => requestCameraAndClick(takePhotoRef2, setAttachmentError)} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', background: '#f5841f', color: 'white', padding: '0.8rem 1rem', borderRadius: '10px', cursor: 'pointer', width: '100%', justifyContent: 'center', boxSizing: 'border-box', fontWeight: 600, border: 'none', fontSize: '1rem' }}>
+                  {attachmentUploading ? Icons.loader : '📷'} {attachmentUploading ? 'Uploading...' : 'Take Photo of Invoice'}
+                </button>
+                <input ref={takePhotoRef2} type="file" accept="image/*" capture="environment" style={{ display: 'none' }} onChange={handleFileUpload} disabled={attachmentUploading} />
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', background: '#1f2937', color: 'white', padding: '0.8rem 1rem', borderRadius: '10px', cursor: 'pointer', width: '100%', justifyContent: 'center', boxSizing: 'border-box' }}>
+                  {Icons.upload} Upload from Gallery / PDF
+                  <input type="file" accept="image/*,.pdf" style={{ display: 'none' }} onChange={handleFileUpload} disabled={attachmentUploading} />
+                </label>
+                <button type="button" onClick={startQRCapture} style={{ width: '100%', background: 'white', color: '#374151', border: '1px solid #d1d5db', borderRadius: '10px', padding: '0.8rem 1rem', fontWeight: 600, cursor: 'pointer', fontSize: '0.9rem' }}>
+                  {Icons.qrCode} Send to Another Device (QR)
+                </button>
+              </div>
+              {showQr && captureSession && (
+                <div style={{ marginTop: '1rem', background: 'white', border: '1px dashed #f59e0b', borderRadius: '12px', padding: '1rem', textAlign: 'center' }}>
+                  <div style={{ fontWeight: 700, marginBottom: '0.5rem' }}>📱 Open on another device</div>
+                  <img src={qrImageUrl} alt="Capture QR code" style={{ width: 180, height: 180, marginBottom: '0.75rem', borderRadius: 8 }} />
+                  <div style={{ fontSize: '0.85rem', color: '#475569', marginBottom: '0.75rem' }}>Scan this QR code on another device to take/upload a photo of the invoice.</div>
+                  <div style={{ background: '#f3f4f6', borderRadius: 8, padding: '0.75rem', fontSize: '0.78rem', color: '#334155', wordBreak: 'break-all' }}>{`${window.location.origin}/capture/${captureSession.id}`}</div>
+                </div>
+              )}
+              {attachmentError && <div style={{ color: '#b91c1c', marginTop: '1rem' }}>{attachmentError}</div>}
+            </div>
+          </div>
+        )}
+
+        {/* Expense History — read-only list of all entries for this voucher */}
+        {history.length > 0 && (
+          <div style={{ marginTop: '2rem', textAlign: 'left' }}>
+            <div style={{ fontWeight: 700, fontSize: '1rem', color: '#1f2937', marginBottom: '0.75rem', borderTop: '1px solid #e5e7eb', paddingTop: '1.25rem' }}>
+              📋 My Submitted Expenses
+            </div>
+            {historyLoading ? <div style={{ color: '#6b7280', textAlign: 'center', padding: '1rem' }}>Loading...</div> : (
+              <div style={{ display: 'grid', gap: '0.6rem' }}>
+                {history.map(h => (
+                  <div key={h.id} style={{ background: h.status === 'approved' ? '#f0fdf4' : h.status === 'rejected' ? '#fef2f2' : '#fafafa', border: `1px solid ${h.status === 'approved' ? '#bbf7d0' : h.status === 'rejected' ? '#fecaca' : '#e5e7eb'}`, borderRadius: '10px', padding: '0.75rem 1rem' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '0.5rem' }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontWeight: 600, fontSize: '0.9rem', color: '#1f2937', marginBottom: '0.2rem' }}>{h.description}</div>
+                        {h.head_of_account && <div style={{ fontSize: '0.78rem', color: '#6b7280' }}>{h.head_of_account}</div>}
+                        {h.reference_number && <div style={{ fontSize: '0.78rem', color: '#9ca3af' }}>Ref: {h.reference_number}</div>}
+                        <div style={{ fontSize: '0.75rem', color: '#9ca3af', marginTop: '0.2rem' }}>{new Date(h.created_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}</div>
+                        {h.attachments && h.attachments.length > 0 && (
+                          <div style={{ display: 'flex', gap: '0.4rem', marginTop: '0.4rem', flexWrap: 'wrap' }}>
+                            {h.attachments.map(att => (
+                              <a key={att.id} href={att.public_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: '0.75rem', background: '#dbeafe', color: '#1d4ed8', padding: '2px 8px', borderRadius: '4px', textDecoration: 'none' }}>
+                                {att.mime_type?.includes('pdf') ? '📄' : '🖼️'} {att.file_name || 'Bill'}
+                              </a>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                        <div style={{ fontWeight: 700, color: h.entry_type === 'refund' ? '#059669' : '#dc2626', fontSize: '0.95rem' }}>
+                          {h.entry_type === 'refund' ? '+' : '−'}₹{parseFloat(h.amount).toFixed(2)}
+                        </div>
+                        <div style={{ fontSize: '0.72rem', marginTop: '0.2rem', padding: '2px 6px', borderRadius: '4px', fontWeight: 600, background: h.status === 'approved' ? '#dcfce7' : h.status === 'rejected' ? '#fee2e2' : '#fef9c3', color: h.status === 'approved' ? '#15803d' : h.status === 'rejected' ? '#dc2626' : '#a16207' }}>
+                          {h.status === 'approved' ? '✅ Approved' : h.status === 'rejected' ? '❌ Rejected' : '⏳ Pending'}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CAPTURE SESSION PAGE (public — no auth)
+// ─────────────────────────────────────────────────────────────────────────────
+const CaptureSessionPage = ({ sessionId }) => {
+  const [session, setSession] = useState(null);
+  const [status, setStatus] = useState('loading'); // loading | ready | uploading | success | error | expired | used
+  const [error, setError] = useState('');
+  const captureInputRef = React.useRef(null);
+
+  const requestCameraAndClickCapture = async () => {
+    setError('');
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      captureInputRef.current && captureInputRef.current.click();
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+      stream.getTracks().forEach(t => t.stop());
+      captureInputRef.current && captureInputRef.current.click();
+    } catch (err) {
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+        setError('Camera access was denied. Please allow camera permission in your browser/phone settings and try again.');
+      } else {
+        captureInputRef.current && captureInputRef.current.click();
+      }
+    }
+  };
+
+  useEffect(() => {
+    api.getCaptureSession(sessionId).then(data => {
+      if (data.session) {
+        const s = data.session;
+        setSession(s);
+        if (s.status === 'used') setStatus('used');
+        else if (s.status === 'expired') setStatus('expired');
+        else setStatus('ready');
+      } else {
+        setError('Session not found');
+        setStatus('error');
+      }
+    }).catch(() => { setError('Failed to load session'); setStatus('error'); });
+  }, [sessionId]);
+
+  const handleCapture = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setStatus('uploading');
+    try {
+      let processedFile = file;
+      if (file.type.startsWith('image/') && typeof imageCompression !== 'undefined') {
+        try { processedFile = await imageCompression(file, { maxSizeMB: 1.5, maxWidthOrHeight: 2000, useWebWorker: true }); } catch {}
+      }
+      const reader = new FileReader();
+      reader.onload = async () => {
+        try {
+          const result = await api.uploadToCapture(sessionId, { fileData: reader.result, mimeType: processedFile.type, fileName: file.name });
+          if (result.success) setStatus('success');
+          else { setError(result.error || 'Upload failed'); setStatus('error'); }
+        } catch { setError('Upload failed'); setStatus('error'); }
+      };
+      reader.onerror = () => { setError('Failed to read file'); setStatus('error'); };
+      reader.readAsDataURL(processedFile);
+    } catch { setError('Failed to process image'); setStatus('error'); }
+  };
+
+  const containerStyle = { minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '2rem', background: '#f8f9fa', fontFamily: 'Outfit, sans-serif', textAlign: 'center' };
+  const cardStyle = { background: 'white', borderRadius: '16px', padding: '2rem', boxShadow: '0 4px 24px rgba(0,0,0,0.08)', maxWidth: '400px', width: '100%' };
+
+  if (status === 'loading') return <div style={containerStyle}><div style={cardStyle}>{Icons.loader}<p style={{ marginTop: '1rem', color: '#666' }}>Loading session...</p></div></div>;
+  if (status === 'error') return <div style={containerStyle}><div style={cardStyle}><div style={{ fontSize: '3rem' }}>❌</div><h2 style={{ marginTop: '1rem' }}>Session Error</h2><p style={{ color: '#666', marginTop: '0.5rem' }}>{error}</p></div></div>;
+  if (status === 'expired') return <div style={containerStyle}><div style={cardStyle}><div style={{ fontSize: '3rem' }}>⏰</div><h2 style={{ marginTop: '1rem' }}>Session Expired</h2><p style={{ color: '#666', marginTop: '0.5rem' }}>This QR code has expired. Please generate a new one.</p></div></div>;
+  if (status === 'used') return <div style={containerStyle}><div style={cardStyle}><div style={{ fontSize: '3rem' }}>✅</div><h2 style={{ marginTop: '1rem' }}>Already Used</h2><p style={{ color: '#666', marginTop: '0.5rem' }}>A photo was already uploaded via this link.</p></div></div>;
+  if (status === 'success') return <div style={containerStyle}><div style={cardStyle}><div style={{ fontSize: '3rem' }}>✅</div><h2 style={{ marginTop: '1rem', color: '#10b981' }}>Photo Sent!</h2><p style={{ color: '#666', marginTop: '0.5rem' }}>Your photo has been attached successfully. You can close this page.</p></div></div>;
+  if (status === 'uploading') return <div style={containerStyle}><div style={cardStyle}>{Icons.loader}<p style={{ marginTop: '1rem', color: '#666' }}>Uploading photo...</p></div></div>;
+
+  return (
+    <div style={containerStyle}>
+      <div style={cardStyle}>
+        <div style={{ fontSize: '2.5rem', marginBottom: '0.5rem' }}>📷</div>
+        <h2 style={{ fontWeight: 700, color: '#1a1a1a' }}>Attach Bill Photo</h2>
+        <p style={{ color: '#666', fontSize: '0.9rem', margin: '0.75rem 0 1.5rem' }}>
+          Take a photo of the bill or receipt to attach it to the voucher.
+        </p>
+        <button type="button" onClick={requestCameraAndClickCapture} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', background: '#f5841f', color: 'white', padding: '0.85rem 2rem', borderRadius: '8px', cursor: 'pointer', fontWeight: 600, fontSize: '1rem', width: '100%', justifyContent: 'center', boxSizing: 'border-box', border: 'none' }}>
+          📷 Take Photo / Choose File
+        </button>
+        <input ref={captureInputRef} type="file" accept="image/*" capture="environment" style={{ display: 'none' }} onChange={handleCapture} />
+        {error && <p style={{ color: '#b91c1c', fontSize: '0.85rem', marginTop: '0.75rem' }}>{error}</p>}
+        <p style={{ color: '#aaa', fontSize: '0.75rem', marginTop: '1rem' }}>
+          Session expires: {session ? new Date(session.expires_at).toLocaleTimeString('en-IN') : ''}
+        </p>
+      </div>
+    </div>
+  );
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RECEIPT SHARE MODAL (Query 3 — Android share-intent + manual trigger)
+// ─────────────────────────────────────────────────────────────────────────────
+const ReceiptShareModal = ({ state, onClose }) => {
+  const { user, addToast } = useApp();
+  const [pickerMode, setPickerMode] = React.useState(false);
+  const [pickerSearch, setPickerSearch] = React.useState('');
+  const [attaching, setAttaching] = React.useState(false);
+
+  if (!state) return null;
+  const { step, mimeType, base64Data, matchResult, errorMsg, autoResult, queueReason } = state;
+  const fileDataUrl = base64Data && !base64Data.startsWith('data:') ? `data:${mimeType};base64,${base64Data}` : (base64Data || '');
+
+  const isHigh = !pickerMode && matchResult?.confidence === 'high' && matchResult?.matchedVoucherId && matchResult?.matchType !== 'batch';
+  const isBatchHigh = !pickerMode && matchResult?.confidence === 'high' && matchResult?.matchedBatchId && matchResult?.matchType === 'batch';
+  const matchedBatch = isBatchHigh ? (matchResult?.candidateBatches || []).find(b => b.id === matchResult.matchedBatchId) : null;
+  const candidates = matchResult?.candidateVouchers || [];
+  const isImageBasedPdf = matchResult?.confidence === 'none' && candidates.length === 0 && mimeType === 'application/pdf';
+  const matchedVoucher = isHigh ? candidates.find(v => v.id === matchResult.matchedVoucherId) : null;
+  const filteredCandidates = candidates.filter(v => {
+    if (!pickerSearch) return true;
+    const s = pickerSearch.toLowerCase();
+    return v.serial_number?.toLowerCase().includes(s) || String(v.amount).includes(s);
+  });
+
+  const doAttach = async (voucherId) => {
+    setAttaching(true);
+    try {
+      const ext = mimeType === 'application/pdf' ? 'pdf' : (mimeType.split('/')[1] || 'jpg');
+      const res = await api.uploadAttachment({ fileData: fileDataUrl, mimeType, fileName: `receipt_${Date.now()}.${ext}`, voucherId, voucherType: 'regular', uploadedBy: user.id, companyId: user.company.id });
+      if (res.success) { addToast('Receipt attached', 'success'); onClose(); }
+      else addToast(res.error || 'Attach failed', 'error');
+    } catch { addToast('Attach failed', 'error'); }
+    setAttaching(false);
+  };
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '480px', maxHeight: '88vh', display: 'flex', flexDirection: 'column' }}>
+        <div className="modal-header" style={{ background: '#1e40af', color: 'white' }}>
+          <h3 className="modal-title" style={{ color: 'white' }}>📩 Receipt Received</h3>
+          <button className="modal-close" style={{ color: 'white' }} onClick={onClose}>×</button>
+        </div>
+        <div className="modal-body" style={{ overflowY: 'auto', flex: 1 }}>
+          {step === 'matching' && (
+            <div style={{ textAlign: 'center', padding: '2.5rem 1rem' }}>
+              {Icons.loader}
+              <p style={{ color: '#6b7280', marginTop: '1rem' }}>Identifying voucher from receipt…</p>
+            </div>
+          )}
+          {step === 'autocompleted' && (
+            <div style={{ textAlign: 'center', padding: '1.5rem 0.5rem' }}>
+              <div style={{ background: autoResult?.receiptUploadFailed ? '#fefce8' : '#f0fdf4', border: `2px solid ${autoResult?.receiptUploadFailed ? '#fde68a' : '#86efac'}`, borderRadius: '10px', padding: '1.5rem', marginBottom: '0.75rem' }}>
+                <div style={{ fontSize: '2.5rem', marginBottom: '0.5rem' }}>✅</div>
+                <div style={{ fontWeight: 700, color: autoResult?.receiptUploadFailed ? '#92400e' : '#166534', fontSize: '1.05rem', marginBottom: '4px' }}>Payment Recorded</div>
+                {autoResult?.serialNumber && <div style={{ fontFamily: 'monospace', fontWeight: 600, color: '#15803d', marginBottom: '4px' }}>{autoResult.serialNumber}</div>}
+                {autoResult?.utr && <div style={{ fontSize: '0.82rem', color: '#6b7280', marginTop: '4px' }}>UTR: <code>{autoResult.utr}</code></div>}
+                {autoResult?.receiptUploadFailed
+                  ? <div style={{ fontSize: '0.8rem', color: '#b45309', marginTop: '10px' }}>⚠️ Receipt upload failed — voucher status updated but receipt file was not saved. Share again to attach the file.</div>
+                  : <div style={{ fontSize: '0.8rem', color: '#4ade80', marginTop: '10px' }}>Voucher marked as paid · Receipt saved.</div>
+                }
+              </div>
+            </div>
+          )}
+          {step === 'backfilled' && (
+            <div style={{ textAlign: 'center', padding: '1.5rem 0.5rem' }}>
+              {(() => {
+                const r = autoResult || {};
+                // Compose accurate title from what was actually written
+                const title = r.nothingWritten ? 'Nothing to Record'
+                  : r.utrWritten && r.receiptWritten ? 'Receipt Attached & UTR Recorded'
+                  : r.utrWritten ? 'UTR Recorded'
+                  : r.receiptWritten ? 'Receipt Attached'
+                  : 'Receipt Attached & UTR Recorded'; // legacy — flags absent from older deploys
+                const hasWarning = r.nothingWritten || r.receiptUploadFailed;
+                return (
+                  <div style={{ background: r.nothingWritten ? '#fef2f2' : hasWarning ? '#fefce8' : '#eff6ff', border: `2px solid ${r.nothingWritten ? '#fca5a5' : hasWarning ? '#fde68a' : '#bfdbfe'}`, borderRadius: '10px', padding: '1.5rem', marginBottom: '0.75rem' }}>
+                    <div style={{ fontSize: '2.5rem', marginBottom: '0.5rem' }}>{r.nothingWritten ? '⚠️' : '📎'}</div>
+                    <div style={{ fontWeight: 700, color: r.nothingWritten ? '#991b1b' : hasWarning ? '#92400e' : '#1d4ed8', fontSize: '1.05rem', marginBottom: '4px' }}>{title}</div>
+                    {r.serialNumber && <div style={{ fontFamily: 'monospace', fontWeight: 600, color: '#1e40af', marginBottom: '4px' }}>{r.serialNumber}</div>}
+                    {r.utr && <div style={{ fontSize: '0.82rem', color: '#6b7280', marginTop: '4px' }}>UTR: <code>{r.utr}</code></div>}
+                    {r.nothingWritten && <div style={{ fontSize: '0.8rem', color: '#dc2626', marginTop: '10px' }}>No UTR extracted and receipt already on file — nothing was changed.</div>}
+                    {!r.nothingWritten && r.receiptUploadFailed && <div style={{ fontSize: '0.8rem', color: '#b45309', marginTop: '6px' }}>⚠️ Receipt file upload failed — UTR saved but receipt not stored. Share again to attach the file.</div>}
+                    {!r.nothingWritten && !r.receiptUploadFailed && <div style={{ fontSize: '0.8rem', color: '#93c5fd', marginTop: '10px' }}>Voucher was already paid · {r.utrWritten ? 'UTR' : 'Receipt'} now on record.</div>}
+                  </div>
+                );
+              })()}
+            </div>
+          )}
+          {step === 'queued' && (
+            <div style={{ textAlign: 'center', padding: '1.5rem 0.5rem' }}>
+              <div style={{ background: '#fffbeb', border: '2px solid #fde68a', borderRadius: '10px', padding: '1.5rem', marginBottom: '0.75rem' }}>
+                <div style={{ fontSize: '2.5rem', marginBottom: '0.5rem' }}>📬</div>
+                <div style={{ fontWeight: 700, color: '#92400e', fontSize: '1.05rem', marginBottom: '4px' }}>Sent to Review Queue</div>
+                <div style={{ fontSize: '0.82rem', color: '#78350f' }}>{queueReason || "Couldn't auto-match — Accounts will assign it manually."}</div>
+                <div style={{ fontSize: '0.79rem', color: '#78716c', marginTop: '10px' }}>Receipt saved. Open <strong>Receipt Review Queue</strong> to assign it.</div>
+              </div>
+            </div>
+          )}
+          {step === 'result' && (
+            <>
+              {state.unassignedId && (
+                <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '8px', padding: '0.6rem 0.75rem', marginBottom: '0.75rem', fontSize: '0.8rem', color: '#166534' }}>
+                  🟢 Receipt saved in review queue — safe to dismiss if you can't find the voucher here.
+                </div>
+              )}
+              {errorMsg && (
+                <div style={{ background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: '8px', padding: '0.75rem', marginBottom: '1rem', fontSize: '0.875rem', color: '#991b1b' }}>
+                  ⚠️ Matching unavailable — {errorMsg}. Select the voucher manually below.
+                </div>
+              )}
+              {isImageBasedPdf && !errorMsg && (
+                <div style={{ background: '#fffbeb', border: '1px solid #fde68a', borderRadius: '8px', padding: '0.75rem', marginBottom: '1rem', fontSize: '0.875rem', color: '#92400e' }}>
+                  ℹ️ No reference detected — this bank's PDF format may not support automatic matching yet. Please select the voucher manually.
+                </div>
+              )}
+              {isHigh && !errorMsg && (
+                <>
+                  <div style={{ background: '#f0fdf4', border: '2px solid #86efac', borderRadius: '10px', padding: '1rem', marginBottom: '1rem' }}>
+                    <div style={{ fontSize: '0.72rem', color: '#166534', fontWeight: 700, textTransform: 'uppercase', marginBottom: '6px' }}>✅ Voucher identified</div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}><span style={{ color: '#166534' }}>Voucher</span><strong style={{ fontFamily: 'monospace' }}>{matchedVoucher?.serial_number || '—'}</strong></div>
+                    {matchedVoucher?.amount && <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}><span style={{ color: '#166534' }}>Amount</span><strong>₹{parseFloat(matchedVoucher.amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</strong></div>}
+                    {matchResult.extractedReference && <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#166534' }}>Ref in receipt</span><code style={{ fontSize: '0.82rem' }}>{matchResult.extractedReference}</code></div>}
+                  </div>
+                  <button className="btn btn-success" style={{ width: '100%', marginBottom: '0.5rem' }} onClick={() => doAttach(matchResult.matchedVoucherId)} disabled={attaching}>
+                    {attaching ? Icons.loader : '📎'} Attach to {matchedVoucher?.serial_number || 'voucher'}
+                  </button>
+                  <button className="btn btn-secondary" style={{ width: '100%', fontSize: '0.85rem' }} onClick={() => setPickerMode(true)}>Choose a different voucher</button>
+                </>
+              )}
+              {isBatchHigh && !errorMsg && (() => {
+                const [bRef, setBRef] = React.useState('');
+                const [bNotes, setBNotes] = React.useState('');
+                const [bPaying, setBPaying] = React.useState(false);
+                const confirmBatchPaid = async () => {
+                  if (!bRef.trim() && !base64Data) { addToast('Enter a UTR or upload receipt', 'error'); return; }
+                  setBPaying(true);
+                  try {
+                    const r = await api.markBatchPaid(matchResult.matchedBatchId, { paidBy: user.id, paymentReference: bRef.trim() || null, paymentNotes: bNotes.trim() || null });
+                    if (r.success) { addToast(`Batch ${matchedBatch?.batch_reference} marked paid ✅`, 'success'); onClose(); }
+                    else addToast(r.error || 'Failed', 'error');
+                  } catch (e) { addToast(e.message || 'Failed', 'error'); }
+                  setBPaying(false);
+                };
+                return (
+                  <>
+                    <div style={{ background: '#eff6ff', border: '2px solid #bfdbfe', borderRadius: '10px', padding: '1rem', marginBottom: '1rem' }}>
+                      <div style={{ fontSize: '0.72rem', color: '#1d4ed8', fontWeight: 700, textTransform: 'uppercase', marginBottom: '6px' }}>💳 Payment batch matched</div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}><span style={{ color: '#1d4ed8' }}>Batch</span><strong style={{ fontFamily: 'monospace' }}>{matchedBatch?.batch_reference || '—'}</strong></div>
+                      {matchedBatch?.total_amount && <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}><span style={{ color: '#1d4ed8' }}>Total</span><strong>₹{parseFloat(matchedBatch.total_amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</strong></div>}
+                      {matchResult.extractedReference && <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#1d4ed8' }}>Ref in receipt</span><code style={{ fontSize: '0.82rem' }}>{matchResult.extractedReference}</code></div>}
+                    </div>
+                    {(user.role === 'accounts' || user.isSuperAdmin) && <>
+                      <input className="form-input" placeholder="UTR / Transaction reference" value={bRef} onChange={e => setBRef(e.target.value)} style={{ marginBottom: '0.5rem' }} />
+                      <textarea className="form-input" placeholder="Notes (optional)" value={bNotes} onChange={e => setBNotes(e.target.value)} rows={2} style={{ marginBottom: '0.5rem', resize: 'none' }} />
+                      <button className="btn btn-success" style={{ width: '100%', marginBottom: '0.5rem' }} onClick={confirmBatchPaid} disabled={bPaying || !bRef.trim()}>
+                        {bPaying ? Icons.loader : '✅'} Confirm Batch Paid
+                      </button>
+                    </>}
+                    <button className="btn btn-secondary" style={{ width: '100%', fontSize: '0.85rem' }} onClick={() => setPickerMode(true)}>Choose a different voucher instead</button>
+                  </>
+                );
+              })()}
+              {(!isHigh || pickerMode) && !errorMsg && (
+                <>
+                  {matchResult?.confidence === 'low' && matchResult.extractedReference && (
+                    <p style={{ fontSize: '0.875rem', color: '#6b7280', marginBottom: '0.5rem' }}>Found <code>{matchResult.extractedReference}</code> but no exact queue match — please select:</p>
+                  )}
+                  {matchResult?.confidence === 'none' && !isImageBasedPdf && (
+                    <p style={{ fontSize: '0.875rem', color: '#6b7280', marginBottom: '0.5rem' }}>No voucher reference detected. Please select the voucher manually:</p>
+                  )}
+                  {pickerMode && <p style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.5rem' }}>Choose a different voucher:</p>}
+                  <input className="form-input" placeholder="Search by serial or amount…" value={pickerSearch} onChange={e => setPickerSearch(e.target.value)} style={{ marginBottom: '0.5rem' }} autoFocus />
+                  {filteredCandidates.length === 0 ? (
+                    <div style={{ textAlign: 'center', padding: '1.5rem', color: '#9ca3af', fontSize: '0.875rem' }}>{candidates.length === 0 ? 'No vouchers in the payment queue for this company.' : 'No matches for that search.'}</div>
+                  ) : (
+                    <div style={{ maxHeight: '300px', overflowY: 'auto', border: '1px solid #e5e7eb', borderRadius: '8px' }}>
+                      {filteredCandidates.map(v => (
+                        <div key={v.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.55rem 0.75rem', borderBottom: '1px solid #f3f4f6', gap: '0.5rem' }}>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontFamily: 'monospace', fontWeight: 700, fontSize: '0.85rem' }}>{v.serial_number}</div>
+                            <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>₹{parseFloat(v.amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })} · {v.status}</div>
+                          </div>
+                          <button className="btn btn-sm btn-success" onClick={() => doAttach(v.id)} disabled={attaching} style={{ flexShrink: 0, fontSize: '0.78rem' }}>{attaching ? Icons.loader : '📎 Attach'}</button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+            </>
+          )}
+        </div>
+        <div className="modal-footer">
+          <button className="btn btn-secondary" onClick={onClose}>Dismiss</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RETROSPECTIVE SCAN MODAL
+// Scans existing bill attachments on awaiting_payment / completed vouchers
+// to find bank receipts uploaded before the receipt-matching system existed.
+// ─────────────────────────────────────────────────────────────────────────────
+const RetrospectiveScanModal = ({ onClose }) => {
+  const { user, addToast, refreshVouchers } = useApp();
+  const [phase, setPhase]   = React.useState('idle'); // idle | scanning | results | confirming
+  const [results, setResults] = React.useState([]);
+  const [selected, setSelected] = React.useState({}); // voucherId → true/false
+  const [confirming, setConfirming] = React.useState(false);
+
+  const runScan = async () => {
+    setPhase('scanning');
+    try {
+      const res = await api.retrospectiveScan(user.company.id, { requestedBy: user.id });
+      setResults(res.results || []);
+      // Pre-select all high-confidence matches
+      const sel = {};
+      (res.results || []).forEach(r => { if (r.bestConfidence === 'high') sel[r.voucherId] = true; });
+      setSelected(sel);
+      setPhase('results');
+    } catch (e) {
+      addToast(e.message || 'Scan failed', 'error');
+      setPhase('idle');
+    }
+  };
+
+  const handleConfirm = async () => {
+    const toConfirm = results
+      .filter(r => selected[r.voucherId])
+      .map(r => {
+        const best = r.attachments.find(a => a.confidence === 'high') || r.attachments.find(a => a.confidence === 'low');
+        return { voucherId: r.voucherId, attachmentUrl: best?.publicUrl || null, utr: best?.utr || null, transferType: best?.transferType || null };
+      });
+    if (!toConfirm.length) { addToast('Select at least one voucher', 'error'); return; }
+    setConfirming(true);
+    try {
+      const res = await api.retrospectiveScan(user.company.id, { requestedBy: user.id, confirmIds: toConfirm });
+      const ok = (res.confirmed || []).filter(r => r.success).length;
+      const fail = (res.confirmed || []).filter(r => !r.success).length;
+      addToast(`${ok} voucher(s) marked paid${fail ? ` · ${fail} failed` : ''}`, ok > 0 ? 'success' : 'error');
+      refreshVouchers();
+      onClose();
+    } catch (e) {
+      addToast(e.message || 'Failed to confirm', 'error');
+    }
+    setConfirming(false);
+  };
+
+  const confidenceBadge = (c) => {
+    if (c === 'high') return <span style={{background:'#dcfce7',color:'#166534',padding:'2px 8px',borderRadius:'10px',fontSize:'0.72rem',fontWeight:700}}>HIGH ✓</span>;
+    if (c === 'low')  return <span style={{background:'#fef9c3',color:'#713f12',padding:'2px 8px',borderRadius:'10px',fontSize:'0.72rem',fontWeight:700}}>LOW</span>;
+    return <span style={{background:'#f3f4f6',color:'#6b7280',padding:'2px 8px',borderRadius:'10px',fontSize:'0.72rem',fontWeight:700}}>NONE</span>;
+  };
+
+  const highCount = results.filter(r => r.bestConfidence === 'high').length;
+  const selectedCount = Object.values(selected).filter(Boolean).length;
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" onClick={e => e.stopPropagation()} style={{maxWidth:'680px',maxHeight:'88vh',display:'flex',flexDirection:'column'}}>
+        <div className="modal-header" style={{background:'#7c3aed',color:'white'}}>
+          <h3 className="modal-title" style={{color:'white'}}>🔍 Scan Uploaded Receipts for Payment Proof</h3>
+          <button className="modal-close" style={{color:'white'}} onClick={onClose}>×</button>
+        </div>
+
+        <div className="modal-body" style={{overflowY:'auto',flex:1}}>
+          {phase === 'idle' && (
+            <div style={{textAlign:'center',padding:'2rem 1rem'}}>
+              <div style={{fontSize:'3rem',marginBottom:'1rem'}}>🏦</div>
+              <h3 style={{fontWeight:700,marginBottom:'0.5rem'}}>Retrospective Receipt Scan</h3>
+              <p style={{color:'#6b7280',fontSize:'0.9rem',marginBottom:'1.5rem',maxWidth:'420px',margin:'0 auto 1.5rem'}}>
+                Scans bill attachments already uploaded to <strong>unpaid vouchers</strong> in this company.
+                For each attachment, OCR extracts text and checks for:
+              </p>
+              <div style={{display:'inline-block',textAlign:'left',background:'#f8fafc',border:'1px solid #e2e8f0',borderRadius:'8px',padding:'0.75rem 1.25rem',fontSize:'0.875rem',marginBottom:'1.5rem'}}>
+                <div>✅ Voucher reference (e.g. VCH 534) in the receipt text</div>
+                <div>✅ Payment keywords (IMPS / NEFT / UTR / Transfer Acknowledgement)</div>
+                <div>✅ UTR / reference number extraction for auto-fill</div>
+              </div>
+              <div style={{background:'#fffbeb',border:'1px solid #fde68a',borderRadius:'8px',padding:'0.75rem',fontSize:'0.82rem',color:'#92400e',marginBottom:'1.5rem'}}>
+                ⏳ Each attachment requires a GPT-4o Vision call — may take 30–90 seconds for large batches.
+              </div>
+              <button className="btn btn-success" style={{background:'#7c3aed',border:'none',fontSize:'1rem',padding:'0.75rem 2rem'}} onClick={runScan}>
+                🔍 Start Scan
+              </button>
+            </div>
+          )}
+
+          {phase === 'scanning' && (
+            <div style={{textAlign:'center',padding:'3rem 1rem'}}>
+              {Icons.loader}
+              <p style={{color:'#6b7280',marginTop:'1rem',fontSize:'0.9rem'}}>
+                Scanning attachments via GPT-4o Vision…<br/>
+                <span style={{fontSize:'0.8rem'}}>This may take a minute. Please wait.</span>
+              </p>
+            </div>
+          )}
+
+          {phase === 'results' && (
+            <>
+              <div style={{background:'#f0fdf4',border:'1px solid #86efac',borderRadius:'8px',padding:'0.75rem 1rem',marginBottom:'1rem',fontSize:'0.875rem',display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:'0.5rem'}}>
+                <span>Scanned <strong>{results.length}</strong> voucher(s) · <strong style={{color:'#166534'}}>{highCount} high-confidence</strong> payment receipt(s) found</span>
+                {highCount > 0 && <button className="btn btn-sm btn-secondary" onClick={() => { const s={}; results.forEach(r => { if(r.bestConfidence==='high') s[r.voucherId]=true; }); setSelected(s); }}>Select all HIGH</button>}
+              </div>
+
+              {results.length === 0 && (
+                <div style={{textAlign:'center',padding:'2rem',color:'#6b7280'}}>No unpaid vouchers with attachments found.</div>
+              )}
+
+              {results.map(r => {
+                const best = r.attachments.find(a => a.confidence === 'high') || r.attachments.find(a => a.confidence === 'low');
+                return (
+                  <div key={r.voucherId} style={{border:`2px solid ${r.bestConfidence==='high'?'#86efac':r.bestConfidence==='low'?'#fde68a':'#e5e7eb'}`,borderRadius:'10px',padding:'0.875rem',marginBottom:'0.75rem',background:r.bestConfidence==='high'?'#f0fdf4':r.bestConfidence==='low'?'#fefce8':'white'}}>
+                    <div style={{display:'flex',alignItems:'flex-start',gap:'0.75rem',flexWrap:'wrap'}}>
+                      {r.bestConfidence !== 'none' && (
+                        <input type="checkbox" checked={!!selected[r.voucherId]} onChange={e => setSelected(s => ({...s,[r.voucherId]:e.target.checked}))} style={{width:'18px',height:'18px',marginTop:'2px',cursor:'pointer',flexShrink:0}} />
+                      )}
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{display:'flex',gap:'0.5rem',alignItems:'center',flexWrap:'wrap',marginBottom:'4px'}}>
+                          <code style={{fontWeight:700,fontSize:'0.875rem'}}>{r.serialNumber}</code>
+                          {confidenceBadge(r.bestConfidence)}
+                          <span style={{fontSize:'0.82rem',color:'#6b7280'}}>{r.payeeName} · ₹{parseFloat(r.amount).toLocaleString('en-IN',{minimumFractionDigits:2})} · {r.paymentMode}</span>
+                        </div>
+                        {best && best.confidence !== 'none' && (
+                          <div style={{fontSize:'0.8rem',color:'#374151',display:'flex',gap:'1rem',flexWrap:'wrap'}}>
+                            {best.extractedVchRef && <span>📄 Ref found: <code>{best.extractedVchRef}</code></span>}
+                            {best.utr && <span>🔑 UTR: <code>{best.utr}</code></span>}
+                            {best.transferType && <span>🏦 {best.transferType}</span>}
+                            {best.fileName && <a href={best.publicUrl} target="_blank" rel="noreferrer" style={{color:'#2563eb'}}>📎 {best.fileName}</a>}
+                          </div>
+                        )}
+                        {best?.error && <div style={{fontSize:'0.78rem',color:'#dc2626',marginTop:'2px'}}>⚠️ {best.error}</div>}
+                        {r.bestConfidence === 'none' && !best?.error && <div style={{fontSize:'0.78rem',color:'#6b7280',marginTop:'2px'}}>No payment proof found in attachment(s) — review manually.</div>}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </>
+          )}
+        </div>
+
+        <div className="modal-footer">
+          <button className="btn btn-secondary" onClick={onClose}>Close</button>
+          {phase === 'results' && selectedCount > 0 && (
+            <button className="btn btn-success" onClick={handleConfirm} disabled={confirming}>
+              {confirming ? Icons.loader : '✅'} Mark {selectedCount} Voucher(s) as Paid
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RECEIPT REVIEW QUEUE (Migration 036)
+// Accounts reviews receipts that the auto-complete flow couldn't match.
+// Each row shows extracted OCR data for one-tap voucher assignment.
+// ─────────────────────────────────────────────────────────────────────────────
+const UnassignedReceiptsPage = () => {
+  const { user, addToast, refreshVouchers } = useApp();
+  const [loading, setLoading] = React.useState(true);
+  const [receipts, setReceipts] = React.useState([]);
+  const [candidates, setCandidates] = React.useState([]);
+  const [expanded, setExpanded] = React.useState(null);
+  const [search, setSearch] = React.useState({});
+  const [acting, setActing] = React.useState(null); // id of row being saved
+
+  const loadData = async () => {
+    setLoading(true);
+    try {
+      const data = await api.getUnassignedReceipts(user.company.id, user.id);
+      setReceipts(data.receipts || []);
+      setCandidates(data.candidates || []);
+    } catch (e) { addToast(e.message || 'Load failed', 'error'); }
+    setLoading(false);
+  };
+
+  React.useEffect(() => { loadData(); }, []);
+
+  const handleAssign = async (receiptId, voucherId) => {
+    setActing(receiptId);
+    try {
+      const res = await api.assignUnassignedReceipt(receiptId, { assignedBy: user.id, voucherId });
+      if (res.success) {
+        const msg = res.outcome === 'receipt_attached_utr_recorded'
+          ? `Receipt Attached & UTR Recorded — ${res.serialNumber} (${res.utr})`
+          : `Receipt Attached — UTR not found in receipt (${res.serialNumber})`;
+        addToast(msg, 'success');
+        refreshVouchers(); loadData();
+      }
+      else addToast(res.error || 'Assignment failed', 'error');
+    } catch (e) { addToast(e.message || 'Assignment failed', 'error'); }
+    setActing(null);
+  };
+
+  const handleDismiss = async (receiptId) => {
+    setActing(receiptId);
+    try {
+      const res = await api.dismissUnassignedReceipt(receiptId, { dismissedBy: user.id });
+      if (res.success) { addToast('Dismissed', 'success'); loadData(); }
+      else addToast(res.error || 'Dismiss failed', 'error');
+    } catch (e) { addToast(e.message || 'Dismiss failed', 'error'); }
+    setActing(null);
+  };
+
+  const filteredCandidates = (receiptId) => {
+    const q = (search[receiptId] || '').toLowerCase();
+    if (!q) return candidates;
+    return candidates.filter(v => v.serial_number?.toLowerCase().includes(q) || String(v.amount).includes(q));
+  };
+
+  if (loading) return <div style={{ textAlign: 'center', padding: '3rem' }}>{Icons.loader}</div>;
+
+  return (
+    <div style={{ maxWidth: '780px', margin: '0 auto', padding: '1.5rem 1rem' }}>
+      <div style={{ marginBottom: '1.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '0.5rem' }}>
+        <div>
+          <h2 style={{ fontWeight: 700, fontSize: '1.25rem', marginBottom: '0.25rem' }}>📬 Receipt Review Queue</h2>
+          <p style={{ color: '#6b7280', fontSize: '0.875rem' }}>Receipts shared from the phone that couldn't be auto-matched. Assign each to its voucher to mark it paid.</p>
+        </div>
+        <button className="btn btn-secondary" style={{ fontSize: '0.85rem' }} onClick={loadData}>↻ Refresh</button>
+      </div>
+
+      {receipts.length === 0 && (
+        <div style={{ textAlign: 'center', padding: '3rem', color: '#9ca3af', background: '#f9fafb', borderRadius: '12px', border: '1px solid #e5e7eb' }}>
+          <div style={{ fontSize: '2.5rem', marginBottom: '0.5rem' }}>✅</div>
+          <div style={{ fontWeight: 600, color: '#374151' }}>Review queue is empty</div>
+          <div style={{ fontSize: '0.875rem', marginTop: '4px' }}>All shared receipts have been matched.</div>
+        </div>
+      )}
+
+      {receipts.map(r => {
+        const ocr = r.extracted_data || {};
+        const isExpanded = expanded === r.id;
+        const isActing = acting === r.id;
+        const filtered = filteredCandidates(r.id);
+        return (
+          <div key={r.id} style={{ border: '1px solid #e5e7eb', borderRadius: '10px', marginBottom: '0.875rem', background: 'white', overflow: 'hidden' }}>
+            <div style={{ padding: '0.875rem 1rem', display: 'flex', alignItems: 'flex-start', gap: '0.75rem', flexWrap: 'wrap' }}>
+              {/* Receipt preview thumbnail */}
+              <div style={{ flexShrink: 0 }}>
+                {r.mime_type.startsWith('image/') ? (
+                  <a href={r.file_url} target="_blank" rel="noreferrer">
+                    <img src={r.file_url} alt="receipt" style={{ width: 64, height: 64, objectFit: 'cover', borderRadius: '6px', border: '1px solid #e5e7eb' }} />
+                  </a>
+                ) : (
+                  <a href={r.file_url} target="_blank" rel="noreferrer" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 64, height: 64, borderRadius: '6px', border: '1px solid #e5e7eb', background: '#fef9c3', fontSize: '1.5rem', textDecoration: 'none' }}>📄</a>
+                )}
+              </div>
+
+              <div style={{ flex: 1, minWidth: 0 }}>
+                {/* OCR extracted fields */}
+                <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '4px', alignItems: 'center' }}>
+                  {ocr.amount && <span style={{ background: '#eff6ff', color: '#1d4ed8', padding: '2px 10px', borderRadius: '10px', fontWeight: 700, fontSize: '0.9rem' }}>₹{parseFloat(ocr.amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>}
+                  {ocr.utr_number && <span style={{ fontFamily: 'monospace', fontSize: '0.8rem', color: '#374151' }}>UTR: {ocr.utr_number}</span>}
+                  {ocr.bank_name && <span style={{ fontSize: '0.8rem', color: '#6b7280' }}>{ocr.bank_name}</span>}
+                </div>
+                {ocr.beneficiary_name && <div style={{ fontSize: '0.8rem', color: '#374151', marginBottom: '2px' }}>To: <strong>{ocr.beneficiary_name}</strong></div>}
+                {r.match_reason && <div style={{ fontSize: '0.78rem', color: '#ef4444', marginBottom: '4px' }}>⚠️ {r.match_reason}</div>}
+                <div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{new Date(r.created_at).toLocaleString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</div>
+              </div>
+
+              <div style={{ display: 'flex', gap: '0.5rem', flexShrink: 0 }}>
+                <button className="btn btn-sm btn-secondary" onClick={() => setExpanded(isExpanded ? null : r.id)} style={{ fontSize: '0.8rem' }}>
+                  {isExpanded ? 'Cancel' : '📎 Assign'}
+                </button>
+                <button className="btn btn-sm btn-secondary" onClick={() => handleDismiss(r.id)} disabled={isActing} style={{ fontSize: '0.8rem', color: '#6b7280' }}>
+                  {isActing ? Icons.loader : '✕'}
+                </button>
+              </div>
+            </div>
+
+            {isExpanded && (
+              <div style={{ borderTop: '1px solid #f3f4f6', padding: '0.875rem 1rem', background: '#f9fafb' }}>
+                <div style={{ fontSize: '0.85rem', fontWeight: 600, color: '#374151', marginBottom: '0.5rem' }}>Select the voucher this receipt belongs to:</div>
+                <input className="form-input" placeholder="Search by serial or amount…" value={search[r.id] || ''} onChange={e => setSearch(prev => ({ ...prev, [r.id]: e.target.value }))} style={{ marginBottom: '0.5rem' }} autoFocus />
+                {filtered.length === 0 ? (
+                  <div style={{ textAlign: 'center', padding: '1rem', color: '#9ca3af', fontSize: '0.875rem' }}>{candidates.length === 0 ? 'No vouchers in the payment queue.' : 'No matches.'}</div>
+                ) : (
+                  <div style={{ maxHeight: '240px', overflowY: 'auto', border: '1px solid #e5e7eb', borderRadius: '8px', background: 'white' }}>
+                    {filtered.map(v => (
+                      <div key={v.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.55rem 0.75rem', borderBottom: '1px solid #f3f4f6', gap: '0.5rem' }}>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontFamily: 'monospace', fontWeight: 700, fontSize: '0.85rem' }}>{v.serial_number}</div>
+                          <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>₹{parseFloat(v.amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })} · {v.status}</div>
+                        </div>
+                        <button className="btn btn-sm btn-success" onClick={() => handleAssign(r.id, v.id)} disabled={isActing} style={{ flexShrink: 0, fontSize: '0.78rem' }}>
+                          {isActing ? Icons.loader : '✅ Assign'}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RECONCILE RECEIPTS PAGE (Query 4 — Desktop bulk drag-and-drop)
+// ─────────────────────────────────────────────────────────────────────────────
+const ReconcileReceipts = () => {
+  const { user, addToast } = useApp();
+  const [dragOver, setDragOver] = React.useState(false);
+  const [rows, setRows] = React.useState([]);
+  const fileInputRef = React.useRef(null);
+
+  const readFile = (file) => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve({ dataUrl: reader.result, name: file.name, mimeType: file.type || 'application/octet-stream' });
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+
+  const processRow = async (rowId, mimeType, fileDataUrl, fileName) => {
+    setRows(prev => prev.map(r => r.id === rowId ? { ...r, status: 'matching' } : r));
+    const receiptData = fileDataUrl.replace(/^data:.*?;base64,/, '');
+    try {
+      const matchResult = await api.matchReceiptToVoucher({
+        requestedBy: user.id,
+        receiptData,
+        receiptMimeType: mimeType,
+        companyId: user.company.id,
+        fileName: fileName || '',
+      });
+      // No confident match — deposit to unassigned_receipts so it reaches the Review Queue
+      if (!matchResult.matchedVoucherId && !matchResult.matchedBatchId) {
+        api.depositUnassigned({ requestedBy: user.id, receiptData, receiptMimeType: mimeType, companyId: user.company.id, extractedData: null })
+          .then(dep => { if (dep?.id) setRows(prev => prev.map(r => r.id === rowId ? { ...r, unassignedId: dep.id } : r)); })
+          .catch(() => {});
+      }
+      setRows(prev => prev.map(r => r.id === rowId ? { ...r, status: 'done', matchResult } : r));
+    } catch (err) {
+      // On error, still deposit so the receipt isn't lost
+      api.depositUnassigned({ requestedBy: user.id, receiptData, receiptMimeType: mimeType, companyId: user.company.id, extractedData: null })
+        .then(dep => { if (dep?.id) setRows(prev => prev.map(r => r.id === rowId ? { ...r, unassignedId: dep.id } : r)); })
+        .catch(() => {});
+      setRows(prev => prev.map(r => r.id === rowId ? { ...r, status: 'done', matchResult: { error: true, confidence: 'none', extractedReference: null, candidateVouchers: [], errorMsg: err.message } } : r));
+    }
+  };
+
+  const addFiles = async (fileList) => {
+    const valid = Array.from(fileList).filter(f => f.type.startsWith('image/') || f.type === 'application/pdf');
+    if (!valid.length) { addToast('Only image or PDF files are supported', 'error'); return; }
+    const newRows = [];
+    for (const file of valid) {
+      if (rows.some(r => r.name === file.name)) { addToast(`${file.name} is already in the list`, 'info'); continue; }
+      try {
+        const { dataUrl, name, mimeType } = await readFile(file);
+        newRows.push({ id: `${Date.now()}-${Math.random().toString(36).slice(2)}`, name, mimeType, fileDataUrl: dataUrl, status: 'pending', matchResult: null, attaching: false, attached: null, pickerOpen: false, pickerSearch: '' });
+      } catch { /* skip unreadable file */ }
+    }
+    setRows(prev => [...prev, ...newRows]);
+    for (const row of newRows) await processRow(row.id, row.mimeType, row.fileDataUrl, row.name);
+  };
+
+  const doAttach = async (rowId, voucherId) => {
+    const row = rows.find(r => r.id === rowId);
+    if (!row) return;
+    setRows(prev => prev.map(r => r.id === rowId ? { ...r, attaching: true } : r));
+    try {
+      const ext = row.mimeType === 'application/pdf' ? 'pdf' : (row.mimeType.split('/')[1] || 'jpg');
+      const res = await api.uploadAttachment({ fileData: row.fileDataUrl, mimeType: row.mimeType, fileName: `receipt_${Date.now()}.${ext}`, voucherId, voucherType: 'regular', uploadedBy: user.id, companyId: user.company.id });
+      if (res.success) {
+        const serial = (row.matchResult?.candidateVouchers || []).find(v => v.id === voucherId)?.serial_number || '—';
+        setRows(prev => prev.map(r => r.id === rowId ? { ...r, attaching: false, attached: { voucherId, serial }, pickerOpen: false } : r));
+        addToast(`${row.name} → ${serial}`, 'success');
+      } else {
+        addToast(res.error || 'Attach failed', 'error');
+        setRows(prev => prev.map(r => r.id === rowId ? { ...r, attaching: false } : r));
+      }
+    } catch {
+      addToast('Attach failed', 'error');
+      setRows(prev => prev.map(r => r.id === rowId ? { ...r, attaching: false } : r));
+    }
+  };
+
+  const confidenceBadge = (c) => {
+    if (c === 'high')  return <span style={{ background: '#dcfce7', color: '#166534', padding: '2px 8px', borderRadius: '10px', fontSize: '0.72rem', fontWeight: 700 }}>HIGH</span>;
+    if (c === 'low')   return <span style={{ background: '#fef9c3', color: '#713f12', padding: '2px 8px', borderRadius: '10px', fontSize: '0.72rem', fontWeight: 700 }}>LOW</span>;
+    return <span style={{ background: '#f3f4f6', color: '#6b7280', padding: '2px 8px', borderRadius: '10px', fontSize: '0.72rem', fontWeight: 700 }}>NONE</span>;
+  };
+
+  return (
+    <div style={{ maxWidth: '900px', margin: '0 auto', padding: '1.5rem 1rem' }}>
+      <div style={{ marginBottom: '1.5rem' }}>
+        <h2 style={{ fontWeight: 700, fontSize: '1.25rem', marginBottom: '0.35rem' }}>🗂️ Reconcile Receipts</h2>
+        <p style={{ color: '#6b7280', fontSize: '0.875rem' }}>Drop payment receipts here. Each file is matched against the current payment queue. Review each result and click <strong>Attach</strong> to confirm.</p>
+      </div>
+
+      {/* Drop zone */}
+      <div
+        onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={e => { e.preventDefault(); setDragOver(false); addFiles(e.dataTransfer.files); }}
+        onClick={() => fileInputRef.current?.click()}
+        style={{ border: `2px dashed ${dragOver ? '#2563eb' : '#d1d5db'}`, borderRadius: '12px', padding: '2rem', textAlign: 'center', cursor: 'pointer', background: dragOver ? '#eff6ff' : '#fafafa', transition: 'all 0.15s', marginBottom: '1.5rem', userSelect: 'none' }}
+      >
+        <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>📂</div>
+        <div style={{ fontWeight: 600, color: dragOver ? '#2563eb' : '#374151' }}>Drop receipts here, or click to select files</div>
+        <div style={{ fontSize: '0.8rem', color: '#9ca3af', marginTop: '4px' }}>JPEG · PNG · WebP · PDF</div>
+        <input ref={fileInputRef} type="file" accept="image/*,.pdf" multiple style={{ display: 'none' }} onChange={e => { addFiles(e.target.files); e.target.value = ''; }} />
+      </div>
+
+      {/* Results */}
+      {rows.length === 0 ? (
+        <div style={{ textAlign: 'center', padding: '2rem', color: '#9ca3af', background: '#fafafa', borderRadius: '8px', border: '1px solid #e5e7eb' }}>No files added yet.</div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+          {rows.map(row => {
+            const mr = row.matchResult;
+            const hasError = mr?.error === true;
+            const isImagePdf = !hasError && mr?.confidence === 'none' && !mr?.extractedReference && row.mimeType === 'application/pdf';
+            const matchedV = mr?.confidence === 'high' && mr?.matchedVoucherId ? (mr.candidateVouchers || []).find(v => v.id === mr.matchedVoucherId) : null;
+            const filtered = (mr?.candidateVouchers || []).filter(v => {
+              if (!row.pickerSearch) return true;
+              const s = row.pickerSearch.toLowerCase();
+              return v.serial_number?.toLowerCase().includes(s) || String(v.amount).includes(s);
+            });
+
+            return (
+              <div key={row.id} style={{ border: `1px solid ${row.attached ? '#86efac' : '#e5e7eb'}`, borderRadius: '10px', padding: '0.875rem 1rem', background: row.attached ? '#f0fdf4' : 'white' }}>
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem', flexWrap: 'wrap' }}>
+                  {/* File name + status */}
+                  <div style={{ flex: '1 1 200px', minWidth: 0 }}>
+                    <div style={{ fontWeight: 600, fontSize: '0.875rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{row.name}</div>
+                    {row.status === 'matching' && <div style={{ fontSize: '0.78rem', color: '#2563eb', display: 'flex', alignItems: 'center', gap: '4px', marginTop: '2px' }}>{Icons.loader} Matching…</div>}
+                    {row.status === 'done' && mr && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '4px', flexWrap: 'wrap' }}>
+                        {confidenceBadge(mr.confidence)}
+                        {mr.extractedReference && <code style={{ fontSize: '0.78rem', background: '#f3f4f6', padding: '1px 5px', borderRadius: '3px' }}>{mr.extractedReference}</code>}
+                        {matchedV && <span style={{ fontSize: '0.78rem', color: '#166534', fontWeight: 600 }}>→ {matchedV.serial_number} · ₹{parseFloat(matchedV.amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>}
+                        {isImagePdf && <span style={{ fontSize: '0.78rem', color: '#92400e' }}>⚠️ No text in PDF — try selecting the voucher manually below</span>}
+                        {hasError && <span style={{ fontSize: '0.78rem', color: '#dc2626' }}>⚠️ {mr.message || mr.errorMsg || 'Processing failed — try re-uploading'}</span>}
+                        {row.unassignedId && !row.attached && <span style={{ fontSize: '0.78rem', color: '#92400e' }}>📬 Sent to Review Queue</span>}
+                      </div>
+                    )}
+                    {row.attached && <div style={{ fontSize: '0.78rem', color: '#166534', fontWeight: 600, marginTop: '4px' }}>✅ Attached to {row.attached.serial}</div>}
+                  </div>
+
+                  {/* Action buttons */}
+                  {!row.attached && row.status === 'done' && mr && (
+                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexShrink: 0 }}>
+                      {mr.confidence === 'high' && matchedV && !row.pickerOpen && (
+                        <button className="btn btn-sm btn-success" onClick={() => doAttach(row.id, mr.matchedVoucherId)} disabled={row.attaching}>
+                          {row.attaching ? Icons.loader : `📎 Attach to ${matchedV.serial_number}`}
+                        </button>
+                      )}
+                      <button
+                        className="btn btn-sm btn-secondary"
+                        onClick={() => setRows(prev => prev.map(r => r.id === row.id ? { ...r, pickerOpen: !r.pickerOpen, pickerSearch: '' } : r))}
+                      >
+                        {row.pickerOpen ? '▲ Close' : (mr.confidence === 'high' ? 'Choose different' : '🔍 Choose voucher')}
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Inline picker */}
+                {row.pickerOpen && !row.attached && (
+                  <div style={{ marginTop: '0.75rem', paddingTop: '0.75rem', borderTop: '1px solid #e5e7eb' }}>
+                    <input
+                      className="form-input"
+                      placeholder="Search by serial or amount…"
+                      value={row.pickerSearch}
+                      onChange={e => setRows(prev => prev.map(r => r.id === row.id ? { ...r, pickerSearch: e.target.value } : r))}
+                      style={{ marginBottom: '0.5rem', fontSize: '0.85rem' }}
+                    />
+                    <div style={{ maxHeight: '200px', overflowY: 'auto', border: '1px solid #e5e7eb', borderRadius: '6px' }}>
+                      {filtered.length === 0 ? (
+                        <div style={{ padding: '1rem', textAlign: 'center', color: '#9ca3af', fontSize: '0.8rem' }}>{(mr.candidateVouchers || []).length === 0 ? 'No vouchers in payment queue.' : 'No matches.'}</div>
+                      ) : filtered.map(v => (
+                        <div key={v.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.45rem 0.65rem', borderBottom: '1px solid #f3f4f6', gap: '0.5rem' }}>
+                          <div><div style={{ fontFamily: 'monospace', fontSize: '0.82rem', fontWeight: 700 }}>{v.serial_number}</div><div style={{ fontSize: '0.73rem', color: '#6b7280' }}>₹{parseFloat(v.amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })} · {v.status}</div></div>
+                          <button className="btn btn-sm btn-success" style={{ fontSize: '0.75rem' }} onClick={() => doAttach(row.id, v.id)} disabled={row.attaching}>{row.attaching ? Icons.loader : '📎 Attach'}</button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ─── Construction Labour Attendance ──────────────────────────────────────────
+
+const CONSTRUCTION_ATTENDANCE_OPTIONS = [
+  { label: 'Full Day',      value: 1.00, color: '#10b981' },
+  { label: 'Three-Quarter', value: 0.75, color: '#3b82f6' },
+  { label: 'Half Day',      value: 0.50, color: '#f59e0b' },
+  { label: 'Quarter Day',   value: 0.25, color: '#f87171' },
+];
+const CONSTRUCTION_CATEGORY_ICONS = {
+  'Civil': '🏗️', 'Electrical': '⚡', 'Plumbing': '🔧',
+  'Mechanical': '⚙️', 'IT / Security': '🔒',
+};
+const TODAY_DATE = new Date().toISOString().split('T')[0];
+
+const constructionFetch = async (path, opts = {}) => {
+  const r = await fetch(`/api/construction${path}`, {
+    headers: { 'Content-Type': 'application/json' },
+    ...opts,
+  });
+  const d = await r.json();
+  if (!r.ok) throw new Error(d.error || 'Request failed');
+  return d;
+};
+
+// ── Staff Lead — attendance marking screen ────────────────────────────────────
+const ConstructionAttendanceSiteLeadPage = () => {
+  const { user, addToast } = useApp();
+  const [categories, setCategories]   = useState([]);
+  const [selectedCat, setSelectedCat] = useState(null);
+  const [supervisors, setSupervisors] = useState([]);
+  // workerState: worker_id → { type: 'full'|'half'|'partial', hours: string }
+  const [workerState, setWorkerState] = useState({});
+  const [existing, setExisting]       = useState({});  // worker_id → DB record
+  const [loading, setLoading]         = useState(false);
+  const [saving, setSaving]           = useState(false);
+  const [submitted, setSubmitted]     = useState(false);
+
+  const todayDisplay = new Date().toLocaleDateString('en-IN', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' });
+
+  useEffect(() => {
+    constructionFetch('/categories')
+      .then(setCategories)
+      .catch(() => addToast('Failed to load categories', 'error'));
+  }, []);
+
+  const valueToState = (v) => {
+    if (v === 1.0)  return { type: 'full',    hours: '' };
+    if (v === 0.5)  return { type: 'half',    hours: '' };
+    // legacy 0.75 / 0.25 or any custom partial value
+    return           { type: 'partial', hours: String(+(v * 8).toFixed(2)) };
+  };
+
+  const loadCategory = async (cat) => {
+    setSelectedCat(cat);
+    setLoading(true);
+    setWorkerState({});
+    setSubmitted(false);
+    try {
+      const [sups, attData] = await Promise.all([
+        constructionFetch(`/categories/${cat.id}/supervisors`),
+        constructionFetch(`/attendance?category_id=${cat.id}&date=${TODAY_DATE}`),
+      ]);
+      setSupervisors(sups);
+      const existingMap = {}, stateMap = {};
+      attData.forEach(r => { existingMap[r.worker_id] = r; stateMap[r.worker_id] = valueToState(r.attendance_value); });
+      setExisting(existingMap);
+      setWorkerState(stateMap);
+      if (attData.length > 0) setSubmitted(true);
+    } catch (e) { addToast('Failed to load: ' + e.message, 'error'); }
+    setLoading(false);
+  };
+
+  const computeValue = (ws) => {
+    if (!ws) return null;
+    if (ws.type === 'full') return 1.0;
+    if (ws.type === 'half') return 0.5;
+    const h = parseFloat(ws.hours);
+    if (isNaN(h) || h <= 0 || h >= 8) return null;
+    return +(h / 8).toFixed(4);
+  };
+
+  const toggleWorker = (workerId, checked) => {
+    setWorkerState(p => {
+      const next = { ...p };
+      if (checked) next[workerId] = { type: 'full', hours: '' };
+      else delete next[workerId];
+      return next;
+    });
+    setSubmitted(false);
+  };
+
+  const setType = (workerId, type) => {
+    setWorkerState(p => ({ ...p, [workerId]: { type, hours: p[workerId]?.hours || '' } }));
+    setSubmitted(false);
+  };
+
+  const setHours = (workerId, hours) => {
+    setWorkerState(p => ({ ...p, [workerId]: { ...p[workerId], hours } }));
+    setSubmitted(false);
+  };
+
+  const handleSubmit = async () => {
+    const records = [];
+    let hasError = false;
+    supervisors.forEach(sup => {
+      (sup.workers || []).forEach(w => {
+        const ws = workerState[w.id];
+        if (!ws) return;
+        const val = computeValue(ws);
+        if (val === null) { addToast(`Enter valid hours (0.5 – 7.5) for ${w.name}`, 'error'); hasError = true; return; }
+        records.push({ category_id: selectedCat.id, supervisor_id: sup.id, worker_id: w.id, attendance_value: val });
+      });
+    });
+    if (hasError) return;
+    if (!records.length) { addToast('Select at least one worker before saving.', 'error'); return; }
+    setSaving(true);
+    try {
+      await constructionFetch('/attendance', { method: 'POST', body: JSON.stringify({ records, requestedBy: user.id }) });
+      setSubmitted(true);
+      addToast(`Attendance saved for ${records.length} worker(s).`);
+      loadCategory(selectedCat);
+    } catch (e) { addToast('Error saving: ' + e.message, 'error'); }
+    setSaving(false);
+  };
+
+  const totalWorkers = supervisors.reduce((s, sup) => s + (sup.workers || []).length, 0);
+  const markedCount  = supervisors.reduce((s, sup) => s + (sup.workers || []).filter(w => workerState[w.id] !== undefined).length, 0);
+  const hasNoWorkers = totalWorkers === 0 && supervisors.length > 0;
+
+  const DateBadge = () => (
+    <div style={{ background: '#eef2ff', color: '#4338ca', fontSize: 12, fontWeight: 600, padding: '5px 12px', borderRadius: 20, display: 'inline-flex', alignItems: 'center', gap: 6, marginBottom: 16 }}>
+      📅 {todayDisplay}
+    </div>
+  );
+
+  if (!selectedCat) {
+    return (
+      <div style={{ maxWidth: 480, margin: '0 auto', padding: '1.5rem 1rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
+          <div style={{ width: 36, height: 36, background: '#4f46e5', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 700, fontSize: 16 }}>
+            {user.name.charAt(0).toUpperCase()}
+          </div>
+          <div style={{ fontWeight: 600, color: '#1e293b' }}>{user.name} · Staff Lead</div>
+        </div>
+        <DateBadge />
+        <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 12 }}>Select Category</div>
+        {categories.length === 0 && <div style={{ textAlign: 'center', padding: '3rem', color: '#94a3b8', fontSize: 14 }}>No categories set up yet. Contact Accounts.</div>}
+        {categories.map(cat => (
+          <div key={cat.id} onClick={() => loadCategory(cat)} style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 12, padding: '1rem 1.25rem', display: 'flex', alignItems: 'center', gap: 16, marginBottom: 10, cursor: 'pointer' }}>
+            <span style={{ fontSize: 24 }}>{CONSTRUCTION_CATEGORY_ICONS[cat.name] || '📋'}</span>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 600, color: '#1e293b' }}>{cat.name}</div>
+              {cat.description && <div style={{ fontSize: 12, color: '#94a3b8' }}>{cat.description}</div>}
+            </div>
+            <span style={{ color: '#cbd5e1', fontSize: 18 }}>›</span>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ maxWidth: 480, margin: '0 auto', padding: '1.5rem 1rem' }}>
+      <button onClick={() => setSelectedCat(null)} style={{ background: 'none', border: 'none', color: '#4f46e5', cursor: 'pointer', fontSize: 14, marginBottom: 8 }}>← Categories</button>
+      <DateBadge />
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
+        <span style={{ fontSize: 24 }}>{CONSTRUCTION_CATEGORY_ICONS[selectedCat.name] || '📋'}</span>
+        <span style={{ fontWeight: 700, fontSize: 18, color: '#1e293b' }}>{selectedCat.name}</span>
+        {submitted && <span style={{ background: '#d1fae5', color: '#065f46', fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 20 }}>Saved</span>}
+      </div>
+      {loading ? <div style={{ textAlign: 'center', padding: '3rem 0', color: '#64748b' }}>Loading…</div> : (
+        <>
+          {supervisors.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '3rem 0', color: '#94a3b8' }}>
+              <div style={{ fontSize: 32, marginBottom: 8 }}>👷</div>
+              <p>No supervisors assigned to this category yet.</p>
+              <p style={{ fontSize: 12 }}>Ask Accounts to add supervisors and workers.</p>
+            </div>
+          ) : hasNoWorkers ? (
+            <div style={{ textAlign: 'center', padding: '3rem 0', color: '#94a3b8' }}>
+              <div style={{ fontSize: 32, marginBottom: 8 }}>👥</div>
+              <p>No workers added under the supervisors yet.</p>
+              <p style={{ fontSize: 12 }}>Ask Accounts to add workers under each supervisor in Labour Setup.</p>
+            </div>
+          ) : (
+            <div style={{ display: 'grid', gap: 16, marginBottom: 90 }}>
+              {supervisors.map(sup => {
+                const workers = sup.workers || [];
+                if (!workers.length) return null;
+                return (
+                  <div key={sup.id} style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 12, overflow: 'hidden' }}>
+                    {/* Supervisor header */}
+                    <div style={{ background: '#f8fafc', padding: '10px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #e2e8f0' }}>
+                      <div>
+                        <span style={{ fontWeight: 700, color: '#1e293b' }}>{sup.name}</span>
+                        <span style={{ fontSize: 11, color: '#94a3b8', marginLeft: 8 }}>{sup.mobile}</span>
+                      </div>
+                      <span style={{ fontSize: 11, color: '#64748b' }}>{workers.filter(w => workerState[w.id] !== undefined).length}/{workers.length} marked</span>
+                    </div>
+                    {/* Workers */}
+                    {workers.map(w => {
+                      const isVouchered = !!existing[w.id]?.voucher_id;
+                      const ws = workerState[w.id];
+                      const isPresent = !!ws;
+                      return (
+                        <div key={w.id} style={{ padding: '12px 14px', borderBottom: '1px solid #f1f5f9', opacity: isVouchered ? 0.55 : 1 }}>
+                          {/* Row 1: checkbox + worker name */}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: isPresent && !isVouchered ? 10 : 0 }}>
+                            <input
+                              type="checkbox"
+                              checked={isPresent}
+                              disabled={isVouchered}
+                              onChange={e => !isVouchered && toggleWorker(w.id, e.target.checked)}
+                              style={{ width: 18, height: 18, accentColor: '#4f46e5', flexShrink: 0, cursor: isVouchered ? 'not-allowed' : 'pointer' }}
+                            />
+                            <div style={{ flex: 1 }}>
+                              <span style={{ fontWeight: 500, color: '#1e293b' }}>{w.name}</span>
+                              {w.mobile && <span style={{ fontSize: 11, color: '#94a3b8', marginLeft: 8 }}>{w.mobile}</span>}
+                            </div>
+                            {isVouchered && <span style={{ fontSize: 11, color: '#d97706', whiteSpace: 'nowrap' }}>Vouchered</span>}
+                          </div>
+                          {/* Row 2: duration buttons (only when checked and not vouchered) */}
+                          {isPresent && !isVouchered && (
+                            <div style={{ marginLeft: 28 }}>
+                              <div style={{ display: 'flex', gap: 6, marginBottom: ws.type === 'partial' ? 8 : 0 }}>
+                                {[
+                                  { key: 'full',    label: 'Full Day', color: '#10b981' },
+                                  { key: 'half',    label: 'Half Day', color: '#f59e0b' },
+                                  { key: 'partial', label: 'Partial',  color: '#6366f1' },
+                                ].map(opt => (
+                                  <button key={opt.key} onClick={() => setType(w.id, opt.key)}
+                                    style={{ flex: 1, padding: '6px 4px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 11, fontWeight: 600,
+                                      background: ws.type === opt.key ? opt.color : '#f1f5f9',
+                                      color: ws.type === opt.key ? '#fff' : '#475569' }}>
+                                    {opt.label}
+                                  </button>
+                                ))}
+                              </div>
+                              {/* Partial hours input */}
+                              {ws.type === 'partial' && (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                  <label style={{ fontSize: 12, color: '#64748b', whiteSpace: 'nowrap' }}>Hours worked:</label>
+                                  <input
+                                    type="number" min="0.5" max="7.5" step="0.5"
+                                    value={ws.hours}
+                                    placeholder="e.g. 3"
+                                    onChange={e => setHours(w.id, e.target.value)}
+                                    style={{ width: 72, padding: '4px 8px', border: '1px solid #cbd5e1', borderRadius: 6, fontSize: 13 }}
+                                  />
+                                  <span style={{ fontSize: 11, color: '#94a3b8' }}>/ 8 hrs</span>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                          {isVouchered && isPresent && (
+                            <div style={{ fontSize: 11, color: '#94a3b8', marginLeft: 28 }}>Included in payment voucher — cannot re-mark</div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {totalWorkers > 0 && (
+            <div style={{ position: 'sticky', bottom: 16 }}>
+              <button onClick={handleSubmit} disabled={saving || markedCount === 0}
+                style={{ width: '100%', background: '#4f46e5', color: '#fff', border: 'none', borderRadius: 12, padding: '14px', fontSize: 15, fontWeight: 600,
+                  cursor: markedCount === 0 ? 'not-allowed' : 'pointer', opacity: markedCount === 0 ? 0.4 : 1, boxShadow: '0 4px 12px rgba(79,70,229,0.3)' }}>
+                {saving ? 'Saving…' : `Save Attendance · ${markedCount} of ${totalWorkers}`}
+              </button>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+};
+
+// ── Attendance Log — Accounts/Admin ──────────────────────────────────────────
+const ConstructionAttendanceLogPage = () => {
+  const { addToast } = useApp();
+  const [records, setRecords]       = useState([]);
+  const [categories, setCategories] = useState([]);
+  const [filterCat, setFilterCat]   = useState('all');
+  const [filterDate, setFilterDate] = useState(TODAY_DATE);
+  const [loading, setLoading]       = useState(true);
+
+  useEffect(() => { constructionFetch('/categories').then(setCategories).catch(() => {}); }, []);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams();
+      if (filterDate) params.set('date', filterDate);
+      if (filterCat !== 'all') params.set('category_id', filterCat);
+      setRecords(await constructionFetch(`/attendance?${params}`));
+    } catch { addToast('Failed to load records', 'error'); }
+    setLoading(false);
+  }, [filterCat, filterDate]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const attLabel = v => CONSTRUCTION_ATTENDANCE_OPTIONS.find(o => o.value === v)?.label || v;
+
+  return (
+    <div>
+      <div style={{ display: 'flex', gap: 12, marginBottom: 20, flexWrap: 'wrap' }}>
+        <input type="date" value={filterDate} onChange={e => setFilterDate(e.target.value)} className="form-input" style={{ width: 'auto' }} />
+        <select value={filterCat} onChange={e => setFilterCat(e.target.value)} className="form-input" style={{ width: 'auto' }}>
+          <option value="all">All Categories</option>
+          {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </select>
+        <button onClick={load} className="btn btn-primary">Refresh</button>
+      </div>
+      {loading ? <div style={{ textAlign: 'center', padding: '3rem', color: '#64748b' }}>Loading…</div> : (
+        <div className="card" style={{ overflowX: 'auto' }}>
+          {records.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '3rem', color: '#94a3b8', fontSize: 14 }}>No records for this filter.</div>
+          ) : (
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
+              <thead>
+                <tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
+                  {['Date','Category','Supervisor','Worker','Attendance','Status'].map(h => (
+                    <th key={h} style={{ textAlign: 'left', padding: '10px 14px', fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {records.map(r => (
+                  <tr key={r.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                    <td style={{ padding: '10px 14px', color: '#475569', whiteSpace: 'nowrap' }}>{new Date(r.attendance_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</td>
+                    <td style={{ padding: '10px 14px' }}>{CONSTRUCTION_CATEGORY_ICONS[r.category_name] || '📋'} {r.category_name}</td>
+                    <td style={{ padding: '10px 14px', color: '#475569' }}>{r.supervisor_name}</td>
+                    <td style={{ padding: '10px 14px' }}>
+                      <div style={{ fontWeight: 500, color: '#1e293b' }}>{r.worker_name || '—'}</div>
+                      {r.worker_mobile && <div style={{ fontSize: 11, color: '#94a3b8' }}>{r.worker_mobile}</div>}
+                    </td>
+                    <td style={{ padding: '10px 14px' }}><span style={{ background: '#f1f5f9', color: '#475569', padding: '2px 8px', borderRadius: 20, fontSize: 12, fontWeight: 600 }}>{attLabel(r.attendance_value)}</span></td>
+                    <td style={{ padding: '10px 14px' }}>{r.voucher_id
+                      ? <span style={{ background: '#dbeafe', color: '#1d4ed8', padding: '2px 8px', borderRadius: 20, fontSize: 12, fontWeight: 600 }}>Vouchered</span>
+                      : <span style={{ background: '#fef3c7', color: '#92400e', padding: '2px 8px', borderRadius: 20, fontSize: 12, fontWeight: 600 }}>Unpaid</span>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ── Dues & Voucher creation — Accounts ───────────────────────────────────────
+const ConstructionDuesPage = () => {
+  const { user, addToast } = useApp();
+  const [categories, setCategories]   = useState([]);
+  const [selectedCat, setSelectedCat] = useState('');
+  const [dues, setDues]               = useState([]);
+  const [selected, setSelected]       = useState({});
+  const [loading, setLoading]         = useState(false);
+  const [creating, setCreating]       = useState(false);
+  const [vouchers, setVouchers]       = useState([]);
+  const [showVouchers, setShowVouchers] = useState(false);
+
+  useEffect(() => { constructionFetch('/categories').then(setCategories).catch(() => {}); }, []);
+
+  const loadDues = useCallback(async () => {
+    if (!selectedCat) return;
+    setLoading(true); setSelected({});
+    try { setDues(await constructionFetch(`/dues?category_id=${selectedCat}`)); }
+    catch { addToast('Failed to load dues', 'error'); }
+    setLoading(false);
+  }, [selectedCat]);
+
+  useEffect(() => { loadDues(); }, [loadDues]);
+
+  const loadVouchers = async () => {
+    if (!selectedCat) return;
+    try { setVouchers(await constructionFetch(`/vouchers?category_id=${selectedCat}`)); } catch {}
+  };
+  useEffect(() => { if (selectedCat) loadVouchers(); }, [selectedCat]);
+
+  const toggle = id => setSelected(p => ({ ...p, [id]: !p[id] }));
+  const toggleAll = () => {
+    const allSel = dues.every(d => selected[d.supervisor_id]);
+    const next = {}; dues.forEach(d => { next[d.supervisor_id] = !allSel; }); setSelected(next);
+  };
+  const selectedDues  = dues.filter(d => selected[d.supervisor_id]);
+  const totalSelected = selectedDues.reduce((s, d) => s + (parseFloat(d.total_dues) || 0), 0);
+
+  const createVoucher = async () => {
+    if (!selectedDues.length) { addToast('Select at least one supervisor', 'error'); return; }
+    if (selectedDues.some(d => !d.approved_rate)) { addToast(`Missing approved rate for some supervisors`, 'error'); return; }
+    setCreating(true);
+    try {
+      const result = await constructionFetch('/vouchers', { method: 'POST', body: JSON.stringify({ category_id: selectedCat, supervisor_ids: selectedDues.map(d => d.supervisor_id), requestedBy: user.id }) });
+      addToast(`Voucher ${result.voucher_number} created — ${formatRupees(result.total_amount)}`);
+      loadDues(); loadVouchers(); setShowVouchers(true);
+    } catch (e) { addToast('Failed: ' + e.message, 'error'); }
+    setCreating(false);
+  };
+
+  const statusColors = { draft: '#f59e0b', submitted: '#3b82f6', approved: '#10b981', paid: '#10b981', rejected: '#ef4444' };
+
+  return (
+    <div>
+      <div style={{ marginBottom: 20 }}>
+        <select value={selectedCat} onChange={e => setSelectedCat(e.target.value)} className="form-input" style={{ width: 'auto' }}>
+          <option value="">— Select Category —</option>
+          {categories.map(c => <option key={c.id} value={c.id}>{CONSTRUCTION_CATEGORY_ICONS[c.name]} {c.name}</option>)}
+        </select>
+      </div>
+      {!selectedCat ? (
+        <div style={{ textAlign: 'center', padding: '4rem 0', color: '#94a3b8', fontSize: 14 }}>Select a category to view unpaid dues.</div>
+      ) : loading ? <div style={{ textAlign: 'center', padding: '3rem', color: '#64748b' }}>Loading…</div> : (
+        <>
+          {dues.length === 0 ? (
+            <div className="card" style={{ textAlign: 'center', padding: '3rem', color: '#94a3b8', fontSize: 14 }}>No unpaid dues for this category.</div>
+          ) : (
+            <div className="card" style={{ marginBottom: 16, overflow: 'hidden' }}>
+              <div style={{ padding: '10px 16px', borderBottom: '1px solid #f1f5f9', display: 'flex', justifyContent: 'space-between' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 14, fontWeight: 500 }}>
+                  <input type="checkbox" onChange={toggleAll} checked={dues.length > 0 && dues.every(d => selected[d.supervisor_id])} />
+                  Select All · {dues.length} supervisors
+                </label>
+                <span style={{ fontSize: 12, color: '#94a3b8' }}>Worker-days unpaid</span>
+              </div>
+              {dues.map(d => (
+                <div key={d.supervisor_id} onClick={() => toggle(d.supervisor_id)}
+                  style={{ padding: '14px 16px', borderBottom: '1px solid #f1f5f9', display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer', background: selected[d.supervisor_id] ? '#f8fafc' : '#fff' }}>
+                  <input type="checkbox" checked={!!selected[d.supervisor_id]} onChange={() => toggle(d.supervisor_id)} onClick={e => e.stopPropagation()} />
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: 600, color: '#1e293b' }}>{d.supervisor_name}</div>
+                    <div style={{ fontSize: 12, color: '#94a3b8' }}>{d.mobile} · UPI: {d.upi_id}</div>
+                  </div>
+                  <div style={{ textAlign: 'right', fontSize: 13 }}>
+                    <div style={{ fontWeight: 600 }}>{formatRupees(d.total_dues)}</div>
+                    <div style={{ fontSize: 12, color: '#94a3b8' }}>{d.total_days} worker-days × {d.approved_rate ? formatRupees(d.approved_rate) : <span style={{ color: '#ef4444' }}>No rate!</span>}</div>
+                    <div style={{ fontSize: 11, color: '#94a3b8' }}>{d.earliest_date} – {d.latest_date}</div>
+                  </div>
+                </div>
+              ))}
+              {selectedDues.length > 0 && (
+                <div style={{ background: '#eef2ff', padding: '14px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div>
+                    <div style={{ fontWeight: 600, color: '#3730a3', fontSize: 14 }}>{selectedDues.length} supervisor(s) · {formatRupees(totalSelected)}</div>
+                  </div>
+                  <button onClick={createVoucher} disabled={creating} className="btn btn-primary">{creating ? 'Creating…' : 'Create Voucher →'}</button>
+                </div>
+              )}
+            </div>
+          )}
+          <div>
+            <button onClick={() => { setShowVouchers(v => !v); if (!showVouchers) loadVouchers(); }}
+              style={{ background: 'none', border: 'none', color: '#4f46e5', cursor: 'pointer', fontSize: 14, fontWeight: 500, marginBottom: 10 }}>
+              {showVouchers ? '▾' : '▸'} Past Vouchers
+            </button>
+            {showVouchers && (
+              <div style={{ display: 'grid', gap: 10 }}>
+                {vouchers.length === 0 && <div style={{ fontSize: 14, color: '#94a3b8' }}>No vouchers yet.</div>}
+                {vouchers.map(v => (
+                  <div key={v.id} className="card" style={{ padding: '1rem' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+                      <div>
+                        <div style={{ fontWeight: 600 }}>{v.voucher_number}</div>
+                        <div style={{ fontSize: 12, color: '#94a3b8' }}>{v.period_from} – {v.period_to}</div>
+                      </div>
+                      <div style={{ textAlign: 'right' }}>
+                        <div style={{ fontWeight: 700 }}>{formatRupees(v.total_amount)}</div>
+                        <span style={{ background: statusColors[v.status] || '#e2e8f0', color: '#fff', fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 20 }}>{(v.status || '').toUpperCase()}</span>
+                      </div>
+                    </div>
+                    {(v.lines || []).map(l => (
+                      <div key={l.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#64748b', padding: '4px 0', borderTop: '1px solid #f1f5f9' }}>
+                        <span>{l.supervisor_name}</span>
+                        <span>{l.days_count} days × {formatRupees(l.rate_applied)} = {formatRupees(l.amount)}</span>
+                      </div>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+};
+
+// ── Setup — Accounts manages supervisors, assignments & workers ───────────────
+const ConstructionSetupPage = () => {
+  const { user, addToast } = useApp();
+  const [tab, setTab]           = useState('supervisors'); // 'supervisors' | 'workers'
+  const [supervisors, setSupervisors]   = useState([]);
+  const [categories, setCategories]     = useState([]);
+  const [catSups, setCatSups]           = useState([]);    // assignments
+  const [workers, setWorkers]           = useState([]);    // workers for selected assignment
+  const [selectedCatSup, setSelectedCatSup] = useState('');
+  const [showAddSup, setShowAddSup]     = useState(false);
+  const [showAssign, setShowAssign]     = useState(false);
+  const [showAddWorker, setShowAddWorker] = useState(false);
+  const [saving, setSaving]             = useState(false);
+  const [newSup, setNewSup]     = useState({ name: '', mobile: '', upi_id: '', notes: '' });
+  const [assignment, setAssignment] = useState({ supervisor_id: '', category_id: '' });
+  const [newWorker, setNewWorker]   = useState({ name: '', mobile: '', notes: '' });
+
+  const load = useCallback(async () => {
+    try {
+      const [sups, cats, cs] = await Promise.all([
+        constructionFetch('/supervisors'),
+        constructionFetch('/categories'),
+        constructionFetch('/category-supervisors'),
+      ]);
+      setSupervisors(sups); setCategories(cats); setCatSups(cs);
+    } catch {}
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const loadWorkers = useCallback(async () => {
+    if (!selectedCatSup) { setWorkers([]); return; }
+    try { setWorkers(await constructionFetch(`/workers?category_supervisor_id=${selectedCatSup}`)); } catch {}
+  }, [selectedCatSup]);
+  useEffect(() => { loadWorkers(); }, [loadWorkers]);
+
+  const addSupervisor = async () => {
+    if (!newSup.name || !newSup.mobile || !newSup.upi_id) { addToast('Name, Mobile and UPI ID are required', 'error'); return; }
+    if (!/^[6-9][0-9]{9}$/.test(newSup.mobile)) { addToast('Enter a valid 10-digit Indian mobile number', 'error'); return; }
+    setSaving(true);
+    try {
+      await constructionFetch('/supervisors', { method: 'POST', body: JSON.stringify({ ...newSup, requestedBy: user.id }) });
+      addToast('Supervisor added.');
+      setNewSup({ name: '', mobile: '', upi_id: '', notes: '' }); setShowAddSup(false); load();
+    } catch (e) { addToast('Error: ' + e.message, 'error'); }
+    setSaving(false);
+  };
+
+  const assignSupervisor = async () => {
+    if (!assignment.supervisor_id || !assignment.category_id) { addToast('Select both supervisor and category', 'error'); return; }
+    setSaving(true);
+    try {
+      await constructionFetch('/assign', { method: 'POST', body: JSON.stringify({ ...assignment, requestedBy: user.id }) });
+      addToast('Supervisor assigned.'); setAssignment({ supervisor_id: '', category_id: '' }); setShowAssign(false); load();
+    } catch (e) { addToast(e.message.includes('duplicate') || e.message.includes('unique') ? 'Already assigned.' : e.message, 'error'); }
+    setSaving(false);
+  };
+
+  const addWorker = async () => {
+    if (!newWorker.name) { addToast('Worker name is required', 'error'); return; }
+    if (!selectedCatSup) { addToast('Select a supervisor first', 'error'); return; }
+    setSaving(true);
+    try {
+      await constructionFetch('/workers', { method: 'POST', body: JSON.stringify({ ...newWorker, category_supervisor_id: selectedCatSup, requestedBy: user.id }) });
+      addToast('Worker added.'); setNewWorker({ name: '', mobile: '', notes: '' }); setShowAddWorker(false); loadWorkers();
+    } catch (e) { addToast('Error: ' + e.message, 'error'); }
+    setSaving(false);
+  };
+
+  const toggleWorker = async (w) => {
+    try {
+      await constructionFetch(`/workers/${w.id}`, { method: 'PUT', body: JSON.stringify({ is_active: !w.is_active, requestedBy: user.id }) });
+      loadWorkers();
+    } catch (e) { addToast('Error: ' + e.message, 'error'); }
+  };
+
+  const inputStyle = { width: '100%', padding: '8px 12px', border: '1px solid #e2e8f0', borderRadius: 8, fontSize: 14, boxSizing: 'border-box' };
+  const tabStyle = active => ({ padding: '8px 18px', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 600, fontSize: 13, background: active ? '#4f46e5' : '#f1f5f9', color: active ? '#fff' : '#475569' });
+
+  return (
+    <div>
+      {/* Sub-tabs */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
+        <button style={tabStyle(tab === 'supervisors')} onClick={() => setTab('supervisors')}>👷 Supervisors</button>
+        <button style={tabStyle(tab === 'workers')} onClick={() => setTab('workers')}>👥 Workers</button>
+      </div>
+
+      {tab === 'supervisors' && (
+        <div>
+          <div style={{ display: 'flex', gap: 10, marginBottom: 20 }}>
+            <button onClick={() => { setShowAddSup(!showAddSup); setShowAssign(false); }} className="btn btn-primary">+ Add Supervisor</button>
+            <button onClick={() => { setShowAssign(!showAssign); setShowAddSup(false); }} className="btn btn-secondary">Assign to Category</button>
+          </div>
+
+          {showAddSup && (
+            <div className="card" style={{ padding: '1.25rem', marginBottom: 16 }}>
+              <div style={{ fontWeight: 600, marginBottom: 12 }}>New Supervisor (Gang Leader)</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                {[{ key: 'name', label: 'Full Name *', ph: 'e.g. Rajan K' }, { key: 'mobile', label: 'Mobile *', ph: '10-digit' }, { key: 'upi_id', label: 'UPI ID *', ph: 'e.g. rajan@upi' }, { key: 'notes', label: 'Notes', ph: 'Optional' }].map(f => (
+                  <div key={f.key}>
+                    <label style={{ display: 'block', fontSize: 12, fontWeight: 500, color: '#64748b', marginBottom: 4 }}>{f.label}</label>
+                    <input type="text" placeholder={f.ph} value={newSup[f.key]} onChange={e => setNewSup(p => ({ ...p, [f.key]: e.target.value }))} style={inputStyle} />
+                  </div>
+                ))}
+              </div>
+              <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
+                <button onClick={addSupervisor} disabled={saving} className="btn btn-primary">{saving ? 'Saving…' : 'Save'}</button>
+                <button onClick={() => setShowAddSup(false)} className="btn btn-secondary">Cancel</button>
+              </div>
+            </div>
+          )}
+
+          {showAssign && (
+            <div className="card" style={{ padding: '1.25rem', marginBottom: 16 }}>
+              <div style={{ fontWeight: 600, marginBottom: 12 }}>Assign Supervisor to Category</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: 12, fontWeight: 500, color: '#64748b', marginBottom: 4 }}>Supervisor *</label>
+                  <select value={assignment.supervisor_id} onChange={e => setAssignment(p => ({ ...p, supervisor_id: e.target.value }))} style={inputStyle}>
+                    <option value="">— Select —</option>
+                    {supervisors.filter(s => s.is_active).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: 12, fontWeight: 500, color: '#64748b', marginBottom: 4 }}>Category *</label>
+                  <select value={assignment.category_id} onChange={e => setAssignment(p => ({ ...p, category_id: e.target.value }))} style={inputStyle}>
+                    <option value="">— Select —</option>
+                    {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div style={{ fontSize: 12, color: '#d97706', marginTop: 8 }}>⚠ Propose a rate via Rate Approvals after assigning.</div>
+              <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
+                <button onClick={assignSupervisor} disabled={saving} className="btn btn-secondary">{saving ? 'Saving…' : 'Assign'}</button>
+                <button onClick={() => setShowAssign(false)} className="btn btn-secondary">Cancel</button>
+              </div>
+            </div>
+          )}
+
+          <div className="card" style={{ overflow: 'hidden' }}>
+            <div style={{ padding: '10px 16px', borderBottom: '1px solid #f1f5f9', fontWeight: 600, fontSize: 14, color: '#475569' }}>All Supervisors ({supervisors.length})</div>
+            {supervisors.length === 0 ? <div style={{ textAlign: 'center', padding: '2.5rem', color: '#94a3b8', fontSize: 14 }}>No supervisors yet.</div> : (
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
+                <thead><tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
+                  {['Name','Mobile','UPI ID','Status'].map(h => <th key={h} style={{ textAlign: 'left', padding: '9px 14px', fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>{h}</th>)}
+                </tr></thead>
+                <tbody>
+                  {supervisors.map(s => (
+                    <tr key={s.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                      <td style={{ padding: '10px 14px', fontWeight: 500 }}>{s.name}</td>
+                      <td style={{ padding: '10px 14px', color: '#475569' }}>{s.mobile}</td>
+                      <td style={{ padding: '10px 14px', fontFamily: 'monospace', fontSize: 12 }}>{s.upi_id}</td>
+                      <td style={{ padding: '10px 14px' }}><span style={{ background: s.is_active ? '#d1fae5' : '#f1f5f9', color: s.is_active ? '#065f46' : '#64748b', padding: '2px 8px', borderRadius: 20, fontSize: 12, fontWeight: 600 }}>{s.is_active ? 'Active' : 'Inactive'}</span></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      )}
+
+      {tab === 'workers' && (
+        <div>
+          <div style={{ display: 'flex', gap: 12, marginBottom: 16, alignItems: 'center', flexWrap: 'wrap' }}>
+            <select value={selectedCatSup} onChange={e => setSelectedCatSup(e.target.value)} className="form-input" style={{ width: 'auto', flex: 1, minWidth: 200 }}>
+              <option value="">— Select Supervisor · Category —</option>
+              {catSups.map(cs => (
+                <option key={cs.id} value={cs.id}>
+                  {cs.construction_supervisors?.name} · {cs.construction_categories?.name}
+                </option>
+              ))}
+            </select>
+            {selectedCatSup && (
+              <button onClick={() => setShowAddWorker(!showAddWorker)} className="btn btn-primary">+ Add Worker</button>
+            )}
+          </div>
+
+          {!selectedCatSup ? (
+            <div style={{ textAlign: 'center', padding: '3rem', color: '#94a3b8', fontSize: 14 }}>
+              <div style={{ fontSize: 32, marginBottom: 8 }}>👥</div>
+              Select a Supervisor · Category above to manage their workers.
+            </div>
+          ) : (
+            <>
+              {showAddWorker && (
+                <div className="card" style={{ padding: '1.25rem', marginBottom: 16 }}>
+                  <div style={{ fontWeight: 600, marginBottom: 12 }}>Add Worker</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                    <div>
+                      <label style={{ display: 'block', fontSize: 12, fontWeight: 500, color: '#64748b', marginBottom: 4 }}>Full Name *</label>
+                      <input type="text" placeholder="e.g. Suresh P" value={newWorker.name} onChange={e => setNewWorker(p => ({ ...p, name: e.target.value }))} style={inputStyle} />
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: 12, fontWeight: 500, color: '#64748b', marginBottom: 4 }}>Mobile (optional)</label>
+                      <input type="text" placeholder="10-digit" value={newWorker.mobile} onChange={e => setNewWorker(p => ({ ...p, mobile: e.target.value }))} style={inputStyle} />
+                    </div>
+                    <div style={{ gridColumn: '1/-1' }}>
+                      <label style={{ display: 'block', fontSize: 12, fontWeight: 500, color: '#64748b', marginBottom: 4 }}>Notes (optional)</label>
+                      <input type="text" placeholder="e.g. Mason, North block" value={newWorker.notes} onChange={e => setNewWorker(p => ({ ...p, notes: e.target.value }))} style={inputStyle} />
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
+                    <button onClick={addWorker} disabled={saving} className="btn btn-primary">{saving ? 'Saving…' : 'Add Worker'}</button>
+                    <button onClick={() => setShowAddWorker(false)} className="btn btn-secondary">Cancel</button>
+                  </div>
+                </div>
+              )}
+
+              <div className="card" style={{ overflow: 'hidden' }}>
+                <div style={{ padding: '10px 16px', borderBottom: '1px solid #f1f5f9', fontWeight: 600, fontSize: 14, color: '#475569' }}>Workers ({workers.filter(w => w.is_active).length} active)</div>
+                {workers.length === 0 ? (
+                  <div style={{ textAlign: 'center', padding: '2.5rem', color: '#94a3b8', fontSize: 14 }}>No workers added yet. Click + Add Worker above.</div>
+                ) : (
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
+                    <thead><tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
+                      {['Name','Mobile','Notes','Status'].map(h => <th key={h} style={{ textAlign: 'left', padding: '9px 14px', fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>{h}</th>)}
+                    </tr></thead>
+                    <tbody>
+                      {workers.map(w => (
+                        <tr key={w.id} style={{ borderBottom: '1px solid #f1f5f9', opacity: w.is_active ? 1 : 0.5 }}>
+                          <td style={{ padding: '10px 14px', fontWeight: 500 }}>{w.name}</td>
+                          <td style={{ padding: '10px 14px', color: '#475569' }}>{w.mobile || '—'}</td>
+                          <td style={{ padding: '10px 14px', color: '#64748b', fontSize: 12 }}>{w.notes || '—'}</td>
+                          <td style={{ padding: '10px 14px' }}>
+                            <button onClick={() => toggleWorker(w)} style={{ background: 'none', border: `1px solid ${w.is_active ? '#d1d5db' : '#6ee7b7'}`, borderRadius: 6, padding: '2px 10px', fontSize: 12, cursor: 'pointer', color: w.is_active ? '#6b7280' : '#065f46' }}>
+                              {w.is_active ? 'Deactivate' : 'Reactivate'}
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ── Rate Approvals — Admin ────────────────────────────────────────────────────
+const ConstructionRateApprovalsPage = () => {
+  const { user, addToast } = useApp();
+  const [proposals, setProposals] = useState([]);
+  const [catSups, setCatSups]     = useState([]);
+  const [loading, setLoading]     = useState(true);
+  const [processing, setProcessing] = useState(null);
+  const [showPropose, setShowPropose] = useState(false);
+  const [proposal, setProposal]   = useState({ category_supervisor_id: '', proposed_rate: '' });
+  const [saving, setSaving]       = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try { setProposals(await constructionFetch('/rates/proposals')); } catch {}
+    setLoading(false);
+  }, []);
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => { if (showPropose) constructionFetch('/category-supervisors').then(setCatSups).catch(() => {}); }, [showPropose]);
+
+  const decide = async (p, action) => {
+    setProcessing(p.id);
+    try {
+      await constructionFetch(`/rates/${p.id}/decide`, { method: 'POST', body: JSON.stringify({ action, requestedBy: user.id }) });
+      addToast(action === 'approve' ? 'Rate approved.' : 'Rate rejected.'); load();
+    } catch (e) { addToast('Error: ' + e.message, 'error'); }
+    setProcessing(null);
+  };
+
+  const submitProposal = async () => {
+    if (!proposal.category_supervisor_id || !proposal.proposed_rate) { addToast('Fill all fields', 'error'); return; }
+    setSaving(true);
+    try {
+      await constructionFetch('/rates/propose', { method: 'POST', body: JSON.stringify({ ...proposal, proposed_rate: parseFloat(proposal.proposed_rate), requestedBy: user.id }) });
+      addToast('Rate proposal submitted.'); setProposal({ category_supervisor_id: '', proposed_rate: '' }); setShowPropose(false); load();
+    } catch (e) { addToast('Error: ' + e.message, 'error'); }
+    setSaving(false);
+  };
+
+  const pending  = proposals.filter(p => p.status === 'pending');
+  const reviewed = proposals.filter(p => p.status !== 'pending');
+  const inputStyle = { width: '100%', padding: '8px 12px', border: '1px solid #e2e8f0', borderRadius: 8, fontSize: 14, boxSizing: 'border-box' };
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
+        <div>
+          <div style={{ fontWeight: 600, fontSize: 16, color: '#1e293b' }}>Rate Approvals</div>
+          {pending.length > 0 && <div style={{ fontSize: 12, color: '#d97706', marginTop: 2 }}>{pending.length} pending</div>}
+        </div>
+        <button onClick={() => setShowPropose(!showPropose)} className="btn btn-primary">+ Propose Rate</button>
+      </div>
+
+      {showPropose && (
+        <div className="card" style={{ padding: '1.25rem', marginBottom: 16 }}>
+          <div style={{ fontWeight: 600, marginBottom: 12 }}>Propose Daily Rate</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+            <div>
+              <label style={{ display: 'block', fontSize: 12, fontWeight: 500, color: '#64748b', marginBottom: 4 }}>Supervisor · Category *</label>
+              <select value={proposal.category_supervisor_id} onChange={e => setProposal(p => ({ ...p, category_supervisor_id: e.target.value }))} style={inputStyle}>
+                <option value="">— Select —</option>
+                {catSups.map(cs => (
+                  <option key={cs.id} value={cs.id}>{cs.construction_supervisors?.name} · {cs.construction_categories?.name}{cs.approved_rate ? ` (current: ₹${cs.approved_rate})` : ' (no rate)'}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label style={{ display: 'block', fontSize: 12, fontWeight: 500, color: '#64748b', marginBottom: 4 }}>Daily Rate per Worker-Day (₹) *</label>
+              <input type="number" min="0" step="0.01" placeholder="e.g. 750" value={proposal.proposed_rate} onChange={e => setProposal(p => ({ ...p, proposed_rate: e.target.value }))} style={inputStyle} />
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
+            <button onClick={submitProposal} disabled={saving} className="btn btn-primary">{saving ? 'Submitting…' : 'Submit'}</button>
+            <button onClick={() => setShowPropose(false)} className="btn btn-secondary">Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {loading ? <div style={{ textAlign: 'center', padding: '3rem', color: '#64748b' }}>Loading…</div> : (
+        <>
+          {pending.length > 0 && (
+            <div style={{ marginBottom: 20 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: '#d97706', textTransform: 'uppercase', marginBottom: 8 }}>Pending Approval</div>
+              {pending.map(p => (
+                <div key={p.id} style={{ background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 12, padding: '1rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                  <div>
+                    <div style={{ fontWeight: 600 }}>{p.category_supervisor?.construction_supervisors?.name} · {p.category_supervisor?.construction_categories?.name}</div>
+                    <div style={{ fontSize: 13, marginTop: 2 }}>Proposed: <strong>₹{p.proposed_rate}/worker-day</strong>{p.category_supervisor?.approved_rate && <span style={{ color: '#94a3b8' }}> (current: ₹{p.category_supervisor.approved_rate})</span>}</div>
+                  </div>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button onClick={() => decide(p, 'approve')} disabled={processing === p.id} className="btn btn-primary" style={{ fontSize: 13 }}>{processing === p.id ? '…' : 'Approve'}</button>
+                    <button onClick={() => decide(p, 'reject')} disabled={processing === p.id} className="btn btn-secondary" style={{ fontSize: 13, color: '#dc2626' }}>{processing === p.id ? '…' : 'Reject'}</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          {reviewed.length > 0 && (
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', marginBottom: 8 }}>History</div>
+              <div className="card" style={{ overflow: 'hidden' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
+                  <thead><tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
+                    {['Supervisor · Category','Rate','Status','Date'].map(h => <th key={h} style={{ textAlign: 'left', padding: '9px 14px', fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>{h}</th>)}
+                  </tr></thead>
+                  <tbody>
+                    {reviewed.map(p => (
+                      <tr key={p.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                        <td style={{ padding: '10px 14px' }}>
+                          <div style={{ fontWeight: 500 }}>{p.category_supervisor?.construction_supervisors?.name}</div>
+                          <div style={{ fontSize: 11, color: '#94a3b8' }}>{p.category_supervisor?.construction_categories?.name}</div>
+                        </td>
+                        <td style={{ padding: '10px 14px', fontWeight: 600 }}>₹{p.proposed_rate}/day</td>
+                        <td style={{ padding: '10px 14px' }}><span style={{ background: p.status === 'approved' ? '#d1fae5' : '#fee2e2', color: p.status === 'approved' ? '#065f46' : '#991b1b', padding: '2px 8px', borderRadius: 20, fontSize: 11, fontWeight: 700 }}>{(p.status||'').toUpperCase()}</span></td>
+                        <td style={{ padding: '10px 14px', fontSize: 12, color: '#94a3b8' }}>{p.reviewed_at ? new Date(p.reviewed_at).toLocaleDateString('en-IN') : '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+          {proposals.length === 0 && <div style={{ textAlign: 'center', padding: '3rem', color: '#94a3b8', fontSize: 14 }}>No rate proposals yet.</div>}
+        </>
+      )}
+    </div>
+  );
+};
+
+
+const App = () => {
+  const [user, setUser] = useState(() => {
+    try {
+      // On mobile with lock active, start as null — lock screen will re-hydrate.
+      // Exception: share-target redirects bypass the lock (user intentionally triggered the share).
+      const _isShareRedirect = window.location.search.includes('incoming-share=1');
+      if (isMobileDevice() && !_isShareRedirect) {
+        const _s = localStorage.getItem('relish_session');
+        const _uid = _s ? (() => { try { return JSON.parse(_s)?.id; } catch { return null; } })() : null;
+        const hasLock = _uid && (!!localStorage.getItem('relish_mobile_pin_' + _uid) || !!localStorage.getItem('relish_mobile_bio_id_' + _uid));
+        if (hasLock && _s) return null;
+      }
+      const s = localStorage.getItem('relish_session');
+      return s ? JSON.parse(s) : null;
+    } catch { return null; }
+  });
+
+  // Mobile-only lock state
+  const [mobileLocked, setMobileLocked] = useState(() => {
+    try {
+      if (!isMobileDevice()) return false;
+      const _isShareRedirect = window.location.search.includes('incoming-share=1');
+      if (_isShareRedirect) return false; // share-target reload — skip lock
+      const _s = localStorage.getItem('relish_session');
+      const _uid = _s ? (() => { try { return JSON.parse(_s)?.id; } catch { return null; } })() : null;
+      const hasLock = _uid && (!!localStorage.getItem('relish_mobile_pin_' + _uid) || !!localStorage.getItem('relish_mobile_bio_id_' + _uid));
+      return !!(hasLock && _s);
+    } catch { return false; }
+  });
+  const [mobileSavedUser, setMobileSavedUser] = useState(() => {
+    try {
+      if (!isMobileDevice()) return null;
+      const _isShareRedirect = window.location.search.includes('incoming-share=1');
+      if (_isShareRedirect) return null; // share-target reload — no lock state needed
+      const _s = localStorage.getItem('relish_session');
+      const _uid = _s ? (() => { try { return JSON.parse(_s)?.id; } catch { return null; } })() : null;
+      const hasLock = _uid && (!!localStorage.getItem('relish_mobile_pin_' + _uid) || !!localStorage.getItem('relish_mobile_bio_id_' + _uid));
+      if (hasLock) { return _s ? JSON.parse(_s) : null; }
+    } catch {}
+    return null;
+  });
+  const [showPinSetup, setShowPinSetup] = useState(false);
+  const [showSecurityModal, setShowSecurityModal] = useState(false);
+  const [showDeviceLockSetup, setShowDeviceLockSetup] = useState(false);
+  const [deviceLockSetupUser, setDeviceLockSetupUser] = useState(null);
+  const bgTimestamp = React.useRef(null);
+
+  // Re-lock on return from background (mobile only, >10 s)
+  useEffect(() => {
+    if (!isMobileDevice()) return;
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') {
+        bgTimestamp.current = Date.now();
+      } else if (document.visibilityState === 'visible') {
+        const elapsed = bgTimestamp.current ? Date.now() - bgTimestamp.current : 0;
+        bgTimestamp.current = null;
+        // Don't re-lock if returning from a share-target redirect
+        const _fromShare = window.location.search.includes('incoming-share=1');
+        const hasLock = !!localStorage.getItem('relish_mobile_pin_' + user?.id) || !!localStorage.getItem('relish_mobile_bio_id_' + user?.id);
+        if (elapsed > 10000 && hasLock && user && !_fromShare) {
+          setMobileSavedUser(user);
+          setMobileLocked(true);
+          setUser(null);
+        }
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
+  }, [user]);
+
+  const [vouchers, setVouchers] = useState([]);
+  const [notifications, setNotifications] = useState([]);
+  const [currentPage, setCurrentPage] = useState(() => {
+    try {
+      const navType = performance.getEntriesByType('navigation')[0]?.type;
+      const isReload = navType === 'reload' || performance.navigation?.type === 1;
+      if (isReload) { localStorage.removeItem('relish_page'); return 'dashboard'; }
+    } catch {}
+    try { return localStorage.getItem('relish_page') || 'dashboard'; } catch { return 'dashboard'; }
+  });
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [showMobileMenu, setShowMobileMenu] = useState(false);
+  const [showCompanySwitcher, setShowCompanySwitcher] = useState(() => {
+    try {
+      const isReload = performance.getEntriesByType('navigation')[0]?.type === 'reload'
+                    || performance.navigation?.type === 1;
+      if (!isReload) return false;
+      const stored = localStorage.getItem('relish_session');
+      if (!stored) return false;
+      const storedUser = JSON.parse(stored);
+      // Show switcher if user is super admin OR has multiple companies in stored session
+      return !!(storedUser?.isSuperAdmin || (storedUser?.companies?.length > 1));
+    } catch { return false; }
+  });
+  const [switchingCompany, setSwitchingCompany] = useState(false);
+  const [toasts, setToasts] = useState([]);
+  const [pushEnabled, setPushEnabled] = useState(false);
+  const [suspenseDetailId, setSuspenseDetailId] = useState(null);
+  // Receipt share state — populated by window.onReceiptShared (Android share-intent)
+  // or any future trigger; drives ReceiptShareModal.
+  const [receiptShare, setReceiptShare] = useState(null);
+  // When a Pay Now modal is open and the user leaves for their bank/UPI app, the modal
+  // writes a context to localStorage. If they then share a receipt back to the app, the
+  // service worker routes it here instead of the generic reconcile flow.
+  const [pendingShareForConfirmation, setPendingShareForConfirmation] = useState(null);
+  const [settlementToken] = useState(() => {
+    const m = window.location.pathname.match(/^\/settlement\/([^/]+)/);
+    if (m) return m[1];
+    // PWA launched from home screen has start_url='/'; restore saved settlement token
+    try {
+      const saved = localStorage.getItem('relish_settlement_token');
+      if (saved && window.location.pathname === '/') return saved;
+    } catch {}
+    return null;
+  });
+  const [captureSessionId] = useState(() => { const m = window.location.pathname.match(/^\/capture\/([^/]+)/); return m ? m[1] : null; });
+  const lastNotificationCount = React.useRef(0);
+
+  // Notification sound (using Web Audio API for better compatibility)
+  const playNotificationSound = useCallback(() => {
+    try {
+      const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+      
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+      
+      // Pleasant notification chime
+      oscillator.frequency.setValueAtTime(880, audioContext.currentTime); // A5
+      oscillator.frequency.setValueAtTime(1108.73, audioContext.currentTime + 0.1); // C#6
+      oscillator.frequency.setValueAtTime(1318.51, audioContext.currentTime + 0.2); // E6
+      
+      gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.4);
+      
+      oscillator.start(audioContext.currentTime);
+      oscillator.stop(audioContext.currentTime + 0.4);
+    } catch (e) {
+      console.log('Audio not supported:', e);
+    }
+  }, []);
+
+  const addToast = useCallback((message, type = 'info', duration = 4000) => { const id = Date.now(); setToasts(prev => [...prev, { id, message, type }]); setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), duration); }, []);
+
+  // Request push notification permission and subscribe to push
+  const requestPushPermission = useCallback(async () => {
+    if (!('Notification' in window) || !('serviceWorker' in navigator)) {
+      console.log('Push notifications not supported');
+      return false;
+    }
+    
+    try {
+      // Request permission
+      if (Notification.permission !== 'granted') {
+        const permission = await Notification.requestPermission();
+        if (permission !== 'granted') {
+          console.log('Notification permission denied');
+          return false;
+        }
+      }
+      
+      // Get service worker registration
+      const registration = await navigator.serviceWorker.ready;
+      
+      // Get VAPID public key from server
+      const vapidResponse = await fetch(`${API_BASE}/push/vapid-public-key`);
+      const { publicKey } = await vapidResponse.json();
+      
+      // Convert VAPID key to Uint8Array
+      const urlBase64ToUint8Array = (base64String) => {
+        const padding = '='.repeat((4 - base64String.length % 4) % 4);
+        const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+        const rawData = window.atob(base64);
+        const outputArray = new Uint8Array(rawData.length);
+        for (let i = 0; i < rawData.length; ++i) {
+          outputArray[i] = rawData.charCodeAt(i);
+        }
+        return outputArray;
+      };
+      
+      // Subscribe to push notifications
+      const subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(publicKey)
+      });
+      
+      // Send subscription to server
+      if (user) {
+        const saveRes = await fetch(`${API_BASE}/users/${user.id}/push-subscription`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(subscription.toJSON())
+        });
+        if (!saveRes.ok) {
+          const errData = await saveRes.json().catch(() => ({}));
+          throw new Error(errData.error || `Server error ${saveRes.status}`);
+        }
+        console.log('Push subscription saved to server');
+      }
+      
+      setPushEnabled(true);
+      addToast('Push notifications enabled!', 'success');
+      return true;
+    } catch (error) {
+      console.error('Failed to subscribe to push notifications:', error);
+      addToast('Failed to enable push notifications', 'error');
+      return false;
+    }
+  }, [user, addToast]);
+
+  // Disable push notifications
+  const disablePushNotifications = useCallback(async () => {
+    if (!('serviceWorker' in navigator)) {
+      return false;
+    }
+    
+    try {
+      const registration = await navigator.serviceWorker.ready;
+      const subscription = await registration.pushManager.getSubscription();
+      
+      if (subscription) {
+        // Unsubscribe from push
+        await subscription.unsubscribe();
+        
+        // Remove subscription from server
+        if (user) {
+          await fetch(`${API_BASE}/users/${user.id}/push-subscription`, {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+      }
+      
+      setPushEnabled(false);
+      addToast('Push notifications disabled', 'info');
+      return true;
+    } catch (error) {
+      console.error('Failed to unsubscribe from push notifications:', error);
+      addToast('Failed to disable push notifications', 'error');
+      return false;
+    }
+  }, [user, addToast]);
+
+  // Toggle push notifications
+  const togglePushNotifications = useCallback(async () => {
+    if (pushEnabled) {
+      await disablePushNotifications();
+    } else {
+      await requestPushPermission();
+    }
+  }, [pushEnabled, disablePushNotifications, requestPushPermission]);
+
+  // Check push status on component mount
+  useEffect(() => {
+    const checkPushStatus = async () => {
+      if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+        return;
+      }
+      try {
+        const registration = await navigator.serviceWorker.ready;
+        const subscription = await registration.pushManager.getSubscription();
+        setPushEnabled(!!subscription);
+      } catch (e) {
+        console.log('Could not check push status:', e);
+      }
+    };
+    checkPushStatus();
+  }, []);
+
+  // Show browser notification
+  const showBrowserNotification = useCallback((title, body, url = '/') => {
+    if (Notification.permission === 'granted' && document.hidden) {
+      const notification = new Notification(title, {
+        body,
+        icon: '/android-launchericon-192-192.png',
+        badge: '/android-launchericon-96-96.png',
+        vibrate: [200, 100, 200],
+        tag: 'relish-notification',
+        renotify: true
+      });
+      
+      notification.onclick = () => {
+        window.focus();
+        notification.close();
+      };
+    }
+  }, []);
+
+  const refreshVouchers = useCallback(async () => { if (user) { const data = await api.getVouchers(user.company.id); setVouchers(data); } }, [user]);
+  const refreshNotifications = useCallback(async () => { 
+    if (user) { 
+      const data = await api.getNotifications(user.id); 
+      const newUnread = data.filter(n => !n.read).length;
+      
+      // Check if there are new notifications
+      if (newUnread > lastNotificationCount.current && lastNotificationCount.current !== 0) {
+        // Play sound
+        playNotificationSound();
+        
+        // Show browser notification if app is in background
+        const latestUnread = data.find(n => !n.read);
+        if (latestUnread) {
+          showBrowserNotification(latestUnread.title, latestUnread.message);
+        }
+        
+        // Show toast
+        addToast(`${newUnread - lastNotificationCount.current} new notification(s)`, 'info');
+      }
+      
+      lastNotificationCount.current = newUnread;
+      setNotifications(data); 
+    } 
+  }, [user, playNotificationSound, showBrowserNotification, addToast]);
+
+  // Request permission on login — deferred to idle so it never blocks first paint
+  useEffect(() => {
+    if (!user) return;
+    if ('requestIdleCallback' in window) {
+      requestIdleCallback(() => requestPushPermission(), { timeout: 5000 });
+    } else {
+      setTimeout(requestPushPermission, 2000);
+    }
+  }, [user, requestPushPermission]);
+
+  // On mount: if session was restored from localStorage, silently refresh user data from server
+  // This keeps roles/company names up-to-date and invalidates deleted accounts
+  useEffect(() => {
+    const stored = (() => { try { return localStorage.getItem('relish_session'); } catch { return null; } })();
+    if (!stored) return;
+    const storedUser = (() => { try { return JSON.parse(stored); } catch { return null; } })();
+    if (!storedUser?.id) return;
+    api.refreshSession(storedUser.id).then(result => {
+      if (result.success) {
+        try { localStorage.setItem('relish_session', JSON.stringify(result.user)); } catch {}
+        setUser(result.user);
+      } else {
+        // User no longer valid — force logout
+        try { localStorage.removeItem('relish_session'); localStorage.removeItem('relish_page'); } catch {}
+        setUser(null);
+        setCurrentPage('dashboard');
+      }
+    }).catch(() => {
+      // Server unreachable (offline) — keep using stored session silently
+    });
+  }, []); // run once on mount
+
+  // TODO: polling efficiency ladder — (1) pause on document.hidden, (2) lightweight
+  //   GET /api/companies/:id/updated-at change-signal before full fetch, (3) Supabase Realtime.
+  useEffect(() => { if (user) { refreshVouchers(); refreshNotifications(); const interval = setInterval(() => { refreshVouchers(); refreshNotifications(); fetch('/api/_warm').catch(()=>{}); }, 30000); return () => clearInterval(interval); } }, [user, refreshVouchers, refreshNotifications]);
+
+  const handleLogin = async (userData, staffSettlementToken, fromWebAuthn = false) => {
+    // Staff users go directly to their settlement page — no app access
+    if (userData.role === 'staff' && staffSettlementToken) {
+      try { localStorage.setItem('relish_settlement_token', staffSettlementToken); } catch {}
+      try { localStorage.setItem('relish_session', JSON.stringify(userData)); } catch {}  // saved so isStaffLogin check works on reload
+      window.location.reload();  // reload so useState initializer picks up the token from localStorage
+      return;
+    }
+    if (userData.role === 'staff') {
+      // Staff user but no active voucher right now
+      // We still set the user so we can show a meaningful message below
+    }
+    try { localStorage.setItem('relish_session', JSON.stringify(userData)); } catch {}
+    const defaultPage = userData.role === 'auditor' ? 'completed' : userData.role === 'staff_lead' ? 'construction-attendance' : 'dashboard';
+    try { localStorage.setItem('relish_page', defaultPage); } catch {}
+    // Clean up legacy keys
+    try { localStorage.removeItem('relish_biometric_id'); } catch {}
+    setUser(userData);
+    setCurrentPage(defaultPage);
+    // Offer server-side Device Lock setup if WebAuthn is available on this browser
+    // and the user hasn't explicitly declined on this device.
+    // Skip if they just logged in via WebAuthn (they already have Device Lock set up).
+    if (!fromWebAuthn && window.PublicKeyCredential && typeof window.SimpleWebAuthnBrowser !== 'undefined') {
+      const declinedKey = 'relish_bio_declined_' + userData.id;
+      const alreadyRegistered = !!localStorage.getItem('relish_mobile_bio_id_' + userData.id);
+      if (!localStorage.getItem(declinedKey) && !alreadyRegistered) {
+        setDeviceLockSetupUser(userData);
+        setShowDeviceLockSetup(true);
+      }
+    } else if (isMobileDevice()) {
+      // Fallback for browsers without WebAuthn: offer PIN lock
+      const alreadySetup = !!localStorage.getItem('relish_mobile_pin_' + userData.id);
+      if (!alreadySetup) setShowPinSetup(true);
+    }
+  };
+  const handleLogout = () => {
+    try {
+      localStorage.removeItem('relish_session');
+      localStorage.removeItem('relish_page');
+      localStorage.removeItem('relish_biometric_id');
+      // Note: relish_mobile_pin_{uid} and relish_mobile_bio_id_{uid} are intentionally
+      // preserved so Device Lock reactivates after the user logs back in.
+    } catch {}
+    setMobileLocked(false); setMobileSavedUser(null); setShowPinSetup(false);
+    setUser(null); setVouchers([]); setNotifications([]); setCurrentPage('dashboard');
+  };
+  const handleMobileUnlock = (savedUser) => {
+    setUser(savedUser);
+    setMobileLocked(false); setMobileSavedUser(null);
+    setCurrentPage(localStorage.getItem('relish_page') || 'dashboard');
+    // Refresh session timestamp
+    try { localStorage.setItem('relish_session', JSON.stringify(savedUser)); } catch {}
+  };
+  const handleMobileLockSignOut = () => {
+    try {
+      localStorage.removeItem('relish_session');
+      localStorage.removeItem('relish_page');
+      // Clear lock keys for this specific user (account switch — different person)
+      if (mobileSavedUser?.id) {
+        localStorage.removeItem('relish_mobile_pin_' + mobileSavedUser.id);
+        localStorage.removeItem('relish_mobile_bio_id_' + mobileSavedUser.id);
+        localStorage.removeItem('relish_bio_declined_' + mobileSavedUser.id);
+      }
+    } catch {}
+    setMobileLocked(false); setMobileSavedUser(null);
+  };
+  const handlePinSet = (pin) => {
+    localStorage.setItem('relish_mobile_pin_' + user.id, hashPin(pin));
+    setShowPinSetup(false);
+    addToast('PIN set! App will lock when you leave.', 'success');
+  };
+  const handleSwitchCompany = async (companyId) => {
+    setSwitchingCompany(true);
+    try {
+      const result = await api.switchCompany(user.id, companyId);
+      if (result.success) {
+        try { localStorage.setItem('relish_session', JSON.stringify(result.user)); } catch {}
+        try { localStorage.setItem('relish_page', 'dashboard'); } catch {}
+        setUser(result.user);
+        setVouchers([]);
+        setCurrentPage('dashboard');
+        setShowCompanySwitcher(false);
+        // Refresh data for new company
+        const newVouchers = await api.getVouchers(result.user.company.id);
+        setVouchers(newVouchers);
+      }
+    } catch (error) {
+      console.error('Failed to switch company:', error);
+    }
+    setSwitchingCompany(false);
+  };
+  const unreadCount = notifications.filter(n => !n.read).length;
+  const markAllRead = async () => { await api.markAllNotificationsRead(user.id); refreshNotifications(); };
+  const hasMultipleCompanies = user?.companies?.length > 1;
+
+  // Mobile lock screen
+  if (mobileLocked && mobileSavedUser) {
+    return <MobileLockScreen savedUser={mobileSavedUser} onUnlock={handleMobileUnlock} onSignOut={handleMobileLockSignOut} />;
+  }
+
+  // Settlement session page — public, no auth required
+  if (settlementToken) return <SettlementSessionPage token={settlementToken} />;
+
+  // Capture session page — public, no auth required
+  if (captureSessionId) return <CaptureSessionPage sessionId={captureSessionId} />;
+
+  if (!user) return <LoginPage onLogin={handleLogin} />;
+
+  // Staff users should only ever land here if they have no active suspense voucher
+  if (user.role === 'staff') {
+    return (
+      <div style={{minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: '#f9fafb', padding: '2rem'}}>
+        <div style={{textAlign: 'center', maxWidth: '360px'}}>
+          <div style={{fontSize: '3rem', marginBottom: '1rem'}}>🕐</div>
+          <h2 style={{fontWeight: 700, color: '#1f2937', marginBottom: '0.5rem'}}>No Active Advance</h2>
+          <p style={{color: '#6b7280', marginBottom: '1.5rem'}}>Hi {user.name.split(' ')[0]}! You don't have an active suspense advance right now. Your accounts team will send you an SMS when a new one is raised.</p>
+          <button className="btn btn-secondary" onClick={handleLogout} style={{width: '100%'}}>Sign Out</button>
+        </div>
+      </div>
+    );
+  }
+
+  const contextValue = { user, vouchers, notifications, addToast, refreshVouchers, refreshNotifications, navigateToSuspense: (id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); try { localStorage.setItem('relish_page', 'suspense-detail'); } catch {} }, pendingShareForConfirmation, consumePendingShare: () => setPendingShareForConfirmation(null) };
+
+  // Register Android share-intent handler.
+  // Two entry points:
+  //   1. Direct call: window.onReceiptShared({ mimeType, base64Data }) — used
+  //      by any native wrapper or WebView bridge.
+  //   2. Web Share Target (Android share sheet): the service worker intercepts
+  //      POST /share-target, stashes the file, then redirects here with
+  //      ?incoming-share=1.  On mount we detect that param, fetch the stashed
+  //      data from /_share_pending, and call window.onReceiptShared ourselves.
+  React.useEffect(() => {
+    if (!user) return;
+    window.onReceiptShared = ({ mimeType, base64Data, fileName }) => {
+      // Normalise: ensure we always hold a data-URL internally.
+      const dataUrl = base64Data && !base64Data.startsWith('data:')
+        ? `data:${mimeType};base64,${base64Data}`
+        : (base64Data || '');
+
+      // Helper: route a confirmed context to the target confirmation modal.
+      const _routeCtx = (_ctx) => {
+        setPendingShareForConfirmation({ type: _ctx.type, entityId: _ctx.entityId, suspenseId: _ctx.suspenseId, receipt: { dataUrl, mimeType, fileName: fileName || '' } });
+        if (_ctx.type === 'topup' || _ctx.type === 'advance') {
+          setSuspenseDetailId(_ctx.suspenseId);
+          setCurrentPage('suspense-detail');
+          try { localStorage.setItem('relish_page', 'suspense-detail'); } catch {}
+        } else if (_ctx.type === 'voucher') {
+          setCurrentPage('awaiting_payment');
+          try { localStorage.setItem('relish_page', 'awaiting_payment'); } catch {}
+        }
+      };
+
+      // Helper: fall through to auto-complete flow (share-target path).
+      // Tries auto-complete first; falls back to manual match-voucher picker on error.
+      // On fallback, deposits file to unassigned_receipts fire-and-forget so the
+      // receipt is never droppable even if the user dismisses without assigning.
+      const _depositAndFallback = (receiptPayload, extractedData) => {
+        api.depositUnassigned({
+          requestedBy: user.id,
+          receiptData: receiptPayload,
+          receiptMimeType: mimeType,
+          companyId: user.company.id,
+          extractedData: extractedData || null,
+        }).then(dep => {
+          api.matchReceiptToVoucher({ requestedBy: user.id, receiptData: receiptPayload, receiptMimeType: mimeType, companyId: user.company.id })
+            .then(matchResult => { setReceiptShare(prev => prev ? { ...prev, step: 'result', matchResult, unassignedId: dep.id } : null); })
+            .catch(err2 => { setReceiptShare(prev => prev ? { ...prev, step: 'result', matchResult: { confidence: 'none', extractedReference: null, candidateVouchers: [] }, errorMsg: err2.message, unassignedId: dep.id } : null); });
+        });
+      };
+      const _runReconcile = () => {
+        setReceiptShare({ step: 'matching', mimeType, base64Data: dataUrl });
+        const receiptPayload = dataUrl.replace(/^data:.*?;base64,/, '');
+        api.autoCompleteReceipt({
+          requestedBy: user.id,
+          receiptData: receiptPayload,
+          receiptMimeType: mimeType,
+          companyId: user.company.id,
+          fileName: fileName || '',
+          allCompanyIds: (user.companies || []).map(c => c.id).filter(id => id && id !== user.company.id),
+        }).then(async result => {
+          if (_contextFound) { refreshVouchers(); return; } // context modal is showing; refresh so status reflects paid
+          // Auto-switch company if match was found in a different company
+          if (result.detectedCompanyId && result.detectedCompanyId !== user.company.id) {
+            try {
+              const switchRes = await api.switchCompany(user.id, result.detectedCompanyId);
+              if (switchRes.success) {
+                try { localStorage.setItem('relish_session', JSON.stringify(switchRes.user)); } catch {}
+                setUser(switchRes.user);
+                setVouchers([]);
+              }
+            } catch {}
+          }
+          if (result.outcome === 'completed') {
+            setReceiptShare(prev => prev ? { ...prev, step: 'autocompleted', autoResult: result } : null);
+          } else if (result.outcome === 'backfilled') {
+            setReceiptShare(prev => prev ? { ...prev, step: 'backfilled', autoResult: result } : null);
+          } else if (result.outcome === 'batch_completed' || result.outcome === 'batch_backfilled') {
+            setReceiptShare(prev => prev ? { ...prev, step: 'autocompleted', autoResult: { ...result, serialNumber: result.batchReference, isBatch: true } } : null);
+          } else if (result.outcome === 'queued') {
+            setReceiptShare(prev => prev ? { ...prev, step: 'queued', queueReason: result.reason, extractedData: result.extractedData } : null);
+          } else {
+            _depositAndFallback(receiptPayload, result.extractedData || null);
+          }
+        }).catch(() => { if (!_contextFound) _depositAndFallback(receiptPayload, null); });
+      };
+
+      // 1. Fast path: localStorage (same device — context was set by Pay Now on this device).
+      try {
+        const _rawCtx = localStorage.getItem('relish_share_context');
+        if (_rawCtx) {
+          const _ctx = JSON.parse(_rawCtx);
+          if (_ctx && _ctx.expires > Date.now()) {
+            localStorage.removeItem('relish_share_context');
+            _routeCtx(_ctx);
+            return;
+          }
+          localStorage.removeItem('relish_share_context'); // expired
+        }
+      } catch {}
+
+      // 2. No localStorage context — fire scan IMMEDIATELY so OCR starts without waiting
+      //    for a server round-trip.  The scan shows "Identifying voucher…" right away.
+      let _contextFound = false;
+      _runReconcile();
+
+      // 3. In parallel, check for a server-side context (cross-device — Pay Now was open on
+      //    another device: desktop, tablet, or a different phone). consume-once GET clears it.
+      //    If a context is found it takes priority: cancel the scan UI and route instead.
+      api.consumePendingShareContext(user.id)
+        .then(({ context }) => {
+          if (context) {
+            _contextFound = true;   // stop autoCompleteReceipt result from applying
+            setReceiptShare(null);  // close scan modal
+            _routeCtx(context);
+          }
+          // No context → scan already running, nothing to do.
+        })
+        .catch(() => {}); // on error, scan continues uninterrupted
+    };
+
+    // Detect incoming Web Share Target redirect: service worker redirects here
+    // with ?incoming-share=1 after stashing the file in /_share_pending cache.
+    // We fetch it (consume-once), clean the URL, then fire window.onReceiptShared.
+    // When the SW was not active (first install / SW update), the server stashes the
+    // file instead and appends ?sid= so we can fall back to /api/share-pending/:sid.
+    const _params = new URLSearchParams(window.location.search);
+    if (_params.get('incoming-share') === '1') {
+      const _sid = _params.get('sid'); // present only when server handled the share
+      // Remove the query params immediately so a refresh doesn't re-trigger
+      window.history.replaceState({}, '', window.location.pathname);
+      const _appFetchTime = Date.now();
+      fetch('/_share_pending')
+        .then(r => {
+          const _appGotResponse = Date.now();
+          const _status = r.status;
+          // Post app-side timestamps to the SW debug log (best-effort)
+          fetch('/_share_debug', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ appFetchTime: _appFetchTime, appGotResponse: _appGotResponse, appResponseStatus: _status })
+          }).catch(() => {});
+          return r.ok ? r.json() : null;
+        })
+        .then(data => {
+          if (data && data.mimeType && data.base64Data) {
+            window.onReceiptShared({ mimeType: data.mimeType, base64Data: data.base64Data, fileName: data.fileName || '' });
+          } else if (_sid) {
+            // SW wasn't active — retrieve from server stash (fallback path)
+            return fetch(`/api/share-pending/${_sid}`)
+              .then(r => r.ok ? r.json() : null)
+              .then(serverData => {
+                if (serverData && serverData.mimeType && serverData.base64Data) {
+                  window.onReceiptShared({ mimeType: serverData.mimeType, base64Data: serverData.base64Data, fileName: serverData.fileName || '' });
+                }
+              });
+          } else {
+            console.warn('[share-app] /_share_pending returned empty — read /_share_debug for SW-side trace');
+          }
+        })
+        .catch(err => console.warn('[share-target] Failed to retrieve pending share:', err.message));
+    }
+
+    // Check for a receipt the native Android wrapper tried to share before the PWA
+    // was ready to handle it.  When the wrapper fires the share intent and
+    // window.onReceiptShared is not yet registered (app still loading / cold start),
+    // it sets window._pendingSharedReceipt instead.  We consume it here once the
+    // handler is registered so no share is ever silently dropped.
+    if (window._pendingSharedReceipt) {
+      const _p = window._pendingSharedReceipt;
+      window._pendingSharedReceipt = null; // consume-once
+      window.onReceiptShared({ mimeType: _p.mimeType, base64Data: _p.base64Data, fileName: _p.fileName || '' });
+    }
+
+    // Listen for SHARE_AVAILABLE messages from the service worker.
+    // When the app is already running (just backgrounded), the SW can postMessage
+    // instead of waiting for the full /?incoming-share=1 reload to finish.
+    // This means the scan starts the moment the user picks the app from the share sheet.
+    const _swMessageHandler = async (event) => {
+      if (event.data?.type !== 'SHARE_AVAILABLE') return;
+      if (!window.onReceiptShared) return;
+      try {
+        const r = await fetch('/_share_pending');
+        if (!r.ok) return;
+        const d = await r.json();
+        if (d && d.mimeType && d.base64Data) {
+          window.onReceiptShared({ mimeType: d.mimeType, base64Data: d.base64Data, fileName: d.fileName || '' });
+        }
+      } catch {}
+    };
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.addEventListener('message', _swMessageHandler);
+    }
+
+    return () => {
+      window.onReceiptShared = null;
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.removeEventListener('message', _swMessageHandler);
+      }
+    };
+  }, [user]);
+
+  const renderPage = () => {
+    if (user.role === 'auditor') return <VoucherList filter="completed" />;
+    if (user.role === 'staff_lead') return <ConstructionAttendanceSiteLeadPage />;
+    switch(currentPage) { case 'dashboard': return <Dashboard />; case 'create': return (user.role === 'accounts' || user.isSuperAdmin) ? <CreateVoucher /> : <Dashboard />; case 'drafts': return (user.role === 'accounts' || user.isSuperAdmin) ? <VoucherList filter="draft" /> : <Dashboard />; case 'pending': return <VoucherList filter="pending" />; case 'approved': return <VoucherList filter="approved" />; case 'completed': return <VoucherList filter="completed" />; case 'awaiting_payment': return <VoucherList filter="awaiting_payment" />; case 'paid': return <VoucherList filter="paid" />; case 'all': return <VoucherList filter="all" />; case 'users': return user.isSuperAdmin ? <UsersManagement /> : <Dashboard />; case 'payees': return (user.role === 'accounts' || user.isSuperAdmin) ? <PayeesManagement /> : <Dashboard />; case 'accounts': return (user.role === 'accounts' || user.isSuperAdmin) ? <AccountsManagement /> : <Dashboard />; case 'pay-from-accounts': return (user.role === 'accounts' || user.isSuperAdmin) ? <PaymentAccountsManagement /> : <Dashboard />; case 'suspense': return <SuspenseVoucherList onViewDetail={(id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); }} />; case 'create-suspense': return (user.role === 'accounts' || user.isSuperAdmin) ? <SuspenseVoucherForm onCreated={() => { setCurrentPage('suspense'); }} onViewDetail={(id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); }} /> : <Dashboard />; case 'suspense-detail': return suspenseDetailId ? <SuspenseVoucherDetail suspenseId={suspenseDetailId} onBack={() => setCurrentPage('suspense')} /> : <SuspenseVoucherList onViewDetail={(id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); }} />; case 'reconcile': return (user.role === 'accounts' || user.isSuperAdmin) ? <ReconcileReceipts /> : <Dashboard />; case 'unassigned-receipts': return (user.role === 'accounts' || user.isSuperAdmin) ? <UnassignedReceiptsPage /> : <Dashboard />; case 'construction-attendance': return <ConstructionAttendanceSiteLeadPage />; case 'construction-log': return (user.role === 'accounts' || user.role === 'admin' || user.isSuperAdmin) ? <ConstructionAttendanceLogPage /> : <Dashboard />; case 'construction-dues': return (user.role === 'accounts' || user.isSuperAdmin) ? <ConstructionDuesPage /> : <Dashboard />; case 'construction-setup': return (user.role === 'accounts' || user.role === 'admin' || user.isSuperAdmin) ? <ConstructionSetupPage /> : <Dashboard />; case 'construction-rates': return (user.role === 'admin' || user.isSuperAdmin) ? <ConstructionRateApprovalsPage /> : <Dashboard />; default: return <Dashboard />; } };
+
+  React.useEffect(() => {
+    // After React renders the new page, scroll main-content to top.
+    // Two rAF frames ensure child mount effects (e.g. autoFocus) have already fired.
+    const id = requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        document.querySelector('.main-content')?.scrollTo({ top: 0, behavior: 'instant' });
+      });
+    });
+    return () => cancelAnimationFrame(id);
+  }, [currentPage]);
+
+  const handleNavClick = (page) => {
+    try { localStorage.setItem('relish_page', page); } catch {}
+    setCurrentPage(page);
+    setShowMobileMenu(false);
+  };
+
+  return (
+    <AppContext.Provider value={contextValue}>
+      <PWAInstallPrompt />
+      {showPinSetup && <SetPinModal onPinSet={handlePinSet} onSkip={() => setShowPinSetup(false)} />}
+      {showSecurityModal && user && <SecurityModal user={user} onClose={() => setShowSecurityModal(false)} />}
+      {receiptShare && <ReceiptShareModal state={receiptShare} onClose={() => setReceiptShare(null)} />}
+      {showDeviceLockSetup && deviceLockSetupUser && (
+        <DeviceLockPromptModal
+          user={deviceLockSetupUser}
+          onDone={() => { setShowDeviceLockSetup(false); setDeviceLockSetupUser(null); }}
+        />
+      )}
+      <div className="app-container">
+        <header className="header">
+          <div className="header-left">
+            <button className="mobile-menu-btn" onClick={() => setShowMobileMenu(!showMobileMenu)}>
+              {Icons.menu}
+            </button>
+            <div className="logo-container"><img src="logo.png" alt="Relish" style={{height:'40px'}} /></div>
+            <div 
+              className="company-badge" 
+              onClick={() => hasMultipleCompanies && setShowCompanySwitcher(!showCompanySwitcher)}
+              style={{ cursor: hasMultipleCompanies ? 'pointer' : 'default', position: 'relative' }}
+            >
+              {Icons.building} {user.company.name}
+              {hasMultipleCompanies && <span style={{ marginLeft: '6px', fontSize: '10px' }}>▼</span>}
+              
+              {showCompanySwitcher && hasMultipleCompanies && (
+                <div style={{
+                  position: 'absolute',
+                  top: '100%',
+                  left: 0,
+                  marginTop: '8px',
+                  background: 'white',
+                  borderRadius: '8px',
+                  boxShadow: '0 4px 20px rgba(0,0,0,0.15)',
+                  minWidth: '280px',
+                  zIndex: 1000,
+                  border: '1px solid #eee'
+                }}>
+                  <div style={{ padding: '12px 16px', borderBottom: '1px solid #eee', fontWeight: 600, color: '#333' }}>
+                    Switch Company
+                  </div>
+                  {user.companies.map(company => (
+                    <div 
+                      key={company.id}
+                      onClick={(e) => { e.stopPropagation(); handleSwitchCompany(company.id); }}
+                      style={{
+                        padding: '12px 16px',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        background: company.id === user.company.id ? '#f0f7ff' : 'white',
+                        borderLeft: company.id === user.company.id ? '3px solid #2196f3' : '3px solid transparent'
+                      }}
+                    >
+                      <div>
+                        <div style={{ fontWeight: 500, color: '#333' }}>{company.name}</div>
+                        <div style={{ fontSize: '12px', color: '#666', marginTop: '2px' }}>
+                          {company.role === 'admin' ? '🛡️ Admin' : '👤 Accounts'}
+                        </div>
+                      </div>
+                      {company.id === user.company.id && (
+                        <span style={{ color: '#4caf50', fontSize: '16px' }}>✓</span>
+                      )}
+                    </div>
+                  ))}
+                  {switchingCompany && (
+                    <div style={{ padding: '12px', textAlign: 'center', color: '#666' }}>
+                      Switching...
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+          <div className="header-right">
+            <div className="user-badge">{user.isSuperAdmin ? '👑' : user.role === 'admin' ? Icons.shield : Icons.user} {user.username}</div>
+            <button className="notification-btn" onClick={() => setShowNotifications(!showNotifications)}>{Icons.bell}{unreadCount > 0 && <span className="notification-badge">{unreadCount}</span>}</button>
+            <button className="btn" title="Security Settings" style={{ padding: '6px 10px', background: 'transparent', border: '1px solid rgba(255,255,255,0.2)', color: 'white', fontSize: '16px' }} onClick={() => setShowSecurityModal(true)}>🔒</button>
+            <button className="logout-btn" onClick={handleLogout}>{Icons.logOut} Sign Out</button>
+          </div>
+        </header>
+        {showCompanySwitcher && (
+          <div 
+            onClick={() => setShowCompanySwitcher(false)} 
+            style={{ position: 'fixed', inset: 0, zIndex: 999 }} 
+          />
+        )}
+        <div className="main-layout">
+          <aside className="sidebar">
+            {user.role === 'auditor' ? (
+              <div className="nav-section"><div className="nav-section-title">Audit View</div>
+                <div className={`nav-item ${currentPage === 'completed' ? 'active' : ''}`} onClick={() => handleNavClick('completed')}>{Icons.checkCircle} Completed Vouchers</div>
+              </div>
+            ) : user.role === 'staff_lead' ? (
+              <div className="nav-section"><div className="nav-section-title">Construction</div>
+                <div className={`nav-item ${currentPage === 'construction-attendance' ? 'active' : ''}`} onClick={() => handleNavClick('construction-attendance')}>✅ Mark Attendance</div>
+              </div>
+            ) : (<>
+            <div className="nav-section"><div className="nav-section-title">Main</div><div className={`nav-item ${currentPage === 'dashboard' ? 'active' : ''}`} onClick={() => handleNavClick('dashboard')}>{Icons.home} Dashboard</div></div>
+            <div className="nav-section"><div className="nav-section-title">Vouchers</div>
+              {(user.role === 'accounts' || user.isSuperAdmin) && <div className={`nav-item ${currentPage === 'create' ? 'active' : ''}`} onClick={() => handleNavClick('create')}>{Icons.plus} Create Voucher</div>}
+              {(user.role === 'accounts' || user.isSuperAdmin) && <div className={`nav-item ${currentPage === 'drafts' ? 'active' : ''}`} onClick={() => handleNavClick('drafts')}>📝 Drafts</div>}
+              <div className={`nav-item ${currentPage === 'pending' ? 'active' : ''}`} onClick={() => handleNavClick('pending')}>{Icons.clock} Pending Approval</div>
+              <div className={`nav-item ${currentPage === 'approved' ? 'active' : ''}`} onClick={() => handleNavClick('approved')}>{Icons.smartphone} Awaiting OTP</div>
+              <div className={`nav-item ${currentPage === 'completed' ? 'active' : ''}`} onClick={() => handleNavClick('completed')}>{Icons.checkCircle} OTP Verified</div>
+              <div className={`nav-item ${currentPage === 'awaiting_payment' ? 'active' : ''}`} onClick={() => handleNavClick('awaiting_payment')} style={{display:'flex',alignItems:'center',gap:'0.4rem'}}>
+                <span>💳 Awaiting Payment</span>
+                {vouchers.filter(v => v.status === 'awaiting_payment').length > 0 && <span style={{background:'#f59e0b',color:'white',borderRadius:'10px',padding:'1px 7px',fontSize:'0.7rem',marginLeft:'auto',lineHeight:'1.4'}}>{vouchers.filter(v => v.status === 'awaiting_payment').length}</span>}
+              </div>
+              <div className={`nav-item ${currentPage === 'all' ? 'active' : ''}`} onClick={() => handleNavClick('all')}>{Icons.fileText} All Vouchers</div>
+            </div>
+            <div className="nav-section"><div className="nav-section-title">Suspense Accounts</div>
+              <div className={`nav-item ${currentPage === 'suspense' || currentPage === 'suspense-detail' ? 'active' : ''}`} onClick={() => handleNavClick('suspense')}>{Icons.wallet} Suspense Vouchers</div>
+              {(user.role === 'accounts' || user.isSuperAdmin) && <div className={`nav-item ${currentPage === 'create-suspense' ? 'active' : ''}`} onClick={() => handleNavClick('create-suspense')}>{Icons.plus} New Suspense</div>}
+            </div>
+            {(user.role === 'accounts' || user.isSuperAdmin) && <div className="nav-section"><div className="nav-section-title">Master Data</div>
+              <div className={`nav-item ${currentPage === 'payees' ? 'active' : ''}`} onClick={() => handleNavClick('payees')}>{Icons.users} Manage Payees</div>
+              <div className={`nav-item ${currentPage === 'accounts' ? 'active' : ''}`} onClick={() => handleNavClick('accounts')}>{Icons.fileText} Heads of Account</div>
+              <div className={`nav-item ${currentPage === 'pay-from-accounts' ? 'active' : ''}`} onClick={() => handleNavClick('pay-from-accounts')}>🏦 Pay From Accounts</div>
+            </div>}
+            {(user.role === 'accounts' || user.isSuperAdmin) && <div className="nav-section"><div className="nav-section-title">Payments</div>
+              <div className={`nav-item ${currentPage === 'reconcile' ? 'active' : ''}`} onClick={() => handleNavClick('reconcile')}>🗂️ Reconcile Receipts</div>
+              <div className={`nav-item ${currentPage === 'unassigned-receipts' ? 'active' : ''}`} onClick={() => handleNavClick('unassigned-receipts')}>📬 Receipt Review Queue</div>
+            </div>}
+            {user.isSuperAdmin && <div className="nav-section"><div className="nav-section-title">Admin Dashboard</div><div className={`nav-item ${currentPage === 'users' ? 'active' : ''}`} onClick={() => handleNavClick('users')}>{Icons.users} User Management</div></div>}
+            {(user.role === 'accounts' || user.role === 'admin' || user.isSuperAdmin) && <div className="nav-section"><div className="nav-section-title">Construction</div>
+              <div className={`nav-item ${currentPage === 'construction-log' ? 'active' : ''}`} onClick={() => handleNavClick('construction-log')}>📋 Labour Log</div>
+              {(user.role === 'accounts' || user.isSuperAdmin) && <div className={`nav-item ${currentPage === 'construction-dues' ? 'active' : ''}`} onClick={() => handleNavClick('construction-dues')}>💰 Labour Dues</div>}
+              {(user.role === 'accounts' || user.isSuperAdmin) && <div className={`nav-item ${currentPage === 'construction-setup' ? 'active' : ''}`} onClick={() => handleNavClick('construction-setup')}>⚙️ Labour Setup</div>}
+              {(user.role === 'admin' || user.isSuperAdmin) && <div className={`nav-item ${currentPage === 'construction-rates' ? 'active' : ''}`} onClick={() => handleNavClick('construction-rates')}>📊 Rate Approvals</div>}
+            </div>}
+            </>)}
+          </aside>
+          
+          {showMobileMenu && (
+            <>
+              <div className="mobile-menu-overlay" onClick={() => setShowMobileMenu(false)} />
+              <aside className="mobile-menu">
+                <div className="mobile-menu-header">
+                  <h3>Menu</h3>
+                  <button className="mobile-menu-close" onClick={() => setShowMobileMenu(false)}>{Icons.x}</button>
+                </div>
+                {hasMultipleCompanies && (
+                  <div className="nav-section">
+                    <div className="nav-section-title">{Icons.building} Company</div>
+                    {user.companies.map(company => (
+                      <div
+                        key={company.id}
+                        className="nav-item"
+                        onClick={() => { handleSwitchCompany(company.id); setShowMobileMenu(false); }}
+                        style={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          background: company.id === user.company.id ? 'rgba(255,255,255,0.15)' : 'transparent',
+                          borderLeft: company.id === user.company.id ? '3px solid white' : '3px solid transparent',
+                          opacity: switchingCompany ? 0.6 : 1
+                        }}
+                      >
+                        <span>{company.name}</span>
+                        {company.id === user.company.id && <span style={{fontSize:'12px'}}>✓ Active</span>}
+                      </div>
+                    ))}
+                    {switchingCompany && <div style={{padding:'8px 16px', fontSize:'0.8rem', opacity:0.7}}>Switching...</div>}
+                  </div>
+                )}
+                {user.role === 'auditor' ? (
+                  <div className="nav-section"><div className="nav-section-title">Audit View</div>
+                    <div className={`nav-item ${currentPage === 'completed' ? 'active' : ''}`} onClick={() => handleNavClick('completed')}>{Icons.checkCircle} Completed Vouchers</div>
+                  </div>
+                ) : (<>
+                <div className="nav-section"><div className="nav-section-title">Main</div><div className={`nav-item ${currentPage === 'dashboard' ? 'active' : ''}`} onClick={() => handleNavClick('dashboard')}>{Icons.home} Dashboard</div></div>
+                <div className="nav-section"><div className="nav-section-title">Vouchers</div>
+                  {(user.role === 'accounts' || user.isSuperAdmin) && <div className={`nav-item ${currentPage === 'create' ? 'active' : ''}`} onClick={() => handleNavClick('create')}>{Icons.plus} Create Voucher</div>}
+                  {(user.role === 'accounts' || user.isSuperAdmin) && <div className={`nav-item ${currentPage === 'drafts' ? 'active' : ''}`} onClick={() => handleNavClick('drafts')}>📝 Drafts</div>}
+                  <div className={`nav-item ${currentPage === 'pending' ? 'active' : ''}`} onClick={() => handleNavClick('pending')}>{Icons.clock} Pending Approval</div>
+                  <div className={`nav-item ${currentPage === 'approved' ? 'active' : ''}`} onClick={() => handleNavClick('approved')}>{Icons.smartphone} Awaiting OTP</div>
+                  <div className={`nav-item ${currentPage === 'completed' ? 'active' : ''}`} onClick={() => handleNavClick('completed')}>{Icons.checkCircle} OTP Verified</div>
+                  <div className={`nav-item ${currentPage === 'awaiting_payment' ? 'active' : ''}`} onClick={() => handleNavClick('awaiting_payment')} style={{display:'flex',alignItems:'center',gap:'0.4rem'}}>
+                    <span>💳 Awaiting Payment</span>
+                    {vouchers.filter(v => v.status === 'awaiting_payment').length > 0 && <span style={{background:'#f59e0b',color:'white',borderRadius:'10px',padding:'1px 7px',fontSize:'0.7rem',marginLeft:'auto',lineHeight:'1.4'}}>{vouchers.filter(v => v.status === 'awaiting_payment').length}</span>}
+                  </div>
+                  <div className={`nav-item ${currentPage === 'all' ? 'active' : ''}`} onClick={() => handleNavClick('all')}>{Icons.fileText} All Vouchers</div>
+                </div>
+                <div className="nav-section"><div className="nav-section-title">Suspense Accounts</div>
+                  <div className={`nav-item ${currentPage === 'suspense' || currentPage === 'suspense-detail' ? 'active' : ''}`} onClick={() => handleNavClick('suspense')}>{Icons.wallet} Suspense Vouchers</div>
+                  {(user.role === 'accounts' || user.isSuperAdmin) && <div className={`nav-item ${currentPage === 'create-suspense' ? 'active' : ''}`} onClick={() => handleNavClick('create-suspense')}>{Icons.plus} New Suspense</div>}
+                </div>
+                {(user.role === 'accounts' || user.isSuperAdmin) && <div className="nav-section"><div className="nav-section-title">Master Data</div>
+                  <div className={`nav-item ${currentPage === 'payees' ? 'active' : ''}`} onClick={() => handleNavClick('payees')}>{Icons.users} Manage Payees</div>
+                  <div className={`nav-item ${currentPage === 'accounts' ? 'active' : ''}`} onClick={() => handleNavClick('accounts')}>{Icons.fileText} Heads of Account</div>
+                  <div className={`nav-item ${currentPage === 'pay-from-accounts' ? 'active' : ''}`} onClick={() => handleNavClick('pay-from-accounts')}>🏦 Pay From Accounts</div>
+                </div>}
+                {(user.role === 'accounts' || user.isSuperAdmin) && <div className="nav-section"><div className="nav-section-title">Payments</div>
+                  <div className={`nav-item ${currentPage === 'reconcile' ? 'active' : ''}`} onClick={() => handleNavClick('reconcile')}>🗂️ Reconcile Receipts</div>
+                  <div className={`nav-item ${currentPage === 'unassigned-receipts' ? 'active' : ''}`} onClick={() => handleNavClick('unassigned-receipts')}>📬 Receipt Review Queue</div>
+                </div>}
+                {user.isSuperAdmin && <div className="nav-section"><div className="nav-section-title">Admin Dashboard</div><div className={`nav-item ${currentPage === 'users' ? 'active' : ''}`} onClick={() => handleNavClick('users')}>{Icons.users} User Management</div></div>}
+                </>)}
+                <div className="nav-section">
+                  <div className="nav-item" onClick={() => { setShowSecurityModal(true); setShowMobileMenu(false); }}>🔒 Security Settings</div>
+                </div>
+              </aside>
+            </>
+          )}
+          <main className="main-content">{renderPage()}</main>
+          {showNotifications && (
+            <div className="notifications-panel">
+              <div className="notifications-header">
+                <h3 style={{fontSize:'1rem',fontWeight:600}}>Notifications</h3>
+                <div style={{display:'flex',gap:'8px',alignItems:'center'}}>
+                  <button 
+                    className={`btn btn-sm ${pushEnabled ? 'btn-success' : 'btn-secondary'}`}
+                    onClick={togglePushNotifications}
+                    title={pushEnabled ? 'Push notifications enabled - click to disable' : 'Push notifications disabled - click to enable'}
+                    style={{display:'flex',alignItems:'center',gap:'4px',padding:'4px 8px'}}
+                  >
+                    {pushEnabled ? Icons.bell : Icons.bellOff}
+                    <span style={{fontSize:'0.75rem'}}>{pushEnabled ? 'On' : 'Off'}</span>
+                  </button>
+                  {unreadCount > 0 && <button className="btn btn-sm btn-secondary" onClick={markAllRead}>Mark all read</button>}
+                </div>
+              </div>
+              {notifications.length === 0 ? <div className="empty-state">{Icons.bell}<p>No notifications</p></div> : notifications.map(n => (<div key={n.id} className={`notification-item ${!n.read ? 'unread' : ''}`}><div className="notification-title">{n.title}</div><div className="notification-message">{n.message}</div><div className="notification-time">{new Date(n.created_at).toLocaleString('en-IN')}</div></div>))}
+            </div>
+          )}
+        </div>
+        <Toast toasts={toasts} />
+      </div>
+    </AppContext.Provider>
+  );
+};
+
+// Mark app as loaded successfully
+window.__appLoaded = true;
+const loadingEl = document.getElementById('app-loading');
+if (loadingEl) loadingEl.style.display = 'none';
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
