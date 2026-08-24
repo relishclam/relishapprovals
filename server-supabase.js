@@ -7251,6 +7251,54 @@ app.get('/api/construction/categories', async (req, res) => {
   res.json(data);
 });
 
+// Create a category
+app.post('/api/construction/categories', async (req, res) => {
+  const { name, description, requestedBy } = req.body;
+  const actor = await getActorRole(requestedBy);
+  if (!['admin','super_admin'].includes(actor.role) && !actor.is_super_admin) {
+    return res.status(403).json({ error: 'Admin only' });
+  }
+  if (!name) return res.status(400).json({ error: 'name required' });
+  const { data, error } = await supabase.from('construction_categories')
+    .insert({ name: name.trim(), description: description || null })
+    .select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// Edit a category
+app.put('/api/construction/categories/:id', async (req, res) => {
+  const { name, description, requestedBy } = req.body;
+  const actor = await getActorRole(requestedBy);
+  if (!['admin','super_admin'].includes(actor.role) && !actor.is_super_admin) {
+    return res.status(403).json({ error: 'Admin only' });
+  }
+  const updates = {};
+  if (name        !== undefined) updates.name        = name.trim();
+  if (description !== undefined) updates.description = description || null;
+  const { data, error } = await supabase.from('construction_categories')
+    .update(updates).eq('id', req.params.id).select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// Delete a category (guarded — blocked if assignments exist)
+app.delete('/api/construction/categories/:id', async (req, res) => {
+  const { requestedBy } = req.body;
+  const actor = await getActorRole(requestedBy);
+  if (!['admin','super_admin'].includes(actor.role) && !actor.is_super_admin) {
+    return res.status(403).json({ error: 'Admin only' });
+  }
+  const { count } = await supabase.from('construction_category_supervisors')
+    .select('id', { count: 'exact', head: true }).eq('category_id', req.params.id);
+  if (count > 0) return res.status(409).json({ error: `Cannot delete — ${count} supervisor assignment(s) exist. Remove assignments first.` });
+  // Soft-delete: set is_active = false to preserve historical attendance data
+  const { error } = await supabase.from('construction_categories')
+    .update({ is_active: false }).eq('id', req.params.id);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ deleted: true });
+});
+
 // Supervisors for a category, including their workers
 app.get('/api/construction/categories/:categoryId/supervisors', async (req, res) => {
   const { data, error } = await supabase
@@ -7479,7 +7527,7 @@ app.post('/api/construction/supervisors', async (req, res) => {
 
 // Assign supervisor to category
 app.post('/api/construction/assign', async (req, res) => {
-  const { category_id, supervisor_id, requestedBy } = req.body;
+  const { category_id, supervisor_id, addAsSelfWorker, requestedBy } = req.body;
   const actor = await getActorRole(requestedBy);
   if (!['accounts','admin','super_admin'].includes(actor.role) && !actor.is_super_admin) {
     return res.status(403).json({ error: 'Not authorised' });
@@ -7488,7 +7536,22 @@ app.post('/api/construction/assign', async (req, res) => {
     .insert({ category_id, supervisor_id, created_by: requestedBy })
     .select().single();
   if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
+
+  // Optionally create a self-worker record so the supervisor appears in their own attendance list
+  if (addAsSelfWorker) {
+    const { data: sup } = await supabase.from('construction_supervisors')
+      .select('name, mobile').eq('id', supervisor_id).single();
+    if (sup) {
+      await supabase.from('construction_workers').insert({
+        category_supervisor_id: data.id,
+        name: sup.name,
+        mobile: sup.mobile || null,
+        notes: 'Self (gang lead)',
+        created_by: requestedBy,
+      });
+    }
+  }
+  res.json({ ...data, selfWorkerCreated: !!addAsSelfWorker });
 });
 
 // All active category-supervisor assignments (for rate proposal dropdowns)
