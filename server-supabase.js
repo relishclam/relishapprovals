@@ -415,8 +415,18 @@ app.get('/api/debug/test-msg91', async (req, res) => {
     authKeyPrefix: MSG91_AUTH_KEY ? MSG91_AUTH_KEY.substring(0, 8) + '...' : 'NOT SET',
     otpTemplateId: MSG91_OTP_TEMPLATE_ID || 'NOT SET',
     flowId: MSG91_FLOW_ID,
+    attendanceFlowId: MSG91_ATTENDANCE_FLOW_ID,
     senderId: MSG91_SENDER_ID
   });
+});
+
+// Test payment OTP to a specific mobile — returns full MSG91 response for diagnosis
+app.get('/api/debug/test-payment-otp', async (req, res) => {
+  const { mobile, name = 'Test Payee', amount = '5000' } = req.query;
+  if (!mobile) return res.status(400).json({ error: 'mobile query param required' });
+  const formatted = formatMobile(mobile);
+  const result = await callMsg91OtpSend(formatted, 'DEBUG test payment OTP', { name, amount, flowId: MSG91_FLOW_ID });
+  res.json({ formatted, flowId: MSG91_FLOW_ID, senderId: MSG91_SENDER_ID, result });
 });
 
 // Debug endpoint to test voucher and payee data
@@ -2226,7 +2236,10 @@ app.post('/api/vouchers/:voucherId/approve', async (req, res) => {
       const formattedMobile = formatMobile(voucher.payee.mobile);
       console.log(`   Sending OTP to: ${formattedMobile}`);
       
-      const otpResult = await callMsg91OtpSend(formattedMobile, `Send Payee OTP for voucher ${req.params.voucherId}`, { name: voucher.payee.name, amount: voucher.amount });
+      const otpResult = await callMsg91OtpSend(formattedMobile, `Send Payee OTP for voucher ${req.params.voucherId}`, {
+        name: voucher.payee.name,
+        amount: Math.round(parseFloat(voucher.amount)).toString(),  // "5000" not "5000.00"
+      });
       
       if (otpResult.success) {
         await saveOtpSession(formattedMobile, otpResult.sessionId, 'payee_verification', req.params.voucherId);
@@ -2438,7 +2451,7 @@ app.post('/api/vouchers/:voucherId/resend-otp', async (req, res) => {
     const formattedMobile = formatMobile(voucher.payee.mobile);
     console.log(`   Payee Mobile: ${formattedMobile}`);
     
-    const result = await callMsg91OtpSend(formattedMobile, `Resend Payee OTP for voucher ${req.params.voucherId}`, { name: voucher.payee.name, amount: voucher.amount });
+    const result = await callMsg91OtpSend(formattedMobile, `Resend Payee OTP for voucher ${req.params.voucherId}`, { name: voucher.payee.name, amount: Math.round(parseFloat(voucher.amount)).toString() });
     
     if (result.success) {
       await saveOtpSession(formattedMobile, result.sessionId, 'payee_verification', req.params.voucherId);
