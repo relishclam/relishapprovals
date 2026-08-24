@@ -124,7 +124,8 @@ if (!process.env.MSG91_AUTH_KEY) {
 const MSG91_AUTH_KEY = process.env.MSG91_AUTH_KEY;
 const MSG91_OTP_TEMPLATE_ID = process.env.MSG91_OTP_TEMPLATE_ID; // DLT-registered OTP template ID
 const MSG91_SENDER_ID = process.env.MSG91_SENDER_ID || 'RHHF';
-const MSG91_FLOW_ID = process.env.MSG91_FLOW_ID || '6a856298c46183266e086f33';
+const MSG91_FLOW_ID = process.env.MSG91_FLOW_ID || '6a856298c46183266e086f33'; // Pramaana-Payment-OTP
+const MSG91_ATTENDANCE_FLOW_ID = process.env.MSG91_ATTENDANCE_FLOW_ID || '6a8ba63303742d5709066592'; // Relish_OTP — contract labour attendance
 const MSG91_WHATSAPP_NUMBER = process.env.MSG91_WHATSAPP_NUMBER;
 const MSG91_BASE_URL = 'https://api.msg91.com/api/v5';
 
@@ -330,7 +331,7 @@ const getActorRole = async (userId) => {
 };
 
 // Send OTP via MSG91 Flow API — OTP generated and verified locally
-const callMsg91OtpSend = async (mobile, description, { name = '', amount = '' } = {}) => {
+const callMsg91OtpSend = async (mobile, description, { name = '', amount = '', flowId = MSG91_FLOW_ID } = {}) => {
   console.log(`\n📱 MSG91 SEND OTP: ${description}`);
   console.log(`   Mobile: ${mobile}`);
   console.log(`   Time: ${new Date().toISOString()}`);
@@ -345,7 +346,7 @@ const callMsg91OtpSend = async (mobile, description, { name = '', amount = '' } 
       method: 'POST',
       headers: { authkey: MSG91_AUTH_KEY, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        flow_id: MSG91_FLOW_ID,
+        flow_id: flowId,
         sender: MSG91_SENDER_ID,
         recipients: [{ mobiles: mobile, otp, ...(name ? { name } : {}), ...(amount ? { amount } : {}) }],
       }),
@@ -469,7 +470,7 @@ app.post('/api/otp/send', async (req, res) => {
   console.log(`   Formatted: ${formattedMobile}`);
   console.log(`   Purpose: ${purpose}`);
   
-  const result = await callMsg91OtpSend(formattedMobile, `Send OTP to ${formattedMobile}`);
+  const result = await callMsg91OtpSend(formattedMobile, `Send OTP to ${formattedMobile}`, { flowId: MSG91_ATTENDANCE_FLOW_ID });
   
   if (result.success) {
     await saveOtpSession(formattedMobile, result.sessionId, purpose);
@@ -897,7 +898,7 @@ app.post('/api/users/login', async (req, res) => {
         if (!otp) {
           try {
             const formattedMobile = formatMobile(user.mobile);
-            const otpResult = await callMsg91OtpSend(formattedMobile, 'Send first-login OTP', { name: user.name });
+            const otpResult = await callMsg91OtpSend(formattedMobile, 'Send first-login OTP', { flowId: MSG91_ATTENDANCE_FLOW_ID });
             if (otpResult.success) {
               await saveOtpSession(formattedMobile, otpResult.sessionId, 'first_login');
               return res.json({ requiresOtp: true, message: 'An OTP has been sent to your registered mobile. Verify to set your password.' });
@@ -1118,7 +1119,7 @@ app.post('/api/auth/forgot-password', async (req, res) => {
     const formattedMobile = formatMobile(user.mobile);
 
     if (!otp) {
-      const otpResult = await callMsg91OtpSend(formattedMobile, 'Send password-reset OTP', { name: user.name });
+      const otpResult = await callMsg91OtpSend(formattedMobile, 'Send password-reset OTP', { flowId: MSG91_ATTENDANCE_FLOW_ID });
       if (!otpResult.success) return res.status(500).json({ error: 'Failed to send OTP' });
       await saveOtpSession(formattedMobile, otpResult.sessionId, 'password_reset');
       return res.json({ requiresOtp: true, message: 'OTP sent to registered mobile.' });
