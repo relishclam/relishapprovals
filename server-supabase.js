@@ -2238,7 +2238,7 @@ app.post('/api/vouchers/:voucherId/approve', async (req, res) => {
       
       const otpResult = await callMsg91OtpSend(formattedMobile, `Send Payee OTP for voucher ${req.params.voucherId}`, {
         name: voucher.payee.name,
-        amount: Math.round(parseFloat(voucher.amount)).toString(),  // "5000" not "5000.00"
+        amount: Math.round(parseFloat(voucher.amount)).toString(),
       });
       
       if (otpResult.success) {
@@ -2451,7 +2451,9 @@ app.post('/api/vouchers/:voucherId/resend-otp', async (req, res) => {
     const formattedMobile = formatMobile(voucher.payee.mobile);
     console.log(`   Payee Mobile: ${formattedMobile}`);
     
-    const result = await callMsg91OtpSend(formattedMobile, `Resend Payee OTP for voucher ${req.params.voucherId}`, { name: voucher.payee.name, amount: Math.round(parseFloat(voucher.amount)).toString() });
+    const result = await callMsg91OtpSend(formattedMobile, `Resend Payee OTP for voucher ${req.params.voucherId}`, {
+      name: voucher.payee.name, amount: Math.round(parseFloat(voucher.amount)).toString(),
+    });
     
     if (result.success) {
       await saveOtpSession(formattedMobile, result.sessionId, 'payee_verification', req.params.voucherId);
