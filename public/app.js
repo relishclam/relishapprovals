@@ -11527,37 +11527,34 @@ const ConstructionAttendanceLogPage = () => {
         <button onClick={load} className="btn btn-primary">Refresh</button>
       </div>
       {loading ? <div style={{ textAlign: 'center', padding: '3rem', color: '#64748b' }}>Loading…</div> : (
-        <div className="card" style={{ overflowX: 'auto' }}>
+        <div>
           {records.length === 0 ? (
-            <div style={{ textAlign: 'center', padding: '3rem', color: '#94a3b8', fontSize: 14 }}>No records for this filter.</div>
+            <div className="card" style={{ textAlign: 'center', padding: '3rem', color: '#94a3b8', fontSize: 14 }}>No records for this filter.</div>
           ) : (
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
-              <thead>
-                <tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
-                  {['Date','Category','Supervisor','Worker','Attendance','Status'].map(h => (
-                    <th key={h} style={{ textAlign: 'left', padding: '10px 14px', fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {records.map(r => (
-                  <tr key={r.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                    <td style={{ padding: '10px 14px', color: '#475569', whiteSpace: 'nowrap' }}>{new Date(r.attendance_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</td>
-                    <td style={{ padding: '10px 14px' }}>{CONSTRUCTION_CATEGORY_ICONS[r.category_name] || '📋'} {r.category_name}</td>
-                    <td style={{ padding: '10px 14px', color: '#475569' }}>{r.supervisor_name}</td>
-                    <td style={{ padding: '10px 14px' }}>
-                      <div style={{ fontWeight: 500, color: '#1e293b' }}>{r.worker_name || '—'}</div>
-                      {r.worker_mobile && <div style={{ fontSize: 11, color: '#94a3b8' }}>{r.worker_mobile}</div>}
-                    </td>
-                    <td style={{ padding: '10px 14px' }}><span style={{ background: '#f1f5f9', color: '#475569', padding: '2px 8px', borderRadius: 20, fontSize: 12, fontWeight: 600 }}>{attLabel(r.attendance_value)}</span></td>
-                    <td style={{ padding: '10px 14px' }}>{r.voucher_id
-                      ? <span style={{ background: '#dbeafe', color: '#1d4ed8', padding: '2px 8px', borderRadius: 20, fontSize: 12, fontWeight: 600 }}>Vouchered</span>
-                      : <span style={{ background: '#fef3c7', color: '#92400e', padding: '2px 8px', borderRadius: 20, fontSize: 12, fontWeight: 600 }}>Unpaid</span>}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <div className="card" style={{ overflow: 'hidden' }}>
+              {records.map(r => (
+                <div key={r.id} style={{ padding: '12px 14px', borderBottom: '1px solid #f1f5f9' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, marginBottom: 4 }}>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontWeight: 600, fontSize: 14 }}>{r.worker_name || '—'}</div>
+                      <div style={{ fontSize: 11, color: '#64748b', marginTop: 1 }}>
+                        {CONSTRUCTION_CATEGORY_ICONS[r.category_name] || '📋'} {r.category_name} · {r.supervisor_name}
+                      </div>
+                      {r.worker_mobile && <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 1 }}>{r.worker_mobile}</div>}
+                    </div>
+                    <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                      <div style={{ fontSize: 11, color: '#475569', marginBottom: 4 }}>{new Date(r.attendance_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</div>
+                      <span style={{ background: '#f1f5f9', color: '#475569', padding: '2px 8px', borderRadius: 20, fontSize: 11, fontWeight: 600 }}>{attLabel(r.attendance_value)}</span>
+                    </div>
+                  </div>
+                  <div style={{ marginTop: 6 }}>
+                    {r.voucher_id
+                      ? <span style={{ background: '#dbeafe', color: '#1d4ed8', padding: '2px 8px', borderRadius: 20, fontSize: 11, fontWeight: 600 }}>Vouchered</span>
+                      : <span style={{ background: '#fef3c7', color: '#92400e', padding: '2px 8px', borderRadius: 20, fontSize: 11, fontWeight: 600 }}>Unpaid</span>}
+                  </div>
+                </div>
+              ))}
+            </div>
           )}
         </div>
       )}
@@ -11717,7 +11714,7 @@ const ConstructionSetupPage = () => {
   const [saving, setSaving]             = useState(false);
   const [newSup, setNewSup]     = useState({ name: '', mobile: '', upi_id: '', notes: '' });
   const [assignment, setAssignment] = useState({ supervisor_id: '', category_id: '', addAsSelfWorker: false });
-  const [newWorker, setNewWorker]   = useState({ name: '', mobile: '', notes: '' });
+  const [newWorker, setNewWorker]   = useState({ name: '', mobile: '', notes: '', worker_type: 'Helper' });
   const [payeeMatches, setPayeeMatches] = useState([]);
   const [payeeChecking, setPayeeChecking] = useState(false);
   const [chosenPayeeId, setChosenPayeeId] = useState(null);
@@ -11805,7 +11802,7 @@ const ConstructionSetupPage = () => {
     setSaving(true);
     try {
       await constructionFetch('/workers', { method: 'POST', body: JSON.stringify({ ...newWorker, category_supervisor_id: selectedCatSup, requestedBy: user.id }) });
-      addToast('Worker added.'); setNewWorker({ name: '', mobile: '', notes: '' }); setShowAddWorker(false); loadWorkers();
+      addToast('Worker added.'); setNewWorker({ name: '', mobile: '', notes: '', worker_type: 'Helper' }); setShowAddWorker(false); loadWorkers();
     } catch (e) { addToast('Error: ' + e.message, 'error'); }
     setSaving(false);
   };
@@ -12066,12 +12063,17 @@ const ConstructionSetupPage = () => {
                       <input type="text" placeholder="e.g. Suresh P" value={newWorker.name} onChange={e => setNewWorker(p => ({ ...p, name: e.target.value }))} style={inputStyle} />
                     </div>
                     <div>
+                      <label style={{ display: 'block', fontSize: 12, fontWeight: 500, color: '#64748b', marginBottom: 4 }}>Worker Type *</label>
+                      <input type="text" list="worker-type-suggestions" placeholder="e.g. Mason, Helper, Lead" value={newWorker.worker_type} onChange={e => setNewWorker(p => ({ ...p, worker_type: e.target.value }))} style={inputStyle} />
+                      <datalist id="worker-type-suggestions"><option value="Mason" /><option value="Helper" /><option value="Lead" /><option value="Supervisor" /><option value="Carpenter" /><option value="Painter" /><option value="Electrician" /><option value="Plumber" /></datalist>
+                    </div>
+                    <div>
                       <label style={{ display: 'block', fontSize: 12, fontWeight: 500, color: '#64748b', marginBottom: 4 }}>Mobile (optional)</label>
                       <input type="text" placeholder="10-digit" value={newWorker.mobile} onChange={e => setNewWorker(p => ({ ...p, mobile: e.target.value }))} style={inputStyle} />
                     </div>
-                    <div style={{ gridColumn: '1/-1' }}>
+                    <div>
                       <label style={{ display: 'block', fontSize: 12, fontWeight: 500, color: '#64748b', marginBottom: 4 }}>Notes (optional)</label>
-                      <input type="text" placeholder="e.g. Mason, North block" value={newWorker.notes} onChange={e => setNewWorker(p => ({ ...p, notes: e.target.value }))} style={inputStyle} />
+                      <input type="text" placeholder="e.g. North block" value={newWorker.notes} onChange={e => setNewWorker(p => ({ ...p, notes: e.target.value }))} style={inputStyle} />
                     </div>
                   </div>
                   <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
@@ -12089,10 +12091,10 @@ const ConstructionSetupPage = () => {
                   workers.map(w => editWorkerId === w.id ? (
                     <div key={w.id} style={{ padding: '12px 14px', borderBottom: '1px solid #f1f5f9', background: '#f8fafc' }}>
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 8 }}>
-                        {[['name','Name'],['mobile','Mobile'],['notes','Notes']].map(([k,lbl]) => (
+                        {[['name','Name'],['worker_type','Worker Type'],['mobile','Mobile'],['notes','Notes']].map(([k,lbl]) => (
                           <div key={k}>
                             <div style={{ fontSize: 11, color: '#94a3b8', fontWeight: 600, marginBottom: 3 }}>{lbl}</div>
-                            <input value={editWorkerData[k] || ''} placeholder={lbl} onChange={e => setEditWorkerData(p => ({ ...p, [k]: e.target.value }))} style={inputStyle} />
+                            <input value={editWorkerData[k] || ''} placeholder={lbl} list={k === 'worker_type' ? 'worker-type-suggestions' : undefined} onChange={e => setEditWorkerData(p => ({ ...p, [k]: e.target.value }))} style={inputStyle} />
                           </div>
                         ))}
                       </div>
@@ -12106,13 +12108,14 @@ const ConstructionSetupPage = () => {
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
                         <div style={{ minWidth: 0 }}>
                           <div style={{ fontWeight: 600, fontSize: 14 }}>{w.name}</div>
-                          {w.mobile && <div style={{ fontSize: 12, color: '#475569', marginTop: 2 }}>{w.mobile}</div>}
+                          <div style={{ fontSize: 11, color: '#7c3aed', fontWeight: 600, marginTop: 2 }}>{w.worker_type || 'Helper'}</div>
+                          {w.mobile && <div style={{ fontSize: 12, color: '#475569', marginTop: 1 }}>{w.mobile}</div>}
                           {w.notes && <div style={{ fontSize: 11, color: '#64748b', marginTop: 1 }}>{w.notes}</div>}
                         </div>
                         <span style={{ flexShrink: 0, background: w.is_active ? '#d1fae5' : '#f1f5f9', color: w.is_active ? '#065f46' : '#64748b', padding: '2px 8px', borderRadius: 20, fontSize: 11, fontWeight: 600 }}>{w.is_active ? 'Active' : 'Inactive'}</span>
                       </div>
                       <div style={{ display: 'flex', gap: 6, marginTop: 10, flexWrap: 'wrap' }}>
-                        <button onClick={() => { setEditWorkerId(w.id); setEditWorkerData({ name: w.name, mobile: w.mobile || '', notes: w.notes || '' }); }} style={{ padding: '5px 12px', borderRadius: 6, border: '1px solid #c7d2fe', background: '#eef2ff', color: '#4338ca', fontSize: 12, cursor: 'pointer', fontWeight: 600 }}>Edit</button>
+                        <button onClick={() => { setEditWorkerId(w.id); setEditWorkerData({ name: w.name, mobile: w.mobile || '', notes: w.notes || '', worker_type: w.worker_type || 'Helper' }); }} style={{ padding: '5px 12px', borderRadius: 6, border: '1px solid #c7d2fe', background: '#eef2ff', color: '#4338ca', fontSize: 12, cursor: 'pointer', fontWeight: 600 }}>Edit</button>
                         <button onClick={() => toggleWorker(w)} style={{ padding: '5px 12px', borderRadius: 6, border: `1px solid ${w.is_active ? '#d1d5db' : '#6ee7b7'}`, background: 'none', color: w.is_active ? '#6b7280' : '#065f46', fontSize: 12, cursor: 'pointer' }}>{w.is_active ? 'Deactivate' : 'Reactivate'}</button>
                         <button onClick={() => deleteWorker(w)} style={{ padding: '5px 12px', borderRadius: 6, border: '1px solid #fecaca', background: '#fff5f5', color: '#dc2626', fontSize: 12, cursor: 'pointer', fontWeight: 600 }}>Delete</button>
                       </div>
@@ -12194,71 +12197,106 @@ const ConstructionSetupPage = () => {
 // ── Rate Approvals — Admin ────────────────────────────────────────────────────
 const ConstructionRateApprovalsPage = () => {
   const { user, addToast } = useApp();
-  const [proposals, setProposals] = useState([]);
-  const [catSups, setCatSups]     = useState([]);
+  const [rates, setRates]         = useState([]);
+  const [categories, setCategories] = useState([]);
   const [loading, setLoading]     = useState(true);
   const [processing, setProcessing] = useState(null);
   const [showPropose, setShowPropose] = useState(false);
-  const [proposal, setProposal]   = useState({ category_supervisor_id: '', proposed_rate: '' });
+  const [proposal, setProposal]   = useState({ category_id: '', worker_type: '', proposed_rate: '', notes: '' });
   const [saving, setSaving]       = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
-    try { setProposals(await constructionFetch('/rates/proposals')); } catch {}
+    try {
+      const [r, c] = await Promise.all([
+        constructionFetch('/worker-rates'),
+        constructionFetch('/categories'),
+      ]);
+      setRates(r); setCategories(c);
+    } catch {}
     setLoading(false);
   }, []);
   useEffect(() => { load(); }, [load]);
-  useEffect(() => { if (showPropose) constructionFetch('/category-supervisors').then(setCatSups).catch(() => {}); }, [showPropose]);
 
-  const decide = async (p, action) => {
-    setProcessing(p.id);
+  const decide = async (r, action) => {
+    setProcessing(r.id);
     try {
-      await constructionFetch(`/rates/${p.id}/decide`, { method: 'POST', body: JSON.stringify({ action, requestedBy: user.id }) });
-      addToast(action === 'approve' ? 'Rate approved.' : 'Rate rejected.'); load();
+      await constructionFetch(`/worker-rates/${r.id}/decide`, { method: 'POST', body: JSON.stringify({ action, requestedBy: user.id }) });
+      addToast(action === 'approve' ? `₹${r.proposed_rate}/day approved for ${r.worker_type}.` : 'Rate rejected.'); load();
     } catch (e) { addToast('Error: ' + e.message, 'error'); }
     setProcessing(null);
   };
 
   const submitProposal = async () => {
-    if (!proposal.category_supervisor_id || !proposal.proposed_rate) { addToast('Fill all fields', 'error'); return; }
+    if (!proposal.category_id || !proposal.worker_type || !proposal.proposed_rate) { addToast('Category, Worker Type and Rate are required', 'error'); return; }
     setSaving(true);
     try {
-      await constructionFetch('/rates/propose', { method: 'POST', body: JSON.stringify({ ...proposal, proposed_rate: parseFloat(proposal.proposed_rate), requestedBy: user.id }) });
-      addToast('Rate proposal submitted.'); setProposal({ category_supervisor_id: '', proposed_rate: '' }); setShowPropose(false); load();
+      await constructionFetch('/worker-rates/propose', { method: 'POST', body: JSON.stringify({ ...proposal, requestedBy: user.id }) });
+      addToast('Rate proposal submitted.'); setProposal({ category_id: '', worker_type: '', proposed_rate: '', notes: '' }); setShowPropose(false); load();
     } catch (e) { addToast('Error: ' + e.message, 'error'); }
     setSaving(false);
   };
 
-  const pending  = proposals.filter(p => p.status === 'pending');
-  const reviewed = proposals.filter(p => p.status !== 'pending');
+  const pending  = rates.filter(r => r.status === 'pending');
+  const approved = rates.filter(r => r.status === 'approved');
+  const rejected = rates.filter(r => r.status === 'rejected');
   const inputStyle = { width: '100%', padding: '8px 12px', border: '1px solid #e2e8f0', borderRadius: 8, fontSize: 14, boxSizing: 'border-box' };
+
+  const RateCard = ({ r, showActions }) => (
+    <div style={{ borderBottom: '1px solid #f1f5f9', padding: '12px 14px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+        <div>
+          <div style={{ fontWeight: 600, fontSize: 14 }}>{r.worker_type}</div>
+          <div style={{ fontSize: 12, color: '#7c3aed', marginTop: 1 }}>{r.construction_categories?.name}</div>
+          {r.notes && <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>{r.notes}</div>}
+        </div>
+        <div style={{ textAlign: 'right', flexShrink: 0 }}>
+          <div style={{ fontWeight: 700, fontSize: 16, color: '#0f172a' }}>₹{r.proposed_rate}<span style={{ fontSize: 11, fontWeight: 400, color: '#94a3b8' }}>/day</span></div>
+          {r.approved_rate && r.approved_rate !== r.proposed_rate && <div style={{ fontSize: 11, color: '#64748b' }}>approved: ₹{r.approved_rate}</div>}
+        </div>
+      </div>
+      {showActions && (
+        <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+          <button onClick={() => decide(r, 'approve')} disabled={processing === r.id} className="btn btn-primary" style={{ fontSize: 13 }}>{processing === r.id ? '…' : '✓ Approve'}</button>
+          <button onClick={() => decide(r, 'reject')} disabled={processing === r.id} style={{ padding: '6px 14px', borderRadius: 8, border: '1px solid #fecaca', background: '#fff5f5', color: '#dc2626', fontSize: 13, cursor: 'pointer', fontWeight: 600 }}>{processing === r.id ? '…' : 'Reject'}</button>
+        </div>
+      )}
+    </div>
+  );
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20, flexWrap: 'wrap', gap: 10 }}>
         <div>
-          <div style={{ fontWeight: 600, fontSize: 16, color: '#1e293b' }}>Rate Approvals</div>
-          {pending.length > 0 && <div style={{ fontSize: 12, color: '#d97706', marginTop: 2 }}>{pending.length} pending</div>}
+          <div style={{ fontWeight: 600, fontSize: 16, color: '#1e293b' }}>Worker Type Rates</div>
+          <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>Rates per skill type within each category</div>
+          {pending.length > 0 && <div style={{ fontSize: 12, color: '#d97706', marginTop: 2 }}>{pending.length} pending approval</div>}
         </div>
         <button onClick={() => setShowPropose(!showPropose)} className="btn btn-primary">+ Propose Rate</button>
       </div>
 
       {showPropose && (
         <div className="card" style={{ padding: '1.25rem', marginBottom: 16 }}>
-          <div style={{ fontWeight: 600, marginBottom: 12 }}>Propose Daily Rate</div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+          <div style={{ fontWeight: 600, marginBottom: 12 }}>Propose Worker Type Rate</div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10 }}>
             <div>
-              <label style={{ display: 'block', fontSize: 12, fontWeight: 500, color: '#64748b', marginBottom: 4 }}>Supervisor · Category *</label>
-              <select value={proposal.category_supervisor_id} onChange={e => setProposal(p => ({ ...p, category_supervisor_id: e.target.value }))} style={inputStyle}>
+              <label style={{ display: 'block', fontSize: 12, fontWeight: 500, color: '#64748b', marginBottom: 4 }}>Category *</label>
+              <select value={proposal.category_id} onChange={e => setProposal(p => ({ ...p, category_id: e.target.value }))} style={inputStyle}>
                 <option value="">— Select —</option>
-                {catSups.map(cs => (
-                  <option key={cs.id} value={cs.id}>{cs.construction_supervisors?.name} · {cs.construction_categories?.name}{cs.approved_rate ? ` (current: ₹${cs.approved_rate})` : ' (no rate)'}</option>
-                ))}
+                {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
             </div>
             <div>
-              <label style={{ display: 'block', fontSize: 12, fontWeight: 500, color: '#64748b', marginBottom: 4 }}>Daily Rate per Worker-Day (₹) *</label>
-              <input type="number" min="0" step="0.01" placeholder="e.g. 750" value={proposal.proposed_rate} onChange={e => setProposal(p => ({ ...p, proposed_rate: e.target.value }))} style={inputStyle} />
+              <label style={{ display: 'block', fontSize: 12, fontWeight: 500, color: '#64748b', marginBottom: 4 }}>Worker Type *</label>
+              <input type="text" list="worker-type-suggestions" placeholder="e.g. Mason, Helper, Lead" value={proposal.worker_type} onChange={e => setProposal(p => ({ ...p, worker_type: e.target.value }))} style={inputStyle} />
+            </div>
+            <div>
+              <label style={{ display: 'block', fontSize: 12, fontWeight: 500, color: '#64748b', marginBottom: 4 }}>Daily Rate (₹) *</label>
+              <input type="number" min="0" placeholder="e.g. 1200" value={proposal.proposed_rate} onChange={e => setProposal(p => ({ ...p, proposed_rate: e.target.value }))} style={inputStyle} />
+            </div>
+            <div>
+              <label style={{ display: 'block', fontSize: 12, fontWeight: 500, color: '#64748b', marginBottom: 4 }}>Notes (optional)</label>
+              <input type="text" placeholder="e.g. Revised Aug 2026" value={proposal.notes} onChange={e => setProposal(p => ({ ...p, notes: e.target.value }))} style={inputStyle} />
             </div>
           </div>
           <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
@@ -12273,46 +12311,28 @@ const ConstructionRateApprovalsPage = () => {
           {pending.length > 0 && (
             <div style={{ marginBottom: 20 }}>
               <div style={{ fontSize: 11, fontWeight: 700, color: '#d97706', textTransform: 'uppercase', marginBottom: 8 }}>Pending Approval</div>
-              {pending.map(p => (
-                <div key={p.id} style={{ background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 12, padding: '1rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-                  <div>
-                    <div style={{ fontWeight: 600 }}>{p.category_supervisor?.construction_supervisors?.name} · {p.category_supervisor?.construction_categories?.name}</div>
-                    <div style={{ fontSize: 13, marginTop: 2 }}>Proposed: <strong>₹{p.proposed_rate}/worker-day</strong>{p.category_supervisor?.approved_rate && <span style={{ color: '#94a3b8' }}> (current: ₹{p.category_supervisor.approved_rate})</span>}</div>
-                  </div>
-                  <div style={{ display: 'flex', gap: 8 }}>
-                    <button onClick={() => decide(p, 'approve')} disabled={processing === p.id} className="btn btn-primary" style={{ fontSize: 13 }}>{processing === p.id ? '…' : 'Approve'}</button>
-                    <button onClick={() => decide(p, 'reject')} disabled={processing === p.id} className="btn btn-secondary" style={{ fontSize: 13, color: '#dc2626' }}>{processing === p.id ? '…' : 'Reject'}</button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-          {reviewed.length > 0 && (
-            <div>
-              <div style={{ fontSize: 11, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', marginBottom: 8 }}>History</div>
               <div className="card" style={{ overflow: 'hidden' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
-                  <thead><tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
-                    {['Supervisor · Category','Rate','Status','Date'].map(h => <th key={h} style={{ textAlign: 'left', padding: '9px 14px', fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>{h}</th>)}
-                  </tr></thead>
-                  <tbody>
-                    {reviewed.map(p => (
-                      <tr key={p.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                        <td style={{ padding: '10px 14px' }}>
-                          <div style={{ fontWeight: 500 }}>{p.category_supervisor?.construction_supervisors?.name}</div>
-                          <div style={{ fontSize: 11, color: '#94a3b8' }}>{p.category_supervisor?.construction_categories?.name}</div>
-                        </td>
-                        <td style={{ padding: '10px 14px', fontWeight: 600 }}>₹{p.proposed_rate}/day</td>
-                        <td style={{ padding: '10px 14px' }}><span style={{ background: p.status === 'approved' ? '#d1fae5' : '#fee2e2', color: p.status === 'approved' ? '#065f46' : '#991b1b', padding: '2px 8px', borderRadius: 20, fontSize: 11, fontWeight: 700 }}>{(p.status||'').toUpperCase()}</span></td>
-                        <td style={{ padding: '10px 14px', fontSize: 12, color: '#94a3b8' }}>{p.reviewed_at ? new Date(p.reviewed_at).toLocaleDateString('en-IN') : '—'}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                {pending.map(r => <RateCard key={r.id} r={r} showActions={true} />)}
               </div>
             </div>
           )}
-          {proposals.length === 0 && <div style={{ textAlign: 'center', padding: '3rem', color: '#94a3b8', fontSize: 14 }}>No rate proposals yet.</div>}
+          {approved.length > 0 && (
+            <div style={{ marginBottom: 20 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', marginBottom: 8 }}>Active Rates</div>
+              <div className="card" style={{ overflow: 'hidden' }}>
+                {approved.map(r => <RateCard key={r.id} r={r} showActions={false} />)}
+              </div>
+            </div>
+          )}
+          {rejected.length > 0 && (
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', marginBottom: 8 }}>Rejected</div>
+              <div className="card" style={{ overflow: 'hidden', opacity: 0.6 }}>
+                {rejected.map(r => <RateCard key={r.id} r={r} showActions={false} />)}
+              </div>
+            </div>
+          )}
+          {rates.length === 0 && <div style={{ textAlign: 'center', padding: '3rem', color: '#94a3b8', fontSize: 14 }}>No rates proposed yet. Use + Propose Rate to set rates per worker type.</div>}
         </>
       )}
     </div>
