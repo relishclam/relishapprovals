@@ -7408,19 +7408,73 @@ app.get('/api/construction/supervisors', async (req, res) => {
   res.json(data);
 });
 
-// Add a supervisor
+// Check if a supervisor's details match any existing payee — returns ranked matches
+app.get('/api/construction/supervisors/check-payee', async (req, res) => {
+  const { mobile, upi_id, name } = req.query;
+  if (!mobile && !upi_id && !name) return res.json({ matches: [] });
+
+  // Fetch candidates by mobile OR upi_id (exact), then name (case-insensitive)
+  const queries = [];
+  if (mobile) queries.push(supabase.from('payees').select('id,name,alias,mobile,upi_id,bank_account,ifsc,company_id').eq('mobile', mobile));
+  if (upi_id) queries.push(supabase.from('payees').select('id,name,alias,mobile,upi_id,bank_account,ifsc,company_id').eq('upi_id', upi_id));
+  if (name)   queries.push(supabase.from('payees').select('id,name,alias,mobile,upi_id,bank_account,ifsc,company_id').ilike('name', `%${name.trim()}%`));
+
+  const results = await Promise.all(queries);
+  // Deduplicate by payee id, accumulate which fields matched
+  const seen = new Map();
+  const fieldLabels = ['mobile', 'upi_id', 'name'];
+  results.forEach((r, i) => {
+    if (r.error || !r.data) return;
+    r.data.forEach(p => {
+      if (!seen.has(p.id)) seen.set(p.id, { payee: p, matchedFields: [] });
+      seen.get(p.id).matchedFields.push(fieldLabels[i]);
+    });
+  });
+
+  const matches = Array.from(seen.values()).map(({ payee, matchedFields }) => ({
+    payee,
+    matchedFields,
+    // strong = mobile or UPI matched; partial = name only
+    strength: matchedFields.some(f => f === 'mobile' || f === 'upi_id') ? 'strong' : 'partial',
+  })).sort((a, b) => (b.strength === 'strong' ? 1 : 0) - (a.strength === 'strong' ? 1 : 0));
+
+  res.json({ matches });
+});
+
+// Add a supervisor — links to an existing payee or auto-creates one
 app.post('/api/construction/supervisors', async (req, res) => {
-  const { name, mobile, upi_id, notes, requestedBy } = req.body;
+  const { name, mobile, upi_id, notes, requestedBy, payee_id: explicitPayeeId } = req.body;
   const actor = await getActorRole(requestedBy);
   if (!['accounts','admin','super_admin'].includes(actor.role) && !actor.is_super_admin) {
     return res.status(403).json({ error: 'Not authorised' });
   }
   if (!name || !mobile || !upi_id) return res.status(400).json({ error: 'name, mobile, upi_id required' });
+
+  // Resolve which payee_id to link
+  let payeeId = explicitPayeeId || null;
+  if (!payeeId) {
+    // Auto-create a payee record in the creator's primary company
+    const { data: creator } = await supabase.from('users').select('company_id').eq('id', requestedBy).single();
+    const companyId = creator?.company_id;
+    if (companyId) {
+      const { data: newPayee, error: pErr } = await supabase.from('payees').insert({
+        company_id: companyId,
+        name,
+        mobile,
+        upi_id,
+        payee_type: 'registered',
+        requires_otp: true,
+        is_global: false,
+      }).select('id').single();
+      if (!pErr) payeeId = newPayee.id;
+    }
+  }
+
   const { data, error } = await supabase.from('construction_supervisors')
-    .insert({ name, mobile, upi_id, notes: notes || null, created_by: requestedBy })
+    .insert({ name, mobile, upi_id, notes: notes || null, created_by: requestedBy, payee_id: payeeId })
     .select().single();
   if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
+  res.json({ ...data, payee_id: payeeId });
 });
 
 // Assign supervisor to category

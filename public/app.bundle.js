@@ -6,7 +6,7 @@ if ('registerProtocolHandler' in navigator) {
 }
 
 const API_BASE = '/api';
-const APP_VERSION = 'v13'; // Version marker for cache debugging
+const APP_VERSION = 'v14'; // Version marker for cache debugging
 console.log('[Relish App] Version:', APP_VERSION);
 
 // ── ClamFlow Wave Loader ─────────────────────────────────────────────────────
@@ -11718,6 +11718,31 @@ const ConstructionSetupPage = () => {
   const [newSup, setNewSup]     = useState({ name: '', mobile: '', upi_id: '', notes: '' });
   const [assignment, setAssignment] = useState({ supervisor_id: '', category_id: '' });
   const [newWorker, setNewWorker]   = useState({ name: '', mobile: '', notes: '' });
+  const [payeeMatches, setPayeeMatches] = useState([]);   // results from check-payee
+  const [payeeChecking, setPayeeChecking] = useState(false);
+  const [chosenPayeeId, setChosenPayeeId] = useState(null); // null = create new; string = link existing
+
+  // Live payee duplicate check — fires when any of the three key fields are filled
+  useEffect(() => {
+    const { name, mobile, upi_id } = newSup;
+    const mobileOk = /^[6-9][0-9]{9}$/.test(mobile);
+    if (!mobileOk && !upi_id && !name) { setPayeeMatches([]); return; }
+    const timer = setTimeout(async () => {
+      setPayeeChecking(true);
+      try {
+        const params = new URLSearchParams();
+        if (mobileOk) params.set('mobile', mobile);
+        if (upi_id)   params.set('upi_id', upi_id);
+        if (name)     params.set('name', name);
+        const res = await constructionFetch(`/supervisors/check-payee?${params}`);
+        setPayeeMatches(res.matches || []);
+        // Reset choice whenever results change
+        setChosenPayeeId(undefined); // undefined = not yet decided
+      } catch { setPayeeMatches([]); }
+      setPayeeChecking(false);
+    }, 600);
+    return () => clearTimeout(timer);
+  }, [newSup.name, newSup.mobile, newSup.upi_id]);
 
   const load = useCallback(async () => {
     try {
@@ -11740,11 +11765,17 @@ const ConstructionSetupPage = () => {
   const addSupervisor = async () => {
     if (!newSup.name || !newSup.mobile || !newSup.upi_id) { addToast('Name, Mobile and UPI ID are required', 'error'); return; }
     if (!/^[6-9][0-9]{9}$/.test(newSup.mobile)) { addToast('Enter a valid 10-digit Indian mobile number', 'error'); return; }
+    // If strong matches exist and user hasn't decided yet, block save
+    const hasStrong = payeeMatches.some(m => m.strength === 'strong');
+    if (hasStrong && chosenPayeeId === undefined) { addToast('Please review the existing payee match below before saving.', 'error'); return; }
     setSaving(true);
     try {
-      await constructionFetch('/supervisors', { method: 'POST', body: JSON.stringify({ ...newSup, requestedBy: user.id }) });
-      addToast('Supervisor added.');
-      setNewSup({ name: '', mobile: '', upi_id: '', notes: '' }); setShowAddSup(false); load();
+      const body = { ...newSup, requestedBy: user.id };
+      if (chosenPayeeId) body.payee_id = chosenPayeeId; // link existing; omit = auto-create
+      await constructionFetch('/supervisors', { method: 'POST', body: JSON.stringify(body) });
+      addToast(chosenPayeeId ? 'Supervisor added and linked to existing payee.' : 'Supervisor added and registered as new payee.');
+      setNewSup({ name: '', mobile: '', upi_id: '', notes: '' }); setShowAddSup(false);
+      setPayeeMatches([]); setChosenPayeeId(null); load();
     } catch (e) { addToast('Error: ' + e.message, 'error'); }
     setSaving(false);
   };
@@ -11806,9 +11837,45 @@ const ConstructionSetupPage = () => {
                   </div>
                 ))}
               </div>
+
+              {/* Payee duplicate check panel */}
+              {payeeChecking && (
+                <div style={{ marginTop: 12, fontSize: 13, color: '#64748b' }}>🔍 Checking existing payees…</div>
+              )}
+              {!payeeChecking && payeeMatches.length > 0 && (
+                <div style={{ marginTop: 14, border: `1.5px solid ${payeeMatches.some(m=>m.strength==='strong') ? '#f59e0b' : '#94a3b8'}`, borderRadius: 10, overflow: 'hidden' }}>
+                  <div style={{ background: payeeMatches.some(m=>m.strength==='strong') ? '#fffbeb' : '#f8fafc', padding: '10px 14px', fontWeight: 700, fontSize: 13, color: payeeMatches.some(m=>m.strength==='strong') ? '#b45309' : '#475569', display: 'flex', alignItems: 'center', gap: 8 }}>
+                    {payeeMatches.some(m=>m.strength==='strong') ? '⚠️ Existing Payee Match Found' : 'ℹ️ Possible Name Match'}
+                    <span style={{ fontWeight: 400, fontSize: 12 }}>— Review before saving</span>
+                  </div>
+                  {payeeMatches.map(m => (
+                    <div key={m.payee.id} style={{ padding: '10px 14px', borderTop: '1px solid #e2e8f0', background: chosenPayeeId === m.payee.id ? '#eff6ff' : '#fff' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '4px 16px', fontSize: 13, marginBottom: 8 }}>
+                        <div><span style={{ color: '#94a3b8', fontSize: 11 }}>NAME</span><br /><b>{m.payee.name}</b>{m.payee.alias ? <span style={{ color:'#64748b' }}> ({m.payee.alias})</span> : ''}</div>
+                        <div><span style={{ color: '#94a3b8', fontSize: 11 }}>MOBILE</span><br /><span style={{ color: m.matchedFields.includes('mobile') ? '#dc2626' : '#1e293b', fontWeight: m.matchedFields.includes('mobile') ? 700 : 400 }}>{m.payee.mobile}{m.matchedFields.includes('mobile') ? ' ✓' : ''}</span></div>
+                        <div><span style={{ color: '#94a3b8', fontSize: 11 }}>UPI ID</span><br /><span style={{ color: m.matchedFields.includes('upi_id') ? '#dc2626' : '#1e293b', fontWeight: m.matchedFields.includes('upi_id') ? 700 : 400 }}>{m.payee.upi_id || '—'}{m.matchedFields.includes('upi_id') ? ' ✓' : ''}</span></div>
+                        {m.payee.bank_account && <div><span style={{ color: '#94a3b8', fontSize: 11 }}>BANK A/C</span><br />{m.payee.bank_account}</div>}
+                        {m.payee.ifsc && <div><span style={{ color: '#94a3b8', fontSize: 11 }}>IFSC</span><br />{m.payee.ifsc}</div>}
+                        <div><span style={{ color: '#94a3b8', fontSize: 11 }}>MATCHED ON</span><br /><span style={{ color: '#7c3aed', fontWeight: 600 }}>{m.matchedFields.join(', ')}</span></div>
+                      </div>
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <button onClick={() => setChosenPayeeId(m.payee.id)} style={{ padding: '5px 14px', borderRadius: 7, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 600, background: chosenPayeeId === m.payee.id ? '#4f46e5' : '#e0e7ff', color: chosenPayeeId === m.payee.id ? '#fff' : '#3730a3' }}>
+                          {chosenPayeeId === m.payee.id ? '✓ Linking to this payee' : 'Link to this existing payee'}
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                  <div style={{ padding: '10px 14px', borderTop: '1px solid #e2e8f0', background: chosenPayeeId === null ? '#f0fdf4' : '#fafafa', display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <button onClick={() => setChosenPayeeId(null)} style={{ padding: '5px 14px', borderRadius: 7, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 600, background: chosenPayeeId === null ? '#16a34a' : '#dcfce7', color: chosenPayeeId === null ? '#fff' : '#15803d' }}>
+                      {chosenPayeeId === null ? '✓ Will create as new payee' : 'No — this is a different person (create new payee)'}
+                    </button>
+                  </div>
+                </div>
+              )}
+
               <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
                 <button onClick={addSupervisor} disabled={saving} className="btn btn-primary">{saving ? 'Saving…' : 'Save'}</button>
-                <button onClick={() => setShowAddSup(false)} className="btn btn-secondary">Cancel</button>
+                <button onClick={() => { setShowAddSup(false); setPayeeMatches([]); setChosenPayeeId(null); }} className="btn btn-secondary">Cancel</button>
               </div>
             </div>
           )}
@@ -12941,6 +13008,10 @@ const App = () => {
                   <div className="nav-section"><div className="nav-section-title">Audit View</div>
                     <div className={`nav-item ${currentPage === 'completed' ? 'active' : ''}`} onClick={() => handleNavClick('completed')}>{Icons.checkCircle} Completed Vouchers</div>
                   </div>
+                ) : user.role === 'staff_lead' ? (
+                  <div className="nav-section"><div className="nav-section-title">Construction</div>
+                    <div className={`nav-item ${currentPage === 'construction-attendance' ? 'active' : ''}`} onClick={() => handleNavClick('construction-attendance')}>✅ Mark Attendance</div>
+                  </div>
                 ) : (<>
                 <div className="nav-section"><div className="nav-section-title">Main</div><div className={`nav-item ${currentPage === 'dashboard' ? 'active' : ''}`} onClick={() => handleNavClick('dashboard')}>{Icons.home} Dashboard</div></div>
                 <div className="nav-section"><div className="nav-section-title">Vouchers</div>
@@ -12969,6 +13040,12 @@ const App = () => {
                   <div className={`nav-item ${currentPage === 'unassigned-receipts' ? 'active' : ''}`} onClick={() => handleNavClick('unassigned-receipts')}>📬 Receipt Review Queue</div>
                 </div>}
                 {user.isSuperAdmin && <div className="nav-section"><div className="nav-section-title">Admin Dashboard</div><div className={`nav-item ${currentPage === 'users' ? 'active' : ''}`} onClick={() => handleNavClick('users')}>{Icons.users} User Management</div></div>}
+                {(user.role === 'accounts' || user.role === 'admin' || user.isSuperAdmin) && <div className="nav-section"><div className="nav-section-title">Construction</div>
+                  <div className={`nav-item ${currentPage === 'construction-log' ? 'active' : ''}`} onClick={() => handleNavClick('construction-log')}>📋 Labour Log</div>
+                  {(user.role === 'accounts' || user.isSuperAdmin) && <div className={`nav-item ${currentPage === 'construction-dues' ? 'active' : ''}`} onClick={() => handleNavClick('construction-dues')}>💰 Labour Dues</div>}
+                  {(user.role === 'accounts' || user.isSuperAdmin) && <div className={`nav-item ${currentPage === 'construction-setup' ? 'active' : ''}`} onClick={() => handleNavClick('construction-setup')}>⚙️ Labour Setup</div>}
+                  {(user.role === 'admin' || user.isSuperAdmin) && <div className={`nav-item ${currentPage === 'construction-rates' ? 'active' : ''}`} onClick={() => handleNavClick('construction-rates')}>📊 Rate Approvals</div>}
+                </div>}
                 </>)}
                 <div className="nav-section">
                   <div className="nav-item" onClick={() => { setShowSecurityModal(true); setShowMobileMenu(false); }}>🔒 Security Settings</div>
