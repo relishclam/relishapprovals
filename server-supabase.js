@@ -7570,7 +7570,7 @@ app.get('/api/construction/workers', async (req, res) => {
   if (!category_supervisor_id) return res.status(400).json({ error: 'category_supervisor_id required' });
   const { data, error } = await supabase
     .from('construction_workers')
-    .select('id, name, mobile, is_active, notes')
+    .select('id, name, mobile, is_active, notes, worker_type')
     .eq('category_supervisor_id', category_supervisor_id)
     .order('name');
   if (error) return res.status(500).json({ error: error.message });
@@ -7579,14 +7579,14 @@ app.get('/api/construction/workers', async (req, res) => {
 
 // Add a worker
 app.post('/api/construction/workers', async (req, res) => {
-  const { category_supervisor_id, name, mobile, notes, requestedBy } = req.body;
+  const { category_supervisor_id, name, mobile, notes, worker_type, requestedBy } = req.body;
   const actor = await getActorRole(requestedBy);
   if (!['accounts','admin','super_admin'].includes(actor.role) && !actor.is_super_admin) {
     return res.status(403).json({ error: 'Not authorised' });
   }
   if (!category_supervisor_id || !name) return res.status(400).json({ error: 'category_supervisor_id and name required' });
   const { data, error } = await supabase.from('construction_workers')
-    .insert({ category_supervisor_id, name, mobile: mobile || null, notes: notes || null, created_by: requestedBy })
+    .insert({ category_supervisor_id, name, mobile: mobile || null, notes: notes || null, worker_type: worker_type || 'Helper', created_by: requestedBy })
     .select().single();
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
@@ -7628,16 +7628,17 @@ app.delete('/api/construction/supervisors/:id', async (req, res) => {
 
 // Edit or toggle a worker
 app.put('/api/construction/workers/:id', async (req, res) => {
-  const { name, mobile, notes, is_active, requestedBy } = req.body;
+  const { name, mobile, notes, worker_type, is_active, requestedBy } = req.body;
   const actor = await getActorRole(requestedBy);
   if (!['accounts','admin','super_admin'].includes(actor.role) && !actor.is_super_admin) {
     return res.status(403).json({ error: 'Not authorised' });
   }
   const updates = {};
-  if (name      !== undefined) updates.name      = name;
-  if (mobile    !== undefined) updates.mobile    = mobile || null;
-  if (notes     !== undefined) updates.notes     = notes || null;
-  if (is_active !== undefined) updates.is_active = is_active;
+  if (name        !== undefined) updates.name        = name;
+  if (mobile      !== undefined) updates.mobile      = mobile || null;
+  if (notes       !== undefined) updates.notes       = notes || null;
+  if (worker_type !== undefined) updates.worker_type = worker_type || 'Helper';
+  if (is_active   !== undefined) updates.is_active   = is_active;
   const { data, error } = await supabase.from('construction_workers')
     .update(updates).eq('id', req.params.id).select().single();
   if (error) return res.status(500).json({ error: error.message });
@@ -7713,7 +7714,56 @@ app.post('/api/construction/rates/:id/decide', async (req, res) => {
   res.json({ status: isApprove ? 'approved' : 'rejected' });
 });
 
-// ─── End Construction Labour Attendance ──────────────────────────────────────
+// Worker-type differential rates — propose/list/decide (category × worker_type → rate)
+app.get('/api/construction/worker-rates', async (req, res) => {
+  const { category_id } = req.query;
+  let q = supabase.from('construction_worker_rates')
+    .select('*, construction_categories(name)').order('worker_type');
+  if (category_id) q = q.eq('category_id', category_id);
+  const { data, error } = await q;
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+app.post('/api/construction/worker-rates/propose', async (req, res) => {
+  const { category_id, worker_type, proposed_rate, notes, requestedBy } = req.body;
+  const actor = await getActorRole(requestedBy);
+  if (!['accounts','admin','super_admin'].includes(actor.role) && !actor.is_super_admin) {
+    return res.status(403).json({ error: 'Not authorised' });
+  }
+  if (!category_id || !worker_type || !proposed_rate) {
+    return res.status(400).json({ error: 'category_id, worker_type, proposed_rate required' });
+  }
+  // Upsert so re-proposing an existing type resets to pending
+  const { data, error } = await supabase.from('construction_worker_rates')
+    .upsert({
+      category_id, worker_type: worker_type.trim(), proposed_rate: parseFloat(proposed_rate),
+      notes: notes || null, proposed_by: requestedBy, status: 'pending',
+      proposed_at: new Date().toISOString(), approved_rate: null, approved_by: null, approved_at: null,
+    }, { onConflict: 'category_id,worker_type' })
+    .select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+app.post('/api/construction/worker-rates/:id/decide', async (req, res) => {
+  const { action, requestedBy } = req.body;
+  const actor = await getActorRole(requestedBy);
+  if (!['admin','super_admin'].includes(actor.role) && !actor.is_super_admin) {
+    return res.status(403).json({ error: 'Admin only' });
+  }
+  const isApprove = action === 'approve';
+  const { data: rate } = await supabase.from('construction_worker_rates')
+    .select('proposed_rate').eq('id', req.params.id).single();
+  const { error } = await supabase.from('construction_worker_rates').update({
+    status: isApprove ? 'approved' : 'rejected',
+    approved_rate: isApprove ? rate?.proposed_rate : null,
+    approved_by: requestedBy,
+    approved_at: new Date().toISOString(),
+  }).eq('id', req.params.id);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ status: isApprove ? 'approved' : 'rejected' });
+});
 
 // Export the Express app for Vercel serverless deployment
 module.exports = app;

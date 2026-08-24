@@ -12197,6 +12197,7 @@ const ConstructionSetupPage = () => {
 // ── Rate Approvals — Admin ────────────────────────────────────────────────────
 const ConstructionRateApprovalsPage = () => {
   const { user, addToast } = useApp();
+  const isAdmin = user.role === 'admin' || user.isSuperAdmin;
   const [rates, setRates]         = useState([]);
   const [categories, setCategories] = useState([]);
   const [loading, setLoading]     = useState(true);
@@ -12255,7 +12256,7 @@ const ConstructionRateApprovalsPage = () => {
           {r.approved_rate && r.approved_rate !== r.proposed_rate && <div style={{ fontSize: 11, color: '#64748b' }}>approved: ₹{r.approved_rate}</div>}
         </div>
       </div>
-      {showActions && (
+      {showActions && isAdmin && (
         <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
           <button onClick={() => decide(r, 'approve')} disabled={processing === r.id} className="btn btn-primary" style={{ fontSize: 13 }}>{processing === r.id ? '…' : '✓ Approve'}</button>
           <button onClick={() => decide(r, 'reject')} disabled={processing === r.id} style={{ padding: '6px 14px', borderRadius: 8, border: '1px solid #fecaca', background: '#fff5f5', color: '#dc2626', fontSize: 13, cursor: 'pointer', fontWeight: 600 }}>{processing === r.id ? '…' : 'Reject'}</button>
@@ -12310,7 +12311,9 @@ const ConstructionRateApprovalsPage = () => {
         <>
           {pending.length > 0 && (
             <div style={{ marginBottom: 20 }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: '#d97706', textTransform: 'uppercase', marginBottom: 8 }}>Pending Approval</div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: '#d97706', textTransform: 'uppercase', marginBottom: 8 }}>
+                Pending Approval{!isAdmin && <span style={{ fontWeight: 400, textTransform: 'none', marginLeft: 8, color: '#92400e' }}>— Admin will approve these</span>}
+              </div>
               <div className="card" style={{ overflow: 'hidden' }}>
                 {pending.map(r => <RateCard key={r.id} r={r} showActions={true} />)}
               </div>
@@ -13016,7 +13019,7 @@ const App = () => {
   const renderPage = () => {
     if (user.role === 'auditor') return <VoucherList filter="completed" />;
     if (user.role === 'staff_lead') return <ConstructionAttendanceSiteLeadPage />;
-    switch(currentPage) { case 'dashboard': return <Dashboard />; case 'create': return (user.role === 'accounts' || user.isSuperAdmin) ? <CreateVoucher /> : <Dashboard />; case 'drafts': return (user.role === 'accounts' || user.isSuperAdmin) ? <VoucherList filter="draft" /> : <Dashboard />; case 'pending': return <VoucherList filter="pending" />; case 'approved': return <VoucherList filter="approved" />; case 'completed': return <VoucherList filter="completed" />; case 'awaiting_payment': return <VoucherList filter="awaiting_payment" />; case 'paid': return <VoucherList filter="paid" />; case 'all': return <VoucherList filter="all" />; case 'users': return user.isSuperAdmin ? <UsersManagement /> : <Dashboard />; case 'payees': return (user.role === 'accounts' || user.isSuperAdmin) ? <PayeesManagement /> : <Dashboard />; case 'accounts': return (user.role === 'accounts' || user.isSuperAdmin) ? <AccountsManagement /> : <Dashboard />; case 'pay-from-accounts': return (user.role === 'accounts' || user.isSuperAdmin) ? <PaymentAccountsManagement /> : <Dashboard />; case 'suspense': return <SuspenseVoucherList onViewDetail={(id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); }} />; case 'create-suspense': return (user.role === 'accounts' || user.isSuperAdmin) ? <SuspenseVoucherForm onCreated={() => { setCurrentPage('suspense'); }} onViewDetail={(id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); }} /> : <Dashboard />; case 'suspense-detail': return suspenseDetailId ? <SuspenseVoucherDetail suspenseId={suspenseDetailId} onBack={() => setCurrentPage('suspense')} /> : <SuspenseVoucherList onViewDetail={(id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); }} />; case 'reconcile': return (user.role === 'accounts' || user.isSuperAdmin) ? <ReconcileReceipts /> : <Dashboard />; case 'unassigned-receipts': return (user.role === 'accounts' || user.isSuperAdmin) ? <UnassignedReceiptsPage /> : <Dashboard />; case 'construction-attendance': return <ConstructionAttendanceSiteLeadPage />; case 'construction-log': return (user.role === 'accounts' || user.role === 'admin' || user.isSuperAdmin) ? <ConstructionAttendanceLogPage /> : <Dashboard />; case 'construction-dues': return (user.role === 'accounts' || user.isSuperAdmin) ? <ConstructionDuesPage /> : <Dashboard />; case 'construction-setup': return (user.role === 'accounts' || user.role === 'admin' || user.isSuperAdmin) ? <ConstructionSetupPage /> : <Dashboard />; case 'construction-rates': return (user.role === 'admin' || user.isSuperAdmin) ? <ConstructionRateApprovalsPage /> : <Dashboard />; default: return <Dashboard />; } };
+    switch(currentPage) { case 'dashboard': return <Dashboard />; case 'create': return (user.role === 'accounts' || user.isSuperAdmin) ? <CreateVoucher /> : <Dashboard />; case 'drafts': return (user.role === 'accounts' || user.isSuperAdmin) ? <VoucherList filter="draft" /> : <Dashboard />; case 'pending': return <VoucherList filter="pending" />; case 'approved': return <VoucherList filter="approved" />; case 'completed': return <VoucherList filter="completed" />; case 'awaiting_payment': return <VoucherList filter="awaiting_payment" />; case 'paid': return <VoucherList filter="paid" />; case 'all': return <VoucherList filter="all" />; case 'users': return user.isSuperAdmin ? <UsersManagement /> : <Dashboard />; case 'payees': return (user.role === 'accounts' || user.isSuperAdmin) ? <PayeesManagement /> : <Dashboard />; case 'accounts': return (user.role === 'accounts' || user.isSuperAdmin) ? <AccountsManagement /> : <Dashboard />; case 'pay-from-accounts': return (user.role === 'accounts' || user.isSuperAdmin) ? <PaymentAccountsManagement /> : <Dashboard />; case 'suspense': return <SuspenseVoucherList onViewDetail={(id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); }} />; case 'create-suspense': return (user.role === 'accounts' || user.isSuperAdmin) ? <SuspenseVoucherForm onCreated={() => { setCurrentPage('suspense'); }} onViewDetail={(id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); }} /> : <Dashboard />; case 'suspense-detail': return suspenseDetailId ? <SuspenseVoucherDetail suspenseId={suspenseDetailId} onBack={() => setCurrentPage('suspense')} /> : <SuspenseVoucherList onViewDetail={(id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); }} />; case 'reconcile': return (user.role === 'accounts' || user.isSuperAdmin) ? <ReconcileReceipts /> : <Dashboard />; case 'unassigned-receipts': return (user.role === 'accounts' || user.isSuperAdmin) ? <UnassignedReceiptsPage /> : <Dashboard />; case 'construction-attendance': return <ConstructionAttendanceSiteLeadPage />; case 'construction-log': return (user.role === 'accounts' || user.role === 'admin' || user.isSuperAdmin) ? <ConstructionAttendanceLogPage /> : <Dashboard />; case 'construction-dues': return (user.role === 'accounts' || user.isSuperAdmin) ? <ConstructionDuesPage /> : <Dashboard />; case 'construction-setup': return (user.role === 'accounts' || user.role === 'admin' || user.isSuperAdmin) ? <ConstructionSetupPage /> : <Dashboard />; case 'construction-rates': return (user.role === 'accounts' || user.role === 'admin' || user.isSuperAdmin) ? <ConstructionRateApprovalsPage /> : <Dashboard />; default: return <Dashboard />; } };
 
   React.useEffect(() => {
     // After React renders the new page, scroll main-content to top.
@@ -13244,7 +13247,7 @@ const App = () => {
                   <div className={`nav-item ${currentPage === 'construction-log' ? 'active' : ''}`} onClick={() => handleNavClick('construction-log')}>📋 Labour Log</div>
                   {(user.role === 'accounts' || user.isSuperAdmin) && <div className={`nav-item ${currentPage === 'construction-dues' ? 'active' : ''}`} onClick={() => handleNavClick('construction-dues')}>💰 Labour Dues</div>}
                   {(user.role === 'accounts' || user.isSuperAdmin) && <div className={`nav-item ${currentPage === 'construction-setup' ? 'active' : ''}`} onClick={() => handleNavClick('construction-setup')}>⚙️ Labour Setup</div>}
-                  {(user.role === 'admin' || user.isSuperAdmin) && <div className={`nav-item ${currentPage === 'construction-rates' ? 'active' : ''}`} onClick={() => handleNavClick('construction-rates')}>📊 Rate Approvals</div>}
+                  {(user.role === 'accounts' || user.role === 'admin' || user.isSuperAdmin) && <div className={`nav-item ${currentPage === 'construction-rates' ? 'active' : ''}`} onClick={() => handleNavClick('construction-rates')}>📊 Rate Approvals</div>}
                 </div>}
                 </>)}
                 <div className="nav-section">
