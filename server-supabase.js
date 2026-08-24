@@ -348,8 +348,8 @@ const callMsg91OtpSend = async (mobile, description, { name = '', amount = '', f
       body: JSON.stringify({
         flow_id: flowId,
         sender: MSG91_SENDER_ID,
-        // otp/VAR1 = {{otp}}/{{VAR1}} templates; number = ##number## DLT template (Relish_OTP)
-        recipients: [{ mobiles: mobile, otp, VAR1: otp, number: otp, ...(name ? { name } : {}), ...(amount ? { amount } : {}) }],
+        // 'number' key only for Relish_OTP (##number##); Pramaana-Payment-OTP uses ##otp## and treats 'number' as routing override
+        recipients: [{ mobiles: mobile, otp, VAR1: otp, ...(flowId === MSG91_ATTENDANCE_FLOW_ID ? { number: otp } : {}), ...(name ? { name } : {}), ...(amount ? { amount } : {}) }],
       }),
     });
     const data = await response.json();
