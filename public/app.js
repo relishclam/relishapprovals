@@ -11721,6 +11721,10 @@ const ConstructionSetupPage = () => {
   const [payeeMatches, setPayeeMatches] = useState([]);   // results from check-payee
   const [payeeChecking, setPayeeChecking] = useState(false);
   const [chosenPayeeId, setChosenPayeeId] = useState(null); // null = create new; string = link existing
+  const [editSupId, setEditSupId]     = useState(null);
+  const [editSupData, setEditSupData] = useState({});
+  const [editWorkerId, setEditWorkerId]     = useState(null);
+  const [editWorkerData, setEditWorkerData] = useState({});
 
   // Live payee duplicate check — fires when any of the three key fields are filled
   useEffect(() => {
@@ -11806,6 +11810,50 @@ const ConstructionSetupPage = () => {
       await constructionFetch(`/workers/${w.id}`, { method: 'PUT', body: JSON.stringify({ is_active: !w.is_active, requestedBy: user.id }) });
       loadWorkers();
     } catch (e) { addToast('Error: ' + e.message, 'error'); }
+  };
+
+  const updateSupervisor = async () => {
+    if (!editSupData.name || !editSupData.mobile || !editSupData.upi_id) { addToast('Name, Mobile and UPI ID are required', 'error'); return; }
+    if (!/^[6-9][0-9]{9}$/.test(editSupData.mobile)) { addToast('Enter a valid 10-digit mobile number', 'error'); return; }
+    setSaving(true);
+    try {
+      await constructionFetch(`/supervisors/${editSupId}`, { method: 'PUT', body: JSON.stringify({ ...editSupData, requestedBy: user.id }) });
+      addToast('Supervisor updated.'); setEditSupId(null); load();
+    } catch (e) { addToast('Error: ' + e.message, 'error'); }
+    setSaving(false);
+  };
+
+  const deleteSupervisor = async (s) => {
+    if (!window.confirm(`Delete supervisor "${s.name}"? This cannot be undone.`)) return;
+    try {
+      await constructionFetch(`/supervisors/${s.id}`, { method: 'DELETE', body: JSON.stringify({ requestedBy: user.id }) });
+      addToast('Supervisor deleted.'); load();
+    } catch (e) { addToast(e.message, 'error'); }
+  };
+
+  const toggleSupervisor = async (s) => {
+    try {
+      await constructionFetch(`/supervisors/${s.id}`, { method: 'PUT', body: JSON.stringify({ is_active: !s.is_active, requestedBy: user.id }) });
+      load();
+    } catch (e) { addToast('Error: ' + e.message, 'error'); }
+  };
+
+  const updateWorker = async () => {
+    if (!editWorkerData.name) { addToast('Worker name is required', 'error'); return; }
+    setSaving(true);
+    try {
+      await constructionFetch(`/workers/${editWorkerId}`, { method: 'PUT', body: JSON.stringify({ ...editWorkerData, requestedBy: user.id }) });
+      addToast('Worker updated.'); setEditWorkerId(null); loadWorkers();
+    } catch (e) { addToast('Error: ' + e.message, 'error'); }
+    setSaving(false);
+  };
+
+  const deleteWorker = async (w) => {
+    if (!window.confirm(`Delete worker "${w.name}"? This cannot be undone.`)) return;
+    try {
+      await constructionFetch(`/workers/${w.id}`, { method: 'DELETE', body: JSON.stringify({ requestedBy: user.id }) });
+      addToast('Worker deleted.'); loadWorkers();
+    } catch (e) { addToast(e.message, 'error'); }
   };
 
   const inputStyle = { width: '100%', padding: '8px 12px', border: '1px solid #e2e8f0', borderRadius: 8, fontSize: 14, boxSizing: 'border-box' };
@@ -11912,15 +11960,35 @@ const ConstructionSetupPage = () => {
             {supervisors.length === 0 ? <div style={{ textAlign: 'center', padding: '2.5rem', color: '#94a3b8', fontSize: 14 }}>No supervisors yet.</div> : (
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
                 <thead><tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
-                  {['Name','Mobile','UPI ID','Status'].map(h => <th key={h} style={{ textAlign: 'left', padding: '9px 14px', fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>{h}</th>)}
+                  {['Name','Mobile','UPI ID','Status','Actions'].map(h => <th key={h} style={{ textAlign: 'left', padding: '9px 14px', fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>{h}</th>)}
                 </tr></thead>
                 <tbody>
-                  {supervisors.map(s => (
-                    <tr key={s.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                  {supervisors.map(s => editSupId === s.id ? (
+                    <tr key={s.id} style={{ borderBottom: '1px solid #f1f5f9', background: '#f8fafc' }}>
+                      <td style={{ padding: '8px 14px' }}><input value={editSupData.name || ''} onChange={e => setEditSupData(p => ({ ...p, name: e.target.value }))} style={inputStyle} /></td>
+                      <td style={{ padding: '8px 14px' }}><input value={editSupData.mobile || ''} onChange={e => setEditSupData(p => ({ ...p, mobile: e.target.value }))} style={inputStyle} /></td>
+                      <td style={{ padding: '8px 14px' }}><input value={editSupData.upi_id || ''} onChange={e => setEditSupData(p => ({ ...p, upi_id: e.target.value }))} style={inputStyle} /></td>
+                      <td style={{ padding: '8px 14px' }}><input value={editSupData.notes || ''} placeholder="Notes" onChange={e => setEditSupData(p => ({ ...p, notes: e.target.value }))} style={inputStyle} /></td>
+                      <td style={{ padding: '8px 14px' }}>
+                        <div style={{ display: 'flex', gap: 6 }}>
+                          <button onClick={updateSupervisor} disabled={saving} style={{ padding: '4px 12px', borderRadius: 6, border: 'none', background: '#4f46e5', color: '#fff', fontWeight: 600, fontSize: 12, cursor: 'pointer' }}>{saving ? '…' : 'Save'}</button>
+                          <button onClick={() => setEditSupId(null)} style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid #e2e8f0', background: '#fff', fontSize: 12, cursor: 'pointer' }}>Cancel</button>
+                        </div>
+                      </td>
+                    </tr>
+                  ) : (
+                    <tr key={s.id} style={{ borderBottom: '1px solid #f1f5f9', opacity: s.is_active ? 1 : 0.5 }}>
                       <td style={{ padding: '10px 14px', fontWeight: 500 }}>{s.name}</td>
                       <td style={{ padding: '10px 14px', color: '#475569' }}>{s.mobile}</td>
                       <td style={{ padding: '10px 14px', fontFamily: 'monospace', fontSize: 12 }}>{s.upi_id}</td>
                       <td style={{ padding: '10px 14px' }}><span style={{ background: s.is_active ? '#d1fae5' : '#f1f5f9', color: s.is_active ? '#065f46' : '#64748b', padding: '2px 8px', borderRadius: 20, fontSize: 12, fontWeight: 600 }}>{s.is_active ? 'Active' : 'Inactive'}</span></td>
+                      <td style={{ padding: '10px 14px' }}>
+                        <div style={{ display: 'flex', gap: 6 }}>
+                          <button onClick={() => { setEditSupId(s.id); setEditSupData({ name: s.name, mobile: s.mobile, upi_id: s.upi_id, notes: s.notes || '' }); }} style={{ padding: '3px 10px', borderRadius: 6, border: '1px solid #c7d2fe', background: '#eef2ff', color: '#4338ca', fontSize: 12, cursor: 'pointer', fontWeight: 600 }}>Edit</button>
+                          <button onClick={() => toggleSupervisor(s)} style={{ padding: '3px 10px', borderRadius: 6, border: `1px solid ${s.is_active ? '#d1d5db' : '#6ee7b7'}`, background: 'none', color: s.is_active ? '#6b7280' : '#065f46', fontSize: 12, cursor: 'pointer' }}>{s.is_active ? 'Deactivate' : 'Reactivate'}</button>
+                          <button onClick={() => deleteSupervisor(s)} style={{ padding: '3px 10px', borderRadius: 6, border: '1px solid #fecaca', background: '#fff5f5', color: '#dc2626', fontSize: 12, cursor: 'pointer', fontWeight: 600 }}>Delete</button>
+                        </div>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -11984,18 +12052,35 @@ const ConstructionSetupPage = () => {
                 ) : (
                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
                     <thead><tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
-                      {['Name','Mobile','Notes','Status'].map(h => <th key={h} style={{ textAlign: 'left', padding: '9px 14px', fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>{h}</th>)}
+                      {['Name','Mobile','Notes','Status','Actions'].map(h => <th key={h} style={{ textAlign: 'left', padding: '9px 14px', fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>{h}</th>)}
                     </tr></thead>
                     <tbody>
-                      {workers.map(w => (
+                      {workers.map(w => editWorkerId === w.id ? (
+                        <tr key={w.id} style={{ borderBottom: '1px solid #f1f5f9', background: '#f8fafc' }}>
+                          <td style={{ padding: '8px 14px' }}><input value={editWorkerData.name || ''} onChange={e => setEditWorkerData(p => ({ ...p, name: e.target.value }))} style={inputStyle} /></td>
+                          <td style={{ padding: '8px 14px' }}><input value={editWorkerData.mobile || ''} placeholder="10-digit" onChange={e => setEditWorkerData(p => ({ ...p, mobile: e.target.value }))} style={inputStyle} /></td>
+                          <td style={{ padding: '8px 14px' }} colSpan={2}><input value={editWorkerData.notes || ''} placeholder="Notes" onChange={e => setEditWorkerData(p => ({ ...p, notes: e.target.value }))} style={inputStyle} /></td>
+                          <td style={{ padding: '8px 14px' }}>
+                            <div style={{ display: 'flex', gap: 6 }}>
+                              <button onClick={updateWorker} disabled={saving} style={{ padding: '4px 12px', borderRadius: 6, border: 'none', background: '#4f46e5', color: '#fff', fontWeight: 600, fontSize: 12, cursor: 'pointer' }}>{saving ? '…' : 'Save'}</button>
+                              <button onClick={() => setEditWorkerId(null)} style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid #e2e8f0', background: '#fff', fontSize: 12, cursor: 'pointer' }}>Cancel</button>
+                            </div>
+                          </td>
+                        </tr>
+                      ) : (
                         <tr key={w.id} style={{ borderBottom: '1px solid #f1f5f9', opacity: w.is_active ? 1 : 0.5 }}>
                           <td style={{ padding: '10px 14px', fontWeight: 500 }}>{w.name}</td>
                           <td style={{ padding: '10px 14px', color: '#475569' }}>{w.mobile || '—'}</td>
                           <td style={{ padding: '10px 14px', color: '#64748b', fontSize: 12 }}>{w.notes || '—'}</td>
                           <td style={{ padding: '10px 14px' }}>
-                            <button onClick={() => toggleWorker(w)} style={{ background: 'none', border: `1px solid ${w.is_active ? '#d1d5db' : '#6ee7b7'}`, borderRadius: 6, padding: '2px 10px', fontSize: 12, cursor: 'pointer', color: w.is_active ? '#6b7280' : '#065f46' }}>
-                              {w.is_active ? 'Deactivate' : 'Reactivate'}
-                            </button>
+                            <span style={{ background: w.is_active ? '#d1fae5' : '#f1f5f9', color: w.is_active ? '#065f46' : '#64748b', padding: '2px 8px', borderRadius: 20, fontSize: 12, fontWeight: 600 }}>{w.is_active ? 'Active' : 'Inactive'}</span>
+                          </td>
+                          <td style={{ padding: '10px 14px' }}>
+                            <div style={{ display: 'flex', gap: 6 }}>
+                              <button onClick={() => { setEditWorkerId(w.id); setEditWorkerData({ name: w.name, mobile: w.mobile || '', notes: w.notes || '' }); }} style={{ padding: '3px 10px', borderRadius: 6, border: '1px solid #c7d2fe', background: '#eef2ff', color: '#4338ca', fontSize: 12, cursor: 'pointer', fontWeight: 600 }}>Edit</button>
+                              <button onClick={() => toggleWorker(w)} style={{ padding: '3px 10px', borderRadius: 6, border: `1px solid ${w.is_active ? '#d1d5db' : '#6ee7b7'}`, background: 'none', color: w.is_active ? '#6b7280' : '#065f46', fontSize: 12, cursor: 'pointer' }}>{w.is_active ? 'Deactivate' : 'Reactivate'}</button>
+                              <button onClick={() => deleteWorker(w)} style={{ padding: '3px 10px', borderRadius: 6, border: '1px solid #fecaca', background: '#fff5f5', color: '#dc2626', fontSize: 12, cursor: 'pointer', fontWeight: 600 }}>Delete</button>
+                            </div>
                           </td>
                         </tr>
                       ))}

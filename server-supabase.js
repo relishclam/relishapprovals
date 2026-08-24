@@ -7273,7 +7273,6 @@ app.get('/api/construction/categories/:categoryId/supervisors', async (req, res)
 // Attendance GET — category_id required; date optional (omit for log view)
 app.get('/api/construction/attendance', async (req, res) => {
   const { category_id, date } = req.query;
-  if (!category_id) return res.status(400).json({ error: 'category_id required' });
   let q = supabase.from('construction_attendance')
     .select(`
       id, attendance_date, attendance_value, voucher_id,
@@ -7282,8 +7281,8 @@ app.get('/api/construction/attendance', async (req, res) => {
       construction_supervisors(name),
       construction_categories(name)
     `)
-    .eq('category_id', category_id)
     .order('attendance_date', { ascending: false });
+  if (category_id) q = q.eq('category_id', category_id);
   if (date) q = q.eq('attendance_date', date);
   const { data, error } = await q.limit(500);
   if (error) return res.status(500).json({ error: error.message });
@@ -7529,17 +7528,71 @@ app.post('/api/construction/workers', async (req, res) => {
   res.json(data);
 });
 
-// Toggle worker active/inactive
-app.put('/api/construction/workers/:id', async (req, res) => {
-  const { is_active, requestedBy } = req.body;
+// Edit a supervisor
+app.put('/api/construction/supervisors/:id', async (req, res) => {
+  const { name, mobile, upi_id, notes, is_active, requestedBy } = req.body;
   const actor = await getActorRole(requestedBy);
   if (!['accounts','admin','super_admin'].includes(actor.role) && !actor.is_super_admin) {
     return res.status(403).json({ error: 'Not authorised' });
   }
-  const { data, error } = await supabase.from('construction_workers')
-    .update({ is_active }).eq('id', req.params.id).select().single();
+  const updates = {};
+  if (name      !== undefined) updates.name      = name;
+  if (mobile    !== undefined) updates.mobile    = mobile;
+  if (upi_id    !== undefined) updates.upi_id    = upi_id;
+  if (notes     !== undefined) updates.notes     = notes || null;
+  if (is_active !== undefined) updates.is_active = is_active;
+  const { data, error } = await supabase.from('construction_supervisors')
+    .update(updates).eq('id', req.params.id).select().single();
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
+});
+
+// Delete a supervisor (guarded — blocked if attendance records exist)
+app.delete('/api/construction/supervisors/:id', async (req, res) => {
+  const { requestedBy } = req.body;
+  const actor = await getActorRole(requestedBy);
+  if (!['admin','super_admin'].includes(actor.role) && !actor.is_super_admin) {
+    return res.status(403).json({ error: 'Admin only' });
+  }
+  const { count } = await supabase.from('construction_attendance')
+    .select('id', { count: 'exact', head: true }).eq('supervisor_id', req.params.id);
+  if (count > 0) return res.status(409).json({ error: `Cannot delete — ${count} attendance record(s) exist. Deactivate instead.` });
+  const { error } = await supabase.from('construction_supervisors').delete().eq('id', req.params.id);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ deleted: true });
+});
+
+// Edit or toggle a worker
+app.put('/api/construction/workers/:id', async (req, res) => {
+  const { name, mobile, notes, is_active, requestedBy } = req.body;
+  const actor = await getActorRole(requestedBy);
+  if (!['accounts','admin','super_admin'].includes(actor.role) && !actor.is_super_admin) {
+    return res.status(403).json({ error: 'Not authorised' });
+  }
+  const updates = {};
+  if (name      !== undefined) updates.name      = name;
+  if (mobile    !== undefined) updates.mobile    = mobile || null;
+  if (notes     !== undefined) updates.notes     = notes || null;
+  if (is_active !== undefined) updates.is_active = is_active;
+  const { data, error } = await supabase.from('construction_workers')
+    .update(updates).eq('id', req.params.id).select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// Delete a worker (guarded — blocked if attendance records exist)
+app.delete('/api/construction/workers/:id', async (req, res) => {
+  const { requestedBy } = req.body;
+  const actor = await getActorRole(requestedBy);
+  if (!['admin','super_admin'].includes(actor.role) && !actor.is_super_admin) {
+    return res.status(403).json({ error: 'Admin only' });
+  }
+  const { count } = await supabase.from('construction_attendance')
+    .select('id', { count: 'exact', head: true }).eq('worker_id', req.params.id);
+  if (count > 0) return res.status(409).json({ error: `Cannot delete — ${count} attendance record(s) exist. Deactivate instead.` });
+  const { error } = await supabase.from('construction_workers').delete().eq('id', req.params.id);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ deleted: true });
 });
 
 // Propose a daily rate
