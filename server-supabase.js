@@ -7630,8 +7630,10 @@ app.post('/api/construction/vouchers/:id/to-regular', async (req, res) => {
   }));
   const supName = lines[0]?.construction_supervisors?.name || 'Labour';
 
+  const serialNumber = await getNextVoucherNumber(company_id);
   const { data: regV, error: regVErr } = await supabase.from('vouchers').insert({
     company_id,
+    serial_number: serialNumber,
     payee_id: payeeId,
     head_of_account: 'Building Construction',
     sub_head_of_account: 'Labour Charges',
