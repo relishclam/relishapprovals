@@ -308,7 +308,7 @@ const api = {
   createStaffLogin: (payeeId, requesterId, aadhar) => fetch(`${API_BASE}/payees/${payeeId}/create-staff-login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ requesterId, aadhar }) }).then(async r => { const d = await r.json(); if (!r.ok) throw new Error(d.error || d.details || 'Request failed'); return d; }),
   getSettlementEntries: (token) => fetch(`${API_BASE}/settlement-sessions/${token}/entries`).then(r => r.json()),
   createVoucher: (data) => fetch(`${API_BASE}/vouchers`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
-  getVouchers: (companyId) => fetch(`${API_BASE}/companies/${companyId}/vouchers`).then(r => r.json()),
+  getVouchers: (companyId, all = false) => fetch(`${API_BASE}/companies/${companyId}/vouchers${all ? '?all=true' : ''}`).then(r => r.json()),
   getVoucher: (voucherId) => fetch(`${API_BASE}/vouchers/${voucherId}`).then(r => r.json()),
   approveVoucher: (voucherId, approvedBy) => fetch(`${API_BASE}/vouchers/${voucherId}/approve`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ approvedBy }) }).then(r => r.json()),
   rejectVoucher: (voucherId, rejectedBy, reason) => fetch(`${API_BASE}/vouchers/${voucherId}/reject`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rejectedBy, reason }) }).then(r => r.json()),
@@ -2744,6 +2744,16 @@ const PreviewVoucher = ({ formData, payees, user }) => {
 // Voucher List
 const VoucherList = ({ filter }) => {
   const { user, vouchers, addToast, refreshVouchers, navigateToSuspense, pendingShareForConfirmation, consumePendingShare } = useApp();
+  // For paid/all filters, context vouchers only cover 90 days. Load full history on demand.
+  const needsHistory = filter === 'paid' || filter === 'all';
+  const [fullHistoryVouchers, setFullHistoryVouchers] = useState(null); // null = not loaded yet
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  const loadFullHistory = async () => {
+    setLoadingHistory(true);
+    try { setFullHistoryVouchers(await api.getVouchers(user.company.id, true)); }
+    catch { addToast('Failed to load full history', 'error'); }
+    setLoadingHistory(false);
+  };
   const [selectedVoucher, setSelectedVoucher] = useState(null);
   const [showModal, setShowModal] = useState(false);
   const [payeeOtp, setPayeeOtp] = useState('');
@@ -2937,7 +2947,9 @@ const VoucherList = ({ filter }) => {
     consumePendingShare();
   }, [vouchers, pendingShareForConfirmation]);
 
-  const baseFiltered = vouchers.filter(v => { 
+  // For paid/all: use full-history data if loaded, otherwise fall back to recent context data
+  const sourceVouchers = (needsHistory && fullHistoryVouchers) ? fullHistoryVouchers : vouchers;
+  const baseFiltered = sourceVouchers.filter(v => { 
     if (filter === 'draft') return v.status === 'draft';
     if (filter === 'pending') return v.status === 'pending'; 
     if (filter === 'approved') return ['approved', 'awaiting_payee_otp'].includes(v.status); 
@@ -3687,7 +3699,7 @@ const VoucherList = ({ filter }) => {
       <div className="page-header">
         <div>
           <h1 className="page-title">{titles[filter]}</h1>
-          <p className="page-subtitle">{filtered.length} voucher(s)</p>
+          <p className="page-subtitle">{filtered.length} voucher(s){needsHistory && !fullHistoryVouchers ? ' · last 90 days' : ''}</p>
         </div>
         {filtered.length > 0 && (
           <div style={{display: 'flex', gap: '0.5rem', flexWrap: 'wrap'}}>
@@ -3707,6 +3719,17 @@ const VoucherList = ({ filter }) => {
           </div>
         )}
       </div>
+
+      {/* Load Full History banner for paid/all tabs */}
+      {needsHistory && !fullHistoryVouchers && (
+        <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 8, padding: '10px 16px', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 12, fontSize: 13 }}>
+          <span style={{ color: '#64748b' }}>Showing last 90 days. Older records excluded from auto-refresh to save bandwidth.</span>
+          <button onClick={loadFullHistory} disabled={loadingHistory}
+            style={{ marginLeft: 'auto', padding: '5px 14px', borderRadius: 7, border: '1px solid #c7d2fe', background: '#eef2ff', color: '#4338ca', fontSize: 12, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+            {loadingHistory ? 'Loading…' : '📂 Load Full History'}
+          </button>
+        </div>
+      )}
 
       {/* ── HOA CORRECTION PANEL (Admin, all + pending tabs) ── */}
       {(user.role === 'admin' || user.isSuperAdmin) && (filter === 'all' || filter === 'pending') && (

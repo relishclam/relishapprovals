@@ -1925,7 +1925,11 @@ app.post('/api/vouchers/:voucherId/submit', async (req, res) => {
 // Get vouchers
 app.get('/api/companies/:companyId/vouchers', async (req, res) => {
   try {
-    const { data: vouchers, error } = await supabase.from('vouchers')
+    // all=true bypasses the recency filter (used by "Load Full History" in the UI)
+    const { all } = req.query;
+    const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
+
+    let q = supabase.from('vouchers')
       .select(`
         *,
         payee:payees(name, alias, mobile, upi_id, bank_account, ifsc, bank_name),
@@ -1935,7 +1939,14 @@ app.get('/api/companies/:companyId/vouchers', async (req, res) => {
       `)
       .eq('company_id', req.params.companyId)
       .order('created_at', { ascending: false });
-    
+
+    if (all !== 'true') {
+      // Default: active-status vouchers always included; paid/rejected only if < 90 days old.
+      // This prevents hundreds of old settled vouchers from bloating every 30-second poll.
+      q = q.or(`status.in.(draft,pending,approved,completed,awaiting_payment),created_at.gte.${ninetyDaysAgo}`);
+    }
+
+    const { data: vouchers, error } = await q;
     if (error) throw error;
 
     // Fetch attachment counts for all vouchers in a single query
