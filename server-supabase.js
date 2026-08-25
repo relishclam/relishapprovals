@@ -7695,6 +7695,8 @@ app.post('/api/construction/vouchers/settle', async (req, res) => {
   const { data: voucher, error: vErr } = await supabase
     .from('construction_vouchers')
     .insert({ category_id, total_amount: parseFloat(total_amount) || 0, status: 'paid',
+              period_from: new Date().toISOString().split('T')[0],
+              period_to:   new Date().toISOString().split('T')[0],
               notes: notes || 'Settled outside system', created_by: requestedBy })
     .select().single();
   if (vErr) return res.status(500).json({ error: vErr.message });
