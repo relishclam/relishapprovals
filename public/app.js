@@ -12098,11 +12098,17 @@ const ConstructionDuesPage = () => {
                       {rateOk ? formatRupees(d.total_dues) : `${d.total_days} day(s) recorded`}
                     </div>
                     <div style={{ fontSize: 12, color: '#94a3b8' }}>
-                      {d.total_days} worker-days × {rateOk
-                        ? <span>{formatRupees(effectiveRate)}<span style={{ fontSize: 10, color: '#cbd5e1' }}> avg</span></span>
-                        : <span style={{ color: '#ef4444', fontWeight: 600 }}>Rate not set</span>}
+                      {d.total_days} worker-days
+                      {rateOk
+                        ? <span style={{ fontSize: 11, color: '#7c3aed', marginLeft: 4 }}>· rates by worker type</span>
+                        : <span style={{ color: '#ef4444', fontWeight: 600, marginLeft: 4 }}>· Rate not set</span>}
                     </div>
                     <div style={{ fontSize: 11, color: '#94a3b8' }}>{d.earliest_date} – {d.latest_date}</div>
+                    {rateOk && (
+                      <div style={{ fontSize: 10, color: '#94a3b8', marginTop: 2 }}>
+                        ℹ️ Wrong amount? Check worker types in Labour Setup
+                      </div>
+                    )}
                   </div>
                 </div>
                 );
