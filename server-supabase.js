@@ -7485,7 +7485,7 @@ app.get('/api/construction/attendance-raw', async (req, res) => {
 
 // Create payment voucher for selected supervisors
 app.post('/api/construction/vouchers', async (req, res) => {
-  const { category_id, supervisor_ids, requestedBy } = req.body;
+  const { category_id, supervisor_ids, company_id, requestedBy } = req.body;
   const actor = await getActorRole(requestedBy);
   const allowed = ['accounts', 'admin', 'super_admin'];
   if (!allowed.includes(actor.role) && !actor.is_super_admin) {
@@ -7494,40 +7494,155 @@ app.post('/api/construction/vouchers', async (req, res) => {
   if (!category_id || !supervisor_ids?.length) {
     return res.status(400).json({ error: 'category_id and supervisor_ids required' });
   }
+
+  // ── 1. Aggregate dues from the view ──────────────────────────────────────
   const { data: dues, error: dErr } = await supabase
     .from('v_unpaid_attendance').select('*')
     .eq('category_id', category_id).in('supervisor_id', supervisor_ids);
   if (dErr) return res.status(500).json({ error: dErr.message });
-  // total_dues is null when no rate (supervisor or worker-type) is set at all
   const missing = dues.filter(d => d.total_dues === null || d.total_dues === undefined);
   if (missing.length) {
     return res.status(400).json({ error: `No rate configured for: ${missing.map(d => d.supervisor_name).join(', ')} — set an approved rate in Rate Approvals first` });
   }
-  const totalAmount = dues.reduce((s, d) => s + (parseFloat(d.total_dues) || 0), 0);
+
+  // ── 2. Per-worker breakdown (individual amounts for narration & lines) ───
+  const { data: workerRows, error: wrErr } = await supabase
+    .from('construction_attendance')
+    .select(`
+      worker_id, worker_type, supervisor_id, attendance_value,
+      construction_workers(id, name, worker_type, notes),
+      construction_category_supervisors!inner(id, approved_rate,
+        construction_worker_rates(approved_rate, worker_type))
+    `)
+    .eq('category_id', category_id)
+    .in('supervisor_id', supervisor_ids)
+    .is('voucher_id', null);
+  if (wrErr) return res.status(500).json({ error: wrErr.message });
+
+  // Aggregate per worker: sum days, pick rate
+  const workerMap = new Map(); // worker_id → { name, type, supervisorId, days, rate }
+  workerRows.forEach(row => {
+    const wid = row.worker_id;
+    const wName = row.construction_workers?.name || 'Unknown';
+    const wType = row.worker_type || row.construction_workers?.worker_type || 'Helper';
+    const csRates = row.construction_category_supervisors?.construction_worker_rates || [];
+    const typeRate = csRates.find(r => r.worker_type === wType)?.approved_rate;
+    const fallbackRate = row.construction_category_supervisors?.approved_rate;
+    const rate = typeRate ?? fallbackRate ?? 0;
+    if (!workerMap.has(wid)) {
+      workerMap.set(wid, { worker_id: wid, name: wName, worker_type: wType, supervisor_id: row.supervisor_id, days: 0, rate });
+    }
+    workerMap.get(wid).days += parseFloat(row.attendance_value);
+  });
+  const workerBreakdown = Array.from(workerMap.values()).map(w => ({
+    ...w, amount: +(w.days * w.rate).toFixed(2),
+  }));
+
+  const totalAmount = workerBreakdown.reduce((s, w) => s + w.amount, 0);
   const allDates = dues.flatMap(d => [d.earliest_date, d.latest_date]).filter(Boolean).sort();
-  const { data: voucher, error: vErr } = await supabase
+
+  // ── 3. Create CLABV header ────────────────────────────────────────────────
+  const { data: clabv, error: vErr } = await supabase
     .from('construction_vouchers')
     .insert({ category_id, period_from: allDates[0], period_to: allDates[allDates.length - 1],
               total_amount: totalAmount, status: 'draft', created_by: requestedBy })
     .select().single();
   if (vErr) return res.status(500).json({ error: vErr.message });
-  const lines = dues.map(d => ({
-    voucher_id: voucher.id, supervisor_id: d.supervisor_id,
-    // rate_applied stores the supervisor-level rate or the effective avg rate when worker-type rates are used
-    days_count: d.total_days, rate_applied: d.approved_rate ?? (d.total_days > 0 ? +(parseFloat(d.total_dues) / parseFloat(d.total_days)).toFixed(2) : null),
-    amount: d.total_dues, upi_id_snapshot: d.upi_id,
+
+  // ── 4. Create per-worker CLABV lines ─────────────────────────────────────
+  const lines = workerBreakdown.map(w => ({
+    voucher_id: clabv.id, supervisor_id: w.supervisor_id,
+    worker_id: w.worker_id, worker_name: w.name,
+    days_count: w.days, rate_applied: w.rate, amount: w.amount,
+    upi_id_snapshot: dues.find(d => d.supervisor_id === w.supervisor_id)?.upi_id || null,
   }));
   const { error: lErr } = await supabase.from('construction_voucher_lines').insert(lines);
-  if (lErr) return res.status(500).json({ error: lErr.message });
-  // Mark attendance records as vouchered
+  if (lErr) {
+    // Clean up orphaned header so it doesn't appear in the list
+    await supabase.from('construction_vouchers').delete().eq('id', clabv.id);
+    return res.status(500).json({ error: lErr.message });
+  }
+
+  // ── 5. Create linked regular VCH for payment (if company_id provided) ────
+  let regularVoucherId = null;
+  if (company_id) {
+    // Find payee_id for the first supervisor (or create one VCH per supervisor)
+    // For multi-supervisor batches we create one VCH with combined narration
+    const supIds = [...new Set(workerBreakdown.map(w => w.supervisor_id))];
+    const { data: sups } = await supabase.from('construction_supervisors')
+      .select('id, name, payee_id').in('id', supIds);
+
+    // Use first supervisor's payee as the VCH payee (common case: one supervisor per category)
+    const primarySup = sups?.[0];
+    if (primarySup?.payee_id) {
+      const narrationItems = workerBreakdown.map((w, i) => ({
+        sr_no: i + 1,
+        description: `${w.name}${w.worker_type ? ' (' + w.worker_type + ')' : ''}`,
+        amount: w.amount,
+      }));
+      const { data: regV } = await supabase.from('vouchers').insert({
+        company_id,
+        payee_id: primarySup.payee_id,
+        head_of_account: 'Building Construction',
+        sub_head_of_account: 'Labour Charges',
+        narration: `Labour payment — ${dues.map(d => d.supervisor_name).join(', ')} (${clabv.voucher_number})`,
+        narration_items: JSON.stringify(narrationItems),
+        amount: totalAmount,
+        payment_mode: 'UPI',
+        status: 'draft',
+        prepared_by: requestedBy,
+      }).select('id').single();
+      if (regV?.id) {
+        regularVoucherId = regV.id;
+        await supabase.from('construction_vouchers').update({ regular_voucher_id: regV.id }).eq('id', clabv.id);
+      }
+    }
+  }
+
+  // ── 6. Mark attendance as vouchered ──────────────────────────────────────
   const { data: attRows } = await supabase.from('construction_attendance')
     .select('id').eq('category_id', category_id)
     .in('supervisor_id', supervisor_ids).is('voucher_id', null);
   if (attRows?.length) {
     await supabase.from('construction_attendance')
-      .update({ voucher_id: voucher.id }).in('id', attRows.map(r => r.id));
+      .update({ voucher_id: clabv.id }).in('id', attRows.map(r => r.id));
   }
-  res.json({ voucher_number: voucher.voucher_number, id: voucher.id, total_amount: totalAmount });
+
+  res.json({
+    voucher_number: clabv.voucher_number, id: clabv.id,
+    total_amount: totalAmount, regular_voucher_id: regularVoucherId,
+  });
+});
+
+// Delete a CLABV draft voucher (admin only; only drafts with no vouchered attendance)
+app.delete('/api/construction/vouchers/:id', async (req, res) => {
+  const { requestedBy } = req.body;
+  const actor = await getActorRole(requestedBy);
+  if (!['admin','super_admin'].includes(actor.role) && !actor.is_super_admin) {
+    return res.status(403).json({ error: 'Admin only' });
+  }
+  const { data: v } = await supabase.from('construction_vouchers').select('status').eq('id', req.params.id).single();
+  if (!v) return res.status(404).json({ error: 'Voucher not found' });
+  if (v.status !== 'draft') return res.status(400).json({ error: 'Only draft vouchers can be deleted' });
+  // Unlink any attendance records pointing to this voucher before deleting
+  await supabase.from('construction_attendance').update({ voucher_id: null }).eq('voucher_id', req.params.id);
+  const { error } = await supabase.from('construction_vouchers').delete().eq('id', req.params.id);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ deleted: true });
+});
+
+// Link a regular paid VCH to construction attendance records (retroactive)
+app.post('/api/construction/vouchers/:id/link-attendance', async (req, res) => {
+  const { attendance_ids, requestedBy } = req.body;
+  const actor = await getActorRole(requestedBy);
+  if (!['accounts','admin','super_admin'].includes(actor.role) && !actor.is_super_admin) {
+    return res.status(403).json({ error: 'Not authorised' });
+  }
+  if (!attendance_ids?.length) return res.status(400).json({ error: 'attendance_ids required' });
+  const { error } = await supabase.from('construction_attendance')
+    .update({ voucher_id: req.params.id }).in('id', attendance_ids).is('voucher_id', null);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ linked: attendance_ids.length });
 });
 
 // Mark attendance as settled outside the system (admin only) — creates a paid voucher at a manual amount
@@ -7562,11 +7677,10 @@ app.get('/api/construction/vouchers', async (req, res) => {
   if (!category_id) return res.status(400).json({ error: 'category_id required' });
   const { data, error } = await supabase
     .from('construction_vouchers')
-    .select(`*, construction_voucher_lines(id, days_count, rate_applied, amount, construction_supervisors(name))`)
+    .select(`*, construction_voucher_lines(id, days_count, rate_applied, amount, worker_name, worker_type, construction_supervisors(name))`)
     .eq('category_id', category_id)
-    .order('created_at', { ascending: false }).limit(20);
+    .order('created_at', { ascending: false }).limit(30);
   if (error) return res.status(500).json({ error: error.message });
-  // Flatten line data for frontend
   res.json(data.map(v => ({
     ...v,
     lines: (v.construction_voucher_lines || []).map(l => ({

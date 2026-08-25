@@ -11993,8 +11993,11 @@ const ConstructionDuesPage = () => {
     }
     setCreating(true);
     try {
-      const result = await constructionFetch('/vouchers', { method: 'POST', body: JSON.stringify({ category_id: selectedCat, supervisor_ids: selectedDues.map(d => d.supervisor_id), requestedBy: user.id }) });
-      addToast(`Voucher ${result.voucher_number} created — ${formatRupees(result.total_amount)}`);
+      const result = await constructionFetch('/vouchers', { method: 'POST', body: JSON.stringify({ category_id: selectedCat, supervisor_ids: selectedDues.map(d => d.supervisor_id), company_id: user.company.id, requestedBy: user.id }) });
+      const msg = result.regular_voucher_id
+        ? `${result.voucher_number} created — go to Draft Vouchers to approve & pay`
+        : `${result.voucher_number} created — ${formatRupees(result.total_amount)}`;
+      addToast(msg);
       loadDues(); loadVouchers(); setShowVouchers(true);
     } catch (e) { addToast('Failed: ' + e.message, 'error'); }
     setCreating(false);
@@ -12110,7 +12113,7 @@ const ConstructionDuesPage = () => {
                     <div style={{ fontWeight: 600, color: '#3730a3', fontSize: 14 }}>{selectedDues.length} supervisor(s) · {formatRupees(totalSelected)}</div>
                   </div>
                   <div style={{ display: 'flex', gap: 8 }}>
-                    {isAdmin && (
+                    {(isAdmin || user.role === 'accounts') && (
                       <button onClick={settleOutside} disabled={creating}
                         style={{ padding: '8px 14px', borderRadius: 8, border: '1px solid #fca5a5', background: '#fff5f5', color: '#dc2626', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
                         {creating ? '…' : '✓ Settled Outside'}
@@ -12136,15 +12139,26 @@ const ConstructionDuesPage = () => {
                       <div>
                         <div style={{ fontWeight: 600 }}>{v.voucher_number}</div>
                         <div style={{ fontSize: 12, color: '#94a3b8' }}>{v.period_from} – {v.period_to}</div>
+                        {v.regular_voucher_id && (
+                          <div style={{ fontSize: 11, color: '#4f46e5', marginTop: 2 }}>🔗 Linked to Draft Voucher — approve &amp; pay from Drafts</div>
+                        )}
+                        {v.notes && <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>{v.notes}</div>}
                       </div>
                       <div style={{ textAlign: 'right' }}>
                         <div style={{ fontWeight: 700 }}>{formatRupees(v.total_amount)}</div>
                         <span style={{ background: statusColors[v.status] || '#e2e8f0', color: '#fff', fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 20 }}>{(v.status || '').toUpperCase()}</span>
+                        {isAdmin && v.status === 'draft' && (
+                          <button onClick={async () => {
+                            if (!window.confirm(`Delete ${v.voucher_number}? Attendance records will be unlinked.`)) return;
+                            try { await constructionFetch(`/vouchers/${v.id}`, { method: 'DELETE', body: JSON.stringify({ requestedBy: user.id }) }); addToast(`${v.voucher_number} deleted.`); loadVouchers(); loadDues(); }
+                            catch (e) { addToast(e.message, 'error'); }
+                          }} style={{ display: 'block', marginTop: 4, padding: '2px 8px', borderRadius: 6, border: '1px solid #fecaca', background: '#fff5f5', color: '#dc2626', fontSize: 11, cursor: 'pointer', fontWeight: 600 }}>🗑 Delete</button>
+                        )}
                       </div>
                     </div>
                     {(v.lines || []).map(l => (
                       <div key={l.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#64748b', padding: '4px 0', borderTop: '1px solid #f1f5f9' }}>
-                        <span>{l.supervisor_name}</span>
+                        <span>{l.worker_name || l.supervisor_name}</span>
                         <span>{l.days_count} days × {formatRupees(l.rate_applied)} = {formatRupees(l.amount)}</span>
                       </div>
                     ))}
