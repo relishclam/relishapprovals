@@ -7573,31 +7573,58 @@ app.post('/api/construction/vouchers', async (req, res) => {
     // For multi-supervisor batches we create one VCH with combined narration
     const supIds = [...new Set(workerBreakdown.map(w => w.supervisor_id))];
     const { data: sups } = await supabase.from('construction_supervisors')
-      .select('id, name, payee_id').in('id', supIds);
+      .select('id, name, mobile, upi_id, payee_id').in('id', supIds);
 
-    // Use first supervisor's payee as the VCH payee (common case: one supervisor per category)
     const primarySup = sups?.[0];
-    if (primarySup?.payee_id) {
-      const narrationItems = workerBreakdown.map((w, i) => ({
-        sr_no: i + 1,
-        description: `${w.name}${w.worker_type ? ' (' + w.worker_type + ')' : ''}`,
-        amount: w.amount,
-      }));
-      const { data: regV } = await supabase.from('vouchers').insert({
-        company_id,
-        payee_id: primarySup.payee_id,
-        head_of_account: 'Building Construction',
-        sub_head_of_account: 'Labour Charges',
-        narration: `Labour payment — ${dues.map(d => d.supervisor_name).join(', ')} (${clabv.voucher_number})`,
-        narration_items: JSON.stringify(narrationItems),
-        amount: totalAmount,
-        payment_mode: 'UPI',
-        status: 'draft',
-        prepared_by: requestedBy,
-      }).select('id').single();
-      if (regV?.id) {
-        regularVoucherId = regV.id;
-        await supabase.from('construction_vouchers').update({ regular_voucher_id: regV.id }).eq('id', clabv.id);
+    if (primarySup) {
+      // Resolve payee within the active company — supervisor.payee_id may belong to a different company
+      let payeeId = null;
+      // First: check if supervisor's stored payee belongs to this company
+      if (primarySup.payee_id) {
+        const { data: existingPayee } = await supabase.from('payees')
+          .select('id').eq('id', primarySup.payee_id).eq('company_id', company_id).maybeSingle();
+        if (existingPayee) payeeId = existingPayee.id;
+      }
+      // Second: look up by mobile or UPI within this company
+      if (!payeeId && (primarySup.mobile || primarySup.upi_id)) {
+        let q = supabase.from('payees').select('id').eq('company_id', company_id);
+        if (primarySup.mobile) q = q.eq('mobile', primarySup.mobile);
+        const { data: found } = await q.maybeSingle();
+        if (found) payeeId = found.id;
+      }
+      // Third: create a payee in this company if still not found
+      if (!payeeId) {
+        const { data: newPayee } = await supabase.from('payees').insert({
+          company_id, name: primarySup.name, mobile: primarySup.mobile,
+          upi_id: primarySup.upi_id, payee_type: 'registered', requires_otp: true, is_global: false,
+        }).select('id').single();
+        if (newPayee) payeeId = newPayee.id;
+      }
+
+      if (payeeId) {
+        const narrationItems = workerBreakdown.map((w, i) => ({
+          sr_no: i + 1,
+          description: `${w.name}${w.worker_type ? ' (' + w.worker_type + ')' : ''}`,
+          amount: w.amount,
+        }));
+        const { data: regV, error: regVErr } = await supabase.from('vouchers').insert({
+          company_id,
+          payee_id: payeeId,
+          head_of_account: 'Building Construction',
+          sub_head_of_account: 'Labour Charges',
+          narration: `Labour payment — ${dues.map(d => d.supervisor_name).join(', ')} (${clabv.voucher_number})`,
+          narration_items: JSON.stringify(narrationItems),
+          amount: totalAmount,
+          payment_mode: 'UPI',
+          status: 'draft',
+          prepared_by: requestedBy,
+        }).select('id').single();
+        if (regV?.id) {
+          regularVoucherId = regV.id;
+          await supabase.from('construction_vouchers').update({ regular_voucher_id: regV.id }).eq('id', clabv.id);
+        } else if (regVErr) {
+          console.error('Failed to create linked regular VCH:', regVErr.message);
+        }
       }
     }
   }
