@@ -11942,8 +11942,8 @@ const ConstructionDuesPage = () => {
   const [creating, setCreating]       = useState(false);
   const [vouchers, setVouchers]       = useState([]);
   const [showVouchers, setShowVouchers] = useState(false);
-  // Fallback raw records shown when the v_unpaid_attendance view is missing/broken
   const [rawRecords, setRawRecords]   = useState(null);
+  const [convertingId, setConvertingId] = useState(null); // CLABV id being converted
 
   useEffect(() => { constructionFetch('/categories').then(setCategories).catch(() => {}); }, []);
 
@@ -12014,6 +12014,19 @@ const ConstructionDuesPage = () => {
       loadDues(); loadVouchers(); setShowVouchers(true);
     } catch (e) { addToast('Failed: ' + e.message, 'error'); }
     setCreating(false);
+  };
+
+  const convertToRegular = async (v) => {
+    setConvertingId(v.id);
+    try {
+      const result = await constructionFetch(`/vouchers/${v.id}/to-regular`, {
+        method: 'POST',
+        body: JSON.stringify({ company_id: user.company.id, requestedBy: user.id }),
+      });
+      addToast(`${result.serial_number} created in Drafts — open Drafts to approve & pay`);
+      loadVouchers();
+    } catch (e) { addToast('Failed: ' + e.message, 'error'); }
+    setConvertingId(null);
   };
 
   const statusColors = { draft: '#f59e0b', submitted: '#3b82f6', approved: '#10b981', paid: '#10b981', rejected: '#ef4444' };
@@ -12145,9 +12158,14 @@ const ConstructionDuesPage = () => {
                       <div>
                         <div style={{ fontWeight: 600 }}>{v.voucher_number}</div>
                         <div style={{ fontSize: 12, color: '#94a3b8' }}>{v.period_from} – {v.period_to}</div>
-                        {v.regular_voucher_id && (
+                        {v.regular_voucher_id ? (
                           <div style={{ fontSize: 11, color: '#4f46e5', marginTop: 2 }}>🔗 Linked to Draft Voucher — approve &amp; pay from Drafts</div>
-                        )}
+                        ) : v.status === 'draft' ? (
+                          <button onClick={() => convertToRegular(v)} disabled={convertingId === v.id}
+                            style={{ marginTop: 4, padding: '4px 10px', borderRadius: 6, border: 'none', background: '#4f46e5', color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer', display: 'block' }}>
+                            {convertingId === v.id ? 'Creating…' : '📄 Create Regular Voucher'}
+                          </button>
+                        ) : null}
                         {v.notes && <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>{v.notes}</div>}
                       </div>
                       <div style={{ textAlign: 'right' }}>

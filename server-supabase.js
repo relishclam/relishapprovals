@@ -7566,70 +7566,7 @@ app.post('/api/construction/vouchers', async (req, res) => {
     return res.status(500).json({ error: lErr.message });
   }
 
-  // ── 5. Create linked regular VCH for payment (if company_id provided) ────
-  let regularVoucherId = null;
-  if (company_id) {
-    // Find payee_id for the first supervisor (or create one VCH per supervisor)
-    // For multi-supervisor batches we create one VCH with combined narration
-    const supIds = [...new Set(workerBreakdown.map(w => w.supervisor_id))];
-    const { data: sups } = await supabase.from('construction_supervisors')
-      .select('id, name, mobile, upi_id, payee_id').in('id', supIds);
-
-    const primarySup = sups?.[0];
-    if (primarySup) {
-      // Resolve payee within the active company — supervisor.payee_id may belong to a different company
-      let payeeId = null;
-      // First: check if supervisor's stored payee belongs to this company
-      if (primarySup.payee_id) {
-        const { data: existingPayee } = await supabase.from('payees')
-          .select('id').eq('id', primarySup.payee_id).eq('company_id', company_id).maybeSingle();
-        if (existingPayee) payeeId = existingPayee.id;
-      }
-      // Second: look up by mobile or UPI within this company
-      if (!payeeId && (primarySup.mobile || primarySup.upi_id)) {
-        let q = supabase.from('payees').select('id').eq('company_id', company_id);
-        if (primarySup.mobile) q = q.eq('mobile', primarySup.mobile);
-        const { data: found } = await q.maybeSingle();
-        if (found) payeeId = found.id;
-      }
-      // Third: create a payee in this company if still not found
-      if (!payeeId) {
-        const { data: newPayee } = await supabase.from('payees').insert({
-          company_id, name: primarySup.name, mobile: primarySup.mobile,
-          upi_id: primarySup.upi_id, payee_type: 'registered', requires_otp: true, is_global: false,
-        }).select('id').single();
-        if (newPayee) payeeId = newPayee.id;
-      }
-
-      if (payeeId) {
-        const narrationItems = workerBreakdown.map((w, i) => ({
-          sr_no: i + 1,
-          description: `${w.name}${w.worker_type ? ' (' + w.worker_type + ')' : ''}`,
-          amount: w.amount,
-        }));
-        const { data: regV, error: regVErr } = await supabase.from('vouchers').insert({
-          company_id,
-          payee_id: payeeId,
-          head_of_account: 'Building Construction',
-          sub_head_of_account: 'Labour Charges',
-          narration: `Labour payment — ${dues.map(d => d.supervisor_name).join(', ')} (${clabv.voucher_number})`,
-          narration_items: JSON.stringify(narrationItems),
-          amount: totalAmount,
-          payment_mode: 'UPI',
-          status: 'draft',
-          prepared_by: requestedBy,
-        }).select('id').single();
-        if (regV?.id) {
-          regularVoucherId = regV.id;
-          await supabase.from('construction_vouchers').update({ regular_voucher_id: regV.id }).eq('id', clabv.id);
-        } else if (regVErr) {
-          console.error('Failed to create linked regular VCH:', regVErr.message);
-        }
-      }
-    }
-  }
-
-  // ── 6. Mark attendance as vouchered ──────────────────────────────────────
+  // ── 5. Mark attendance as vouchered ──────────────────────────────────────
   const { data: attRows } = await supabase.from('construction_attendance')
     .select('id').eq('category_id', category_id)
     .in('supervisor_id', supervisor_ids).is('voucher_id', null);
@@ -7638,10 +7575,78 @@ app.post('/api/construction/vouchers', async (req, res) => {
       .update({ voucher_id: clabv.id }).in('id', attRows.map(r => r.id));
   }
 
-  res.json({
-    voucher_number: clabv.voucher_number, id: clabv.id,
-    total_amount: totalAmount, regular_voucher_id: regularVoucherId,
-  });
+  res.json({ voucher_number: clabv.voucher_number, id: clabv.id, total_amount: totalAmount });
+});
+
+// Explicitly convert a CLABV to a regular VCH — called by the "Create Regular Voucher" button
+app.post('/api/construction/vouchers/:id/to-regular', async (req, res) => {
+  const { company_id, payee_id, requestedBy } = req.body;
+  const actor = await getActorRole(requestedBy);
+  if (!['accounts','admin','super_admin'].includes(actor.role) && !actor.is_super_admin) {
+    return res.status(403).json({ error: 'Not authorised' });
+  }
+  if (!company_id) return res.status(400).json({ error: 'company_id required' });
+
+  // Load CLABV with lines
+  const { data: clabv, error: cErr } = await supabase.from('construction_vouchers')
+    .select('*, construction_voucher_lines(*, construction_supervisors(name, mobile, upi_id))')
+    .eq('id', req.params.id).single();
+  if (cErr || !clabv) return res.status(404).json({ error: 'CLABV not found' });
+  if (clabv.regular_voucher_id) return res.status(400).json({ error: 'Already linked to a regular voucher' });
+
+  // Resolve payee
+  let payeeId = payee_id || null;
+  if (!payeeId) {
+    // Try to find supervisor's payee in this company by mobile or UPI
+    const firstLine = clabv.construction_voucher_lines?.[0];
+    const sup = firstLine?.construction_supervisors;
+    if (sup) {
+      if (sup.mobile) {
+        const { data: p } = await supabase.from('payees').select('id').eq('company_id', company_id).eq('mobile', sup.mobile).maybeSingle();
+        if (p) payeeId = p.id;
+      }
+      if (!payeeId && sup.upi_id) {
+        const { data: p } = await supabase.from('payees').select('id').eq('company_id', company_id).eq('upi_id', sup.upi_id).maybeSingle();
+        if (p) payeeId = p.id;
+      }
+      if (!payeeId) {
+        // Auto-create payee in this company
+        const { data: np, error: npErr } = await supabase.from('payees').insert({
+          company_id, name: sup.name || 'Labour Supervisor', mobile: sup.mobile || null,
+          upi_id: sup.upi_id || null, payee_type: 'registered', requires_otp: true, is_global: false,
+        }).select('id').single();
+        if (npErr) return res.status(500).json({ error: `Cannot resolve payee: ${npErr.message}` });
+        payeeId = np.id;
+      }
+    }
+  }
+  if (!payeeId) return res.status(400).json({ error: 'Could not resolve payee — pass payee_id explicitly' });
+
+  const lines = clabv.construction_voucher_lines || [];
+  const narrationItems = lines.map((l, i) => ({
+    sr_no: i + 1,
+    description: l.worker_name || l.construction_supervisors?.name || `Worker ${i + 1}`,
+    amount: parseFloat(l.amount),
+  }));
+  const supName = lines[0]?.construction_supervisors?.name || 'Labour';
+
+  const { data: regV, error: regVErr } = await supabase.from('vouchers').insert({
+    company_id,
+    payee_id: payeeId,
+    head_of_account: 'Building Construction',
+    sub_head_of_account: 'Labour Charges',
+    narration: `Labour payment — ${supName} (${clabv.voucher_number})`,
+    narration_items: JSON.stringify(narrationItems),
+    amount: parseFloat(clabv.total_amount),
+    payment_mode: 'UPI',
+    status: 'draft',
+    prepared_by: requestedBy,
+  }).select('id, serial_number').single();
+
+  if (regVErr || !regV) return res.status(500).json({ error: regVErr?.message || 'Failed to create voucher' });
+
+  await supabase.from('construction_vouchers').update({ regular_voucher_id: regV.id }).eq('id', clabv.id);
+  res.json({ voucher_id: regV.id, serial_number: regV.serial_number });
 });
 
 // Delete a CLABV draft voucher (admin only; only drafts with no vouchered attendance)
