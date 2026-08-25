@@ -7363,10 +7363,13 @@ app.get('/api/construction/attendance', async (req, res) => {
   })));
 });
 
-// Attendance POST — upsert per-worker records
+// Attendance POST — upsert checked records + delete unchecked ones
 app.post('/api/construction/attendance', async (req, res) => {
-  const { records, requestedBy, attendanceDate } = req.body;
-  if (!records?.length) return res.status(400).json({ error: 'No records provided' });
+  const { records, requestedBy, attendanceDate, categoryId, deletedWorkerIds } = req.body;
+  // Allow empty records when there are deletions to process
+  if (!records?.length && !deletedWorkerIds?.length) {
+    return res.status(400).json({ error: 'No changes provided' });
+  }
   const actor = await getActorRole(requestedBy);
   if (!actor.role) return res.status(403).json({ error: 'Not authenticated' });
   const allowedRoles = ['staff_lead', 'accounts', 'admin', 'super_admin'];
@@ -7376,24 +7379,41 @@ app.post('/api/construction/attendance', async (req, res) => {
   const today = new Date().toISOString().split('T')[0];
   const dateToSave = (attendanceDate && /^\d{4}-\d{2}-\d{2}$/.test(attendanceDate)) ? attendanceDate : today;
   if (dateToSave > today) return res.status(400).json({ error: 'Cannot mark attendance for future dates' });
-  const upserts = records.map(r => ({
-    attendance_date:  dateToSave,
-    category_id:      r.category_id,
-    supervisor_id:    r.supervisor_id,
-    worker_id:        r.worker_id,
-    attendance_value: r.attendance_value,
-    worker_type:      r.worker_type || null,
-    marked_by:        requestedBy,
-    last_edited_by:   requestedBy,
-    last_edited_at:   new Date().toISOString(),
-    notes:            r.notes || null,
-  }));
-  const { data, error } = await supabase
-    .from('construction_attendance')
-    .upsert(upserts, { onConflict: 'attendance_date,category_id,supervisor_id,worker_id' })
-    .select('id, worker_id, attendance_value');
-  if (error) return res.status(500).json({ error: error.message });
-  res.json({ saved: data.length, records: data });
+
+  // Delete records for workers that were un-ticked (only non-vouchered)
+  if (deletedWorkerIds?.length && categoryId) {
+    const { error: delErr } = await supabase.from('construction_attendance')
+      .delete()
+      .eq('attendance_date', dateToSave)
+      .eq('category_id', categoryId)
+      .in('worker_id', deletedWorkerIds)
+      .is('voucher_id', null);
+    if (delErr) return res.status(500).json({ error: delErr.message });
+  }
+
+  let saved = 0;
+  if (records?.length) {
+    const upserts = records.map(r => ({
+      attendance_date:  dateToSave,
+      category_id:      r.category_id,
+      supervisor_id:    r.supervisor_id,
+      worker_id:        r.worker_id,
+      attendance_value: r.attendance_value,
+      worker_type:      r.worker_type || null,
+      marked_by:        requestedBy,
+      last_edited_by:   requestedBy,
+      last_edited_at:   new Date().toISOString(),
+      notes:            r.notes || null,
+    }));
+    const { data, error } = await supabase
+      .from('construction_attendance')
+      .upsert(upserts, { onConflict: 'attendance_date,category_id,supervisor_id,worker_id' })
+      .select('id, worker_id, attendance_value');
+    if (error) return res.status(500).json({ error: error.message });
+    saved = data.length;
+  }
+
+  res.json({ saved, deleted: deletedWorkerIds?.length || 0 });
 });
 
 // Dates in a given month that have at least one attendance record (for calendar dots)
@@ -7467,9 +7487,10 @@ app.post('/api/construction/vouchers', async (req, res) => {
     .from('v_unpaid_attendance').select('*')
     .eq('category_id', category_id).in('supervisor_id', supervisor_ids);
   if (dErr) return res.status(500).json({ error: dErr.message });
-  const missing = dues.filter(d => !d.approved_rate);
+  // total_dues is null when no rate (supervisor or worker-type) is set at all
+  const missing = dues.filter(d => d.total_dues === null || d.total_dues === undefined);
   if (missing.length) {
-    return res.status(400).json({ error: `No approved rate for: ${missing.map(d => d.supervisor_name).join(', ')}` });
+    return res.status(400).json({ error: `No rate configured for: ${missing.map(d => d.supervisor_name).join(', ')} — set an approved rate in Rate Approvals first` });
   }
   const totalAmount = dues.reduce((s, d) => s + (parseFloat(d.total_dues) || 0), 0);
   const allDates = dues.flatMap(d => [d.earliest_date, d.latest_date]).filter(Boolean).sort();
@@ -7495,6 +7516,32 @@ app.post('/api/construction/vouchers', async (req, res) => {
       .update({ voucher_id: voucher.id }).in('id', attRows.map(r => r.id));
   }
   res.json({ voucher_number: voucher.voucher_number, id: voucher.id, total_amount: totalAmount });
+});
+
+// Mark attendance as settled outside the system (admin only) — creates a paid voucher at a manual amount
+app.post('/api/construction/vouchers/settle', async (req, res) => {
+  const { category_id, supervisor_ids, total_amount, notes, requestedBy } = req.body;
+  const actor = await getActorRole(requestedBy);
+  if (!['admin','super_admin'].includes(actor.role) && !actor.is_super_admin) {
+    return res.status(403).json({ error: 'Admin only' });
+  }
+  if (!category_id || !supervisor_ids?.length) {
+    return res.status(400).json({ error: 'category_id and supervisor_ids required' });
+  }
+  const { data: voucher, error: vErr } = await supabase
+    .from('construction_vouchers')
+    .insert({ category_id, total_amount: parseFloat(total_amount) || 0, status: 'paid',
+              notes: notes || 'Settled outside system', created_by: requestedBy })
+    .select().single();
+  if (vErr) return res.status(500).json({ error: vErr.message });
+  const { data: attRows } = await supabase.from('construction_attendance')
+    .select('id').eq('category_id', category_id)
+    .in('supervisor_id', supervisor_ids).is('voucher_id', null);
+  if (attRows?.length) {
+    await supabase.from('construction_attendance')
+      .update({ voucher_id: voucher.id }).in('id', attRows.map(r => r.id));
+  }
+  res.json({ id: voucher.id, voucher_number: voucher.voucher_number, cleared: attRows?.length || 0 });
 });
 
 // Past vouchers for a category
@@ -7622,6 +7669,36 @@ app.post('/api/construction/assign', async (req, res) => {
   res.json({ ...data, selfWorkerCreated: !!addAsSelfWorker });
 });
 
+// Remove a supervisor from a category (soft-delete preserves historical attendance)
+app.delete('/api/construction/category-assignment/:id', async (req, res) => {
+  const { requestedBy } = req.body;
+  const actor = await getActorRole(requestedBy);
+  if (!['accounts', 'admin', 'super_admin'].includes(actor.role) && !actor.is_super_admin) {
+    return res.status(403).json({ error: 'Not authorised' });
+  }
+  const { error } = await supabase
+    .from('construction_category_supervisors')
+    .update({ is_active: false })
+    .eq('id', req.params.id);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ removed: true });
+});
+
+// Reactivate a previously removed supervisor–category assignment
+app.post('/api/construction/category-assignment/:id/reactivate', async (req, res) => {
+  const { requestedBy } = req.body;
+  const actor = await getActorRole(requestedBy);
+  if (!['accounts', 'admin', 'super_admin'].includes(actor.role) && !actor.is_super_admin) {
+    return res.status(403).json({ error: 'Not authorised' });
+  }
+  const { error } = await supabase
+    .from('construction_category_supervisors')
+    .update({ is_active: true })
+    .eq('id', req.params.id);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ reactivated: true });
+});
+
 // Find-or-create a self-worker record so a supervisor can be marked in their own attendance list
 app.post('/api/construction/self-worker', async (req, res) => {
   const { category_supervisor_id, supervisor_id, worker_type, requestedBy } = req.body;
@@ -7648,12 +7725,12 @@ app.post('/api/construction/self-worker', async (req, res) => {
   res.json(data);
 });
 
-// All active category-supervisor assignments (for rate proposal dropdowns)
+// All category-supervisor assignments — includes inactive so setup UI can show/reactivate them
 app.get('/api/construction/category-supervisors', async (req, res) => {
   const { data, error } = await supabase
     .from('construction_category_supervisors')
-    .select('id, approved_rate, construction_categories(name), construction_supervisors(name)')
-    .eq('is_active', true);
+    .select('id, approved_rate, is_active, construction_categories(name), construction_supervisors(name)')
+    .order('is_active', { ascending: false }); // active first
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
 });

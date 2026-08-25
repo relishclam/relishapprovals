@@ -11342,14 +11342,18 @@ const ConstructionAttendanceSiteLeadPage = ({ attendanceDate = TODAY_DATE, onBac
 
   const handleSubmit = async () => {
     const records = [];
+    const deletedWorkerIds = []; // workers unchecked that had existing non-vouchered records
     let hasError = false;
     supervisors.forEach(sup => {
       (sup.workers || []).forEach(w => {
         const ws = workerState[w.id];
-        if (!ws) return;
-        const val = computeValue(ws);
-        if (val === null) { addToast(`Enter valid hours (0.5 – 7.5) for ${w.name}`, 'error'); hasError = true; return; }
-        records.push({ category_id: selectedCat.id, supervisor_id: sup.id, worker_id: w.id, attendance_value: val });
+        if (ws) {
+          const val = computeValue(ws);
+          if (val === null) { addToast(`Enter valid hours (0.5 – 7.5) for ${w.name}`, 'error'); hasError = true; return; }
+          records.push({ category_id: selectedCat.id, supervisor_id: sup.id, worker_id: w.id, attendance_value: val });
+        } else if (existing[w.id] && !existing[w.id].voucher_id) {
+          deletedWorkerIds.push(w.id);
+        }
       });
     });
     if (hasError) return;
@@ -11381,12 +11385,15 @@ const ConstructionAttendanceSiteLeadPage = ({ attendanceDate = TODAY_DATE, onBac
         } catch (e) { addToast('Could not add supervisor as worker: ' + e.message, 'error'); return; }
       }
     }
-    if (!records.length) { addToast('Select at least one worker before saving.', 'error'); return; }
+    if (!records.length && !deletedWorkerIds.length) { addToast('No changes to save.', 'error'); return; }
     setSaving(true);
     try {
-      await constructionFetch('/attendance', { method: 'POST', body: JSON.stringify({ records, attendanceDate, requestedBy: user.id }) });
-      setSubmitted(true);
-      addToast(`Attendance saved for ${records.length} worker(s).`);
+      const result = await constructionFetch('/attendance', { method: 'POST', body: JSON.stringify({ records, categoryId: selectedCat.id, deletedWorkerIds, attendanceDate, requestedBy: user.id }) });
+      setSubmitted(records.length > 0);
+      const parts = [];
+      if (result.saved > 0) parts.push(`Attendance saved for ${result.saved} worker(s).`);
+      if (result.deleted > 0) parts.push(`${result.deleted} record(s) removed.`);
+      addToast(parts.join(' ') || 'Attendance updated.');
       loadCategory(selectedCat);
     } catch (e) { addToast('Error saving: ' + e.message, 'error'); }
     setSaving(false);
@@ -11401,6 +11408,9 @@ const ConstructionAttendanceSiteLeadPage = ({ attendanceDate = TODAY_DATE, onBac
     const selfMarked   = supSelfState[sup.id] ? 1 : 0;
     return s + workerMarked + selfMarked;
   }, 0);
+  // Count workers with existing records that are now unchecked (pending deletion)
+  const pendingDeleteCount = supervisors.reduce((s, sup) =>
+    s + (sup.workers || []).filter(w => existing[w.id] && !workerState[w.id] && !existing[w.id].voucher_id).length, 0);
   // Always show the attendance grid when supervisors exist — each has the self-worker toggle
   const hasNoWorkers = false;
 
@@ -11621,10 +11631,14 @@ const ConstructionAttendanceSiteLeadPage = ({ attendanceDate = TODAY_DATE, onBac
           )}
           {totalWorkers > 0 && (
             <div style={{ position: 'sticky', bottom: 16 }}>
-              <button onClick={handleSubmit} disabled={saving || markedCount === 0}
-                style={{ width: '100%', background: '#4f46e5', color: '#fff', border: 'none', borderRadius: 12, padding: '14px', fontSize: 15, fontWeight: 600,
-                  cursor: markedCount === 0 ? 'not-allowed' : 'pointer', opacity: markedCount === 0 ? 0.4 : 1, boxShadow: '0 4px 12px rgba(79,70,229,0.3)' }}>
-                {saving ? 'Saving…' : `Save Attendance · ${markedCount} of ${totalWorkers}`}
+              <button onClick={handleSubmit} disabled={saving || (markedCount === 0 && pendingDeleteCount === 0)}
+                style={{ width: '100%', background: pendingDeleteCount > 0 && markedCount === 0 ? '#dc2626' : '#4f46e5', color: '#fff', border: 'none', borderRadius: 12, padding: '14px', fontSize: 15, fontWeight: 600,
+                  cursor: (markedCount === 0 && pendingDeleteCount === 0) ? 'not-allowed' : 'pointer',
+                  opacity: (markedCount === 0 && pendingDeleteCount === 0) ? 0.4 : 1, boxShadow: '0 4px 12px rgba(79,70,229,0.3)' }}>
+                {saving ? 'Saving…'
+                  : pendingDeleteCount > 0 && markedCount === 0 ? `Remove ${pendingDeleteCount} record(s)`
+                  : pendingDeleteCount > 0 ? `Save ${markedCount} · Remove ${pendingDeleteCount}`
+                  : `Save Attendance · ${markedCount} of ${totalWorkers}`}
               </button>
             </div>
           )}
@@ -11896,6 +11910,7 @@ const ConstructionHistoryPage = () => {
 
 const ConstructionDuesPage = () => {
   const { user, addToast } = useApp();
+  const isAdmin = user.role === 'admin' || user.isSuperAdmin;
   const [categories, setCategories]   = useState([]);
   const [selectedCat, setSelectedCat] = useState('');
   const [dues, setDues]               = useState([]);
@@ -11949,11 +11964,27 @@ const ConstructionDuesPage = () => {
 
   const createVoucher = async () => {
     if (!selectedDues.length) { addToast('Select at least one supervisor', 'error'); return; }
-    if (selectedDues.some(d => !d.approved_rate)) { addToast(`Missing approved rate for some supervisors`, 'error'); return; }
+    // total_dues is null when no rate at all is configured (supervisor-level or worker-type)
+    if (selectedDues.some(d => d.total_dues === null || d.total_dues === undefined)) {
+      addToast('Rate not configured for some supervisors — set an approved rate in Rate Approvals first', 'error'); return;
+    }
     setCreating(true);
     try {
       const result = await constructionFetch('/vouchers', { method: 'POST', body: JSON.stringify({ category_id: selectedCat, supervisor_ids: selectedDues.map(d => d.supervisor_id), requestedBy: user.id }) });
       addToast(`Voucher ${result.voucher_number} created — ${formatRupees(result.total_amount)}`);
+      loadDues(); loadVouchers(); setShowVouchers(true);
+    } catch (e) { addToast('Failed: ' + e.message, 'error'); }
+    setCreating(false);
+  };
+
+  const settleOutside = async () => {
+    const amount = window.prompt('Enter total amount already paid outside this system (₹):', '0');
+    if (amount === null) return;
+    const notes = window.prompt('Notes (optional — e.g. "Cash paid on 24 Aug"):', 'Settled outside system') ?? 'Settled outside system';
+    setCreating(true);
+    try {
+      const result = await constructionFetch('/vouchers/settle', { method: 'POST', body: JSON.stringify({ category_id: selectedCat, supervisor_ids: selectedDues.map(d => d.supervisor_id), total_amount: amount, notes, requestedBy: user.id }) });
+      addToast(`${result.cleared} record(s) cleared as settled outside system.`);
       loadDues(); loadVouchers(); setShowVouchers(true);
     } catch (e) { addToast('Failed: ' + e.message, 'error'); }
     setCreating(false);
@@ -12043,11 +12074,19 @@ const ConstructionDuesPage = () => {
                 </div>
               ))}
               {selectedDues.length > 0 && (
-                <div style={{ background: '#eef2ff', padding: '14px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div style={{ background: '#eef2ff', padding: '14px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
                   <div>
                     <div style={{ fontWeight: 600, color: '#3730a3', fontSize: 14 }}>{selectedDues.length} supervisor(s) · {formatRupees(totalSelected)}</div>
                   </div>
-                  <button onClick={createVoucher} disabled={creating} className="btn btn-primary">{creating ? 'Creating…' : 'Create Voucher →'}</button>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    {isAdmin && (
+                      <button onClick={settleOutside} disabled={creating}
+                        style={{ padding: '8px 14px', borderRadius: 8, border: '1px solid #fca5a5', background: '#fff5f5', color: '#dc2626', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
+                        {creating ? '…' : '✓ Settled Outside'}
+                      </button>
+                    )}
+                    <button onClick={createVoucher} disabled={creating} className="btn btn-primary">{creating ? 'Creating…' : 'Create Voucher →'}</button>
+                  </div>
                 </div>
               )}
             </div>
@@ -12248,6 +12287,24 @@ const ConstructionSetupPage = () => {
     } catch (e) { addToast(e.message, 'error'); }
   };
 
+  const removeAssignment = async (csId, label) => {
+    if (!window.confirm(`Remove "${label}" from this category? Their past attendance is preserved. You can reactivate later.`)) return;
+    try {
+      await constructionFetch(`/category-assignment/${csId}`, { method: 'DELETE', body: JSON.stringify({ requestedBy: user.id }) });
+      addToast(`${label} removed from category.`);
+      setSelectedCatSup('');
+      load();
+    } catch (e) { addToast(e.message, 'error'); }
+  };
+
+  const reactivateAssignment = async (csId) => {
+    try {
+      await constructionFetch(`/category-assignment/${csId}/reactivate`, { method: 'POST', body: JSON.stringify({ requestedBy: user.id }) });
+      addToast('Assignment reactivated.');
+      load();
+    } catch (e) { addToast(e.message, 'error'); }
+  };
+
   const addCategory = async () => {
     if (!newCat.name) { addToast('Category name is required', 'error'); return; }
     setSaving(true);
@@ -12426,13 +12483,37 @@ const ConstructionSetupPage = () => {
           <div style={{ display: 'flex', gap: 12, marginBottom: 16, alignItems: 'center', flexWrap: 'wrap' }}>
             <select value={selectedCatSup} onChange={e => setSelectedCatSup(e.target.value)} className="form-input" style={{ width: 'auto', flex: 1, minWidth: 200 }}>
               <option value="">— Select Supervisor · Category —</option>
-              {catSups.map(cs => (
+              {catSups.filter(cs => cs.is_active !== false).map(cs => (
                 <option key={cs.id} value={cs.id}>
                   {cs.construction_supervisors?.name} · {cs.construction_categories?.name}
                 </option>
               ))}
+              {catSups.some(cs => cs.is_active === false) && (
+                <optgroup label="── Removed (inactive) ──">
+                  {catSups.filter(cs => cs.is_active === false).map(cs => (
+                    <option key={cs.id} value={cs.id}>
+                      ✕ {cs.construction_supervisors?.name} · {cs.construction_categories?.name}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
             </select>
-            {selectedCatSup && (
+            {selectedCatSup && (() => {
+              const cs = catSups.find(c => c.id === selectedCatSup);
+              const label = `${cs?.construction_supervisors?.name} · ${cs?.construction_categories?.name}`;
+              return cs?.is_active === false ? (
+                <button onClick={() => reactivateAssignment(selectedCatSup)}
+                  style={{ padding: '7px 14px', borderRadius: 8, border: '1px solid #6ee7b7', background: '#ecfdf5', color: '#065f46', fontSize: 13, cursor: 'pointer', fontWeight: 600, whiteSpace: 'nowrap' }}>
+                  ↩ Reactivate
+                </button>
+              ) : (
+                <button onClick={() => removeAssignment(selectedCatSup, label)}
+                  style={{ padding: '7px 14px', borderRadius: 8, border: '1px solid #fecaca', background: '#fff5f5', color: '#dc2626', fontSize: 13, cursor: 'pointer', fontWeight: 600, whiteSpace: 'nowrap' }}>
+                  Remove from Category
+                </button>
+              );
+            })()}
+            {selectedCatSup && catSups.find(c => c.id === selectedCatSup)?.is_active !== false && (
               <button onClick={() => setShowAddWorker(!showAddWorker)} className="btn btn-primary">+ Add Worker</button>
             )}
           </div>
@@ -13499,7 +13580,7 @@ const App = () => {
   const renderPage = () => {
     if (user.role === 'auditor') return <VoucherList filter="completed" />;
     if (user.role === 'staff_lead') return <ConstructionAttendanceSiteLeadPage />;
-    switch(currentPage) { case 'dashboard': return <Dashboard />; case 'create': return (user.role === 'accounts' || user.isSuperAdmin) ? <CreateVoucher /> : <Dashboard />; case 'drafts': return (user.role === 'accounts' || user.isSuperAdmin) ? <VoucherList filter="draft" /> : <Dashboard />; case 'pending': return <VoucherList filter="pending" />; case 'approved': return <VoucherList filter="approved" />; case 'completed': return <VoucherList filter="completed" />; case 'awaiting_payment': return <VoucherList filter="awaiting_payment" />; case 'paid': return <VoucherList filter="paid" />; case 'all': return <VoucherList filter="all" />; case 'users': return user.isSuperAdmin ? <UsersManagement /> : <Dashboard />; case 'payees': return (user.role === 'accounts' || user.isSuperAdmin) ? <PayeesManagement /> : <Dashboard />; case 'accounts': return (user.role === 'accounts' || user.isSuperAdmin) ? <AccountsManagement /> : <Dashboard />; case 'pay-from-accounts': return (user.role === 'accounts' || user.isSuperAdmin) ? <PaymentAccountsManagement /> : <Dashboard />; case 'suspense': return <SuspenseVoucherList onViewDetail={(id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); }} />; case 'create-suspense': return (user.role === 'accounts' || user.isSuperAdmin) ? <SuspenseVoucherForm onCreated={() => { setCurrentPage('suspense'); }} onViewDetail={(id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); }} /> : <Dashboard />; case 'suspense-detail': return suspenseDetailId ? <SuspenseVoucherDetail suspenseId={suspenseDetailId} onBack={() => setCurrentPage('suspense')} /> : <SuspenseVoucherList onViewDetail={(id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); }} />; case 'reconcile': return (user.role === 'accounts' || user.isSuperAdmin) ? <ReconcileReceipts /> : <Dashboard />; case 'unassigned-receipts': return (user.role === 'accounts' || user.isSuperAdmin) ? <UnassignedReceiptsPage /> : <Dashboard />; case 'construction-attendance': return <ConstructionAttendanceSiteLeadPage />; case 'construction-log': return <ConstructionHistoryPage />; case 'construction-log-legacy': return (user.role === 'accounts' || user.role === 'admin' || user.isSuperAdmin) ? <ConstructionAttendanceLogPage /> : <Dashboard />; case 'construction-dues': return (user.role === 'accounts' || user.isSuperAdmin) ? <ConstructionDuesPage /> : <Dashboard />; case 'construction-setup': return (user.role === 'accounts' || user.role === 'admin' || user.isSuperAdmin) ? <ConstructionSetupPage /> : <Dashboard />; case 'construction-rates': return (user.role === 'accounts' || user.role === 'admin' || user.isSuperAdmin) ? <ConstructionRateApprovalsPage /> : <Dashboard />; default: return <Dashboard />; } };
+    switch(currentPage) { case 'dashboard': return <Dashboard />; case 'create': return (user.role === 'accounts' || user.isSuperAdmin) ? <CreateVoucher /> : <Dashboard />; case 'drafts': return (user.role === 'accounts' || user.isSuperAdmin) ? <VoucherList filter="draft" /> : <Dashboard />; case 'pending': return <VoucherList filter="pending" />; case 'approved': return <VoucherList filter="approved" />; case 'completed': return <VoucherList filter="completed" />; case 'awaiting_payment': return <VoucherList filter="awaiting_payment" />; case 'paid': return <VoucherList filter="paid" />; case 'all': return <VoucherList filter="all" />; case 'users': return user.isSuperAdmin ? <UsersManagement /> : <Dashboard />; case 'payees': return (user.role === 'accounts' || user.isSuperAdmin) ? <PayeesManagement /> : <Dashboard />; case 'accounts': return (user.role === 'accounts' || user.isSuperAdmin) ? <AccountsManagement /> : <Dashboard />; case 'pay-from-accounts': return (user.role === 'accounts' || user.isSuperAdmin) ? <PaymentAccountsManagement /> : <Dashboard />; case 'suspense': return <SuspenseVoucherList onViewDetail={(id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); }} />; case 'create-suspense': return (user.role === 'accounts' || user.isSuperAdmin) ? <SuspenseVoucherForm onCreated={() => { setCurrentPage('suspense'); }} onViewDetail={(id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); }} /> : <Dashboard />; case 'suspense-detail': return suspenseDetailId ? <SuspenseVoucherDetail suspenseId={suspenseDetailId} onBack={() => setCurrentPage('suspense')} /> : <SuspenseVoucherList onViewDetail={(id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); }} />; case 'reconcile': return (user.role === 'accounts' || user.isSuperAdmin) ? <ReconcileReceipts /> : <Dashboard />; case 'unassigned-receipts': return (user.role === 'accounts' || user.isSuperAdmin) ? <UnassignedReceiptsPage /> : <Dashboard />; case 'construction-attendance': return <ConstructionAttendanceSiteLeadPage />; case 'construction-log': return <ConstructionHistoryPage />; case 'construction-log-legacy': return (user.role === 'accounts' || user.role === 'admin' || user.isSuperAdmin) ? <ConstructionAttendanceLogPage /> : <Dashboard />; case 'construction-dues': return (user.role === 'accounts' || user.role === 'admin' || user.isSuperAdmin) ? <ConstructionDuesPage /> : <Dashboard />; case 'construction-setup': return (user.role === 'accounts' || user.role === 'admin' || user.isSuperAdmin) ? <ConstructionSetupPage /> : <Dashboard />; case 'construction-rates': return (user.role === 'accounts' || user.role === 'admin' || user.isSuperAdmin) ? <ConstructionRateApprovalsPage /> : <Dashboard />; default: return <Dashboard />; } };
 
   React.useEffect(() => {
     // After React renders the new page, scroll main-content to top.
@@ -13648,8 +13729,8 @@ const App = () => {
             {user.isSuperAdmin && <div className="nav-section"><div className="nav-section-title">Admin Dashboard</div><div className={`nav-item ${currentPage === 'users' ? 'active' : ''}`} onClick={() => handleNavClick('users')}>{Icons.users} User Management</div></div>}
             {(user.role === 'accounts' || user.role === 'admin' || user.isSuperAdmin) && <div className="nav-section"><div className="nav-section-title">Construction</div>
               <div className={`nav-item ${currentPage === 'construction-log' ? 'active' : ''}`} onClick={() => handleNavClick('construction-log')}>📅 Attendance History</div>
-              {(user.role === 'accounts' || user.isSuperAdmin) && <div className={`nav-item ${currentPage === 'construction-dues' ? 'active' : ''}`} onClick={() => handleNavClick('construction-dues')}>💰 Labour Dues</div>}
-              {(user.role === 'accounts' || user.isSuperAdmin) && <div className={`nav-item ${currentPage === 'construction-setup' ? 'active' : ''}`} onClick={() => handleNavClick('construction-setup')}>⚙️ Labour Setup</div>}
+              {(user.role === 'accounts' || user.role === 'admin' || user.isSuperAdmin) && <div className={`nav-item ${currentPage === 'construction-dues' ? 'active' : ''}`} onClick={() => handleNavClick('construction-dues')}>💰 Labour Dues</div>}
+              {(user.role === 'accounts' || user.role === 'admin' || user.isSuperAdmin) && <div className={`nav-item ${currentPage === 'construction-setup' ? 'active' : ''}`} onClick={() => handleNavClick('construction-setup')}>⚙️ Labour Setup</div>}
               {(user.role === 'admin' || user.isSuperAdmin) && <div className={`nav-item ${currentPage === 'construction-rates' ? 'active' : ''}`} onClick={() => handleNavClick('construction-rates')}>📊 Rate Approvals</div>}
             </div>}
             </>)}
@@ -13725,8 +13806,8 @@ const App = () => {
                 {user.isSuperAdmin && <div className="nav-section"><div className="nav-section-title">Admin Dashboard</div><div className={`nav-item ${currentPage === 'users' ? 'active' : ''}`} onClick={() => handleNavClick('users')}>{Icons.users} User Management</div></div>}
                 {(user.role === 'accounts' || user.role === 'admin' || user.isSuperAdmin) && <div className="nav-section"><div className="nav-section-title">Construction</div>
                   <div className={`nav-item ${currentPage === 'construction-log' ? 'active' : ''}`} onClick={() => handleNavClick('construction-log')}>📅 Attendance History</div>
-                  {(user.role === 'accounts' || user.isSuperAdmin) && <div className={`nav-item ${currentPage === 'construction-dues' ? 'active' : ''}`} onClick={() => handleNavClick('construction-dues')}>💰 Labour Dues</div>}
-                  {(user.role === 'accounts' || user.isSuperAdmin) && <div className={`nav-item ${currentPage === 'construction-setup' ? 'active' : ''}`} onClick={() => handleNavClick('construction-setup')}>⚙️ Labour Setup</div>}
+                  {(user.role === 'accounts' || user.role === 'admin' || user.isSuperAdmin) && <div className={`nav-item ${currentPage === 'construction-dues' ? 'active' : ''}`} onClick={() => handleNavClick('construction-dues')}>💰 Labour Dues</div>}
+                  {(user.role === 'accounts' || user.role === 'admin' || user.isSuperAdmin) && <div className={`nav-item ${currentPage === 'construction-setup' ? 'active' : ''}`} onClick={() => handleNavClick('construction-setup')}>⚙️ Labour Setup</div>}
                   {(user.role === 'accounts' || user.role === 'admin' || user.isSuperAdmin) && <div className={`nav-item ${currentPage === 'construction-rates' ? 'active' : ''}`} onClick={() => handleNavClick('construction-rates')}>📊 Rate Approvals</div>}
                 </div>}
                 </>)}
