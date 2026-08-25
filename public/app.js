@@ -12047,32 +12047,40 @@ const ConstructionDuesPage = () => {
                 </label>
                 <span style={{ fontSize: 12, color: '#94a3b8' }}>Worker-days unpaid</span>
               </div>
-              {dues.map(d => (
-                <div key={d.supervisor_id} onClick={() => !d.approved_rate ? null : toggle(d.supervisor_id)}
-                  style={{ padding: '14px 16px', borderBottom: '1px solid #f1f5f9', display: 'flex', alignItems: 'flex-start', gap: 12, cursor: d.approved_rate ? 'pointer' : 'default', background: selected[d.supervisor_id] ? '#f8fafc' : '#fff' }}>
-                  <input type="checkbox" checked={!!selected[d.supervisor_id]} disabled={!d.approved_rate}
-                    onChange={() => d.approved_rate && toggle(d.supervisor_id)} onClick={e => e.stopPropagation()}
+              {dues.map(d => {
+                // rateOk: dues are calculable — either via worker-type rates or supervisor-level rate
+                const rateOk = d.total_dues !== null && d.total_dues !== undefined;
+                // effective rate per day for display (total_dues / total_days)
+                const effectiveRate = rateOk && d.total_days > 0 ? d.total_dues / d.total_days : null;
+                return (
+                <div key={d.supervisor_id} onClick={() => rateOk ? toggle(d.supervisor_id) : null}
+                  style={{ padding: '14px 16px', borderBottom: '1px solid #f1f5f9', display: 'flex', alignItems: 'flex-start', gap: 12, cursor: rateOk ? 'pointer' : 'default', background: selected[d.supervisor_id] ? '#f8fafc' : '#fff' }}>
+                  <input type="checkbox" checked={!!selected[d.supervisor_id]} disabled={!rateOk}
+                    onChange={() => rateOk && toggle(d.supervisor_id)} onClick={e => e.stopPropagation()}
                     style={{ marginTop: 3 }} />
                   <div style={{ flex: 1 }}>
                     <div style={{ fontWeight: 600, color: '#1e293b' }}>{d.supervisor_name}</div>
                     <div style={{ fontSize: 12, color: '#94a3b8' }}>{d.mobile} · UPI: {d.upi_id || '—'}</div>
-                    {!d.approved_rate && (
+                    {!rateOk && (
                       <div style={{ marginTop: 4, fontSize: 12, color: '#b45309', background: '#fef3c7', padding: '3px 8px', borderRadius: 6, display: 'inline-block' }}>
-                        ⚠️ No rate set — go to Labour Setup → Assign Supervisor to set an approved rate before creating a voucher
+                        ⚠️ No rate configured — set a Worker Type Rate in Rate Approvals (e.g. Helper ₹1100/day for Civil)
                       </div>
                     )}
                   </div>
                   <div style={{ textAlign: 'right', fontSize: 13 }}>
-                    <div style={{ fontWeight: 600, color: d.approved_rate ? '#1e293b' : '#94a3b8' }}>
-                      {d.approved_rate ? formatRupees(d.total_dues) : `${d.total_days} day(s) recorded`}
+                    <div style={{ fontWeight: 600, color: rateOk ? '#1e293b' : '#94a3b8' }}>
+                      {rateOk ? formatRupees(d.total_dues) : `${d.total_days} day(s) recorded`}
                     </div>
                     <div style={{ fontSize: 12, color: '#94a3b8' }}>
-                      {d.total_days} worker-days × {d.approved_rate ? formatRupees(d.approved_rate) : <span style={{ color: '#ef4444', fontWeight: 600 }}>Rate missing</span>}
+                      {d.total_days} worker-days × {rateOk
+                        ? <span>{formatRupees(effectiveRate)}<span style={{ fontSize: 10, color: '#cbd5e1' }}> avg</span></span>
+                        : <span style={{ color: '#ef4444', fontWeight: 600 }}>Rate not set</span>}
                     </div>
                     <div style={{ fontSize: 11, color: '#94a3b8' }}>{d.earliest_date} – {d.latest_date}</div>
                   </div>
                 </div>
-              ))}
+                );
+              })}
               {selectedDues.length > 0 && (
                 <div style={{ background: '#eef2ff', padding: '14px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
                   <div>
