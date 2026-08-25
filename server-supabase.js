@@ -7513,7 +7513,8 @@ app.post('/api/construction/vouchers', async (req, res) => {
   if (vErr) return res.status(500).json({ error: vErr.message });
   const lines = dues.map(d => ({
     voucher_id: voucher.id, supervisor_id: d.supervisor_id,
-    days_count: d.total_days, rate_applied: d.approved_rate,
+    // rate_applied stores the supervisor-level rate or the effective avg rate when worker-type rates are used
+    days_count: d.total_days, rate_applied: d.approved_rate ?? (d.total_days > 0 ? +(parseFloat(d.total_dues) / parseFloat(d.total_days)).toFixed(2) : null),
     amount: d.total_dues, upi_id_snapshot: d.upi_id,
   }));
   const { error: lErr } = await supabase.from('construction_voucher_lines').insert(lines);
