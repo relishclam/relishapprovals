@@ -11235,7 +11235,7 @@ const constructionFetch = async (path, opts = {}) => {
 };
 
 // ── Staff Lead — attendance marking screen ────────────────────────────────────
-const ConstructionAttendanceSiteLeadPage = () => {
+const ConstructionAttendanceSiteLeadPage = ({ attendanceDate = TODAY_DATE, onBack = null }) => {
   const { user, addToast } = useApp();
   const [categories, setCategories]   = useState([]);
   const [selectedCat, setSelectedCat] = useState(null);
@@ -11243,13 +11243,14 @@ const ConstructionAttendanceSiteLeadPage = () => {
   // workerState: worker_id → { type: 'full'|'half'|'partial', hours: string }
   const [workerState, setWorkerState] = useState({});
   const [existing, setExisting]       = useState({});  // worker_id → DB record
-  // supSelfState: supervisor_id → { type, hours } — for supervisors without a self-worker record
+  // supSelfState: supervisor_id → { type, hours, workerType } — for supervisors without a self-worker record
   const [supSelfState, setSupSelfState] = useState({});
   const [loading, setLoading]         = useState(false);
   const [saving, setSaving]           = useState(false);
   const [submitted, setSubmitted]     = useState(false);
 
-  const todayDisplay = new Date().toLocaleDateString('en-IN', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' });
+  const isPastDate = attendanceDate < TODAY_DATE;
+  const dateDisplay = new Date(attendanceDate + 'T00:00:00').toLocaleDateString('en-IN', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' });
 
   useEffect(() => {
     constructionFetch('/categories')
@@ -11272,7 +11273,7 @@ const ConstructionAttendanceSiteLeadPage = () => {
     try {
       const [sups, attData] = await Promise.all([
         constructionFetch(`/categories/${cat.id}/supervisors`),
-        constructionFetch(`/attendance?category_id=${cat.id}&date=${TODAY_DATE}`),
+        constructionFetch(`/attendance?category_id=${cat.id}&date=${attendanceDate}`),
       ]);
       setSupervisors(sups);
       const existingMap = {}, stateMap = {};
@@ -11317,7 +11318,7 @@ const ConstructionAttendanceSiteLeadPage = () => {
   const toggleSupSelf = (supId, checked) => {
     setSupSelfState(p => {
       const next = { ...p };
-      if (checked) next[supId] = { type: 'full', hours: '' };
+      if (checked) next[supId] = { type: 'full', hours: '', workerType: '' };
       else delete next[supId];
       return next;
     });
@@ -11325,12 +11326,17 @@ const ConstructionAttendanceSiteLeadPage = () => {
   };
 
   const setSupSelfType = (supId, type) => {
-    setSupSelfState(p => ({ ...p, [supId]: { type, hours: p[supId]?.hours || '' } }));
+    setSupSelfState(p => ({ ...p, [supId]: { ...p[supId], type, hours: p[supId]?.hours || '' } }));
     setSubmitted(false);
   };
 
   const setSupSelfHours = (supId, hours) => {
     setSupSelfState(p => ({ ...p, [supId]: { ...p[supId], hours } }));
+    setSubmitted(false);
+  };
+
+  const setSupSelfWorkerType = (supId, workerType) => {
+    setSupSelfState(p => ({ ...p, [supId]: { ...p[supId], workerType } }));
     setSubmitted(false);
   };
 
@@ -11357,21 +11363,28 @@ const ConstructionAttendanceSiteLeadPage = () => {
           addToast(`Enter valid hours (0.5 – 7.5) for ${sup?.name || 'supervisor'}`, 'error');
           return;
         }
+        if (!ws.workerType?.trim()) {
+          const sup = supervisors.find(s => s.id === supId);
+          addToast(`Select what ${sup?.name || 'the supervisor'} worked as (e.g. Mason, Helper) to set the correct pay rate`, 'error');
+          return;
+        }
         const sup = supervisors.find(s => s.id === supId);
         if (!sup) continue;
         try {
           const worker = await constructionFetch('/self-worker', {
             method: 'POST',
-            body: JSON.stringify({ category_supervisor_id: sup.category_supervisor_id, supervisor_id: sup.id, requestedBy: user.id }),
+            // worker_type stored on record is a label only; pay rate is resolved per-day via attendance.worker_type
+            body: JSON.stringify({ category_supervisor_id: sup.category_supervisor_id, supervisor_id: sup.id, worker_type: 'Supervisor', requestedBy: user.id }),
           });
-          records.push({ category_id: selectedCat.id, supervisor_id: sup.id, worker_id: worker.id, attendance_value: val });
+          // Per-day worker_type goes on the attendance record, not the worker record
+          records.push({ category_id: selectedCat.id, supervisor_id: sup.id, worker_id: worker.id, attendance_value: val, worker_type: ws.workerType.trim() });
         } catch (e) { addToast('Could not add supervisor as worker: ' + e.message, 'error'); return; }
       }
     }
     if (!records.length) { addToast('Select at least one worker before saving.', 'error'); return; }
     setSaving(true);
     try {
-      await constructionFetch('/attendance', { method: 'POST', body: JSON.stringify({ records, requestedBy: user.id }) });
+      await constructionFetch('/attendance', { method: 'POST', body: JSON.stringify({ records, attendanceDate, requestedBy: user.id }) });
       setSubmitted(true);
       addToast(`Attendance saved for ${records.length} worker(s).`);
       loadCategory(selectedCat);
@@ -11392,20 +11405,23 @@ const ConstructionAttendanceSiteLeadPage = () => {
   const hasNoWorkers = false;
 
   const DateBadge = () => (
-    <div style={{ background: '#eef2ff', color: '#4338ca', fontSize: 12, fontWeight: 600, padding: '5px 12px', borderRadius: 20, display: 'inline-flex', alignItems: 'center', gap: 6, marginBottom: 16 }}>
-      📅 {todayDisplay}
+    <div style={{ background: isPastDate ? '#fef3c7' : '#eef2ff', color: isPastDate ? '#92400e' : '#4338ca', fontSize: 12, fontWeight: 600, padding: '5px 12px', borderRadius: 20, display: 'inline-flex', alignItems: 'center', gap: 6, marginBottom: 16 }}>
+      {isPastDate ? '📆' : '📅'} {dateDisplay}{isPastDate ? ' — editing past date' : ''}
     </div>
   );
 
   if (!selectedCat) {
     return (
       <div style={{ maxWidth: 480, margin: '0 auto', padding: '1.5rem 1rem' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
-          <div style={{ width: 36, height: 36, background: '#4f46e5', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 700, fontSize: 16 }}>
-            {user.name.charAt(0).toUpperCase()}
+        {onBack && <button onClick={onBack} style={{ background: 'none', border: 'none', color: '#4f46e5', cursor: 'pointer', fontSize: 14, marginBottom: 8 }}>← Back to Calendar</button>}
+        {!onBack && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
+            <div style={{ width: 36, height: 36, background: '#4f46e5', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 700, fontSize: 16 }}>
+              {user.name.charAt(0).toUpperCase()}
+            </div>
+            <div style={{ fontWeight: 600, color: '#1e293b' }}>{user.name} · Staff Lead</div>
           </div>
-          <div style={{ fontWeight: 600, color: '#1e293b' }}>{user.name} · Staff Lead</div>
-        </div>
+        )}
         <DateBadge />
         <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 12 }}>Select Category</div>
         {categories.length === 0 && <div style={{ textAlign: 'center', padding: '3rem', color: '#94a3b8', fontSize: 14 }}>No categories set up yet. Contact Accounts.</div>}
@@ -11477,6 +11493,29 @@ const ConstructionAttendanceSiteLeadPage = () => {
                           </label>
                           {supWs && (
                             <div style={{ marginLeft: 24, marginTop: 8 }}>
+                              {/* Worker-type determines the pay rate for this day — required on first save */}
+                              <div style={{ marginBottom: 8 }}>
+                                <label style={{ fontSize: 11, color: '#64748b', display: 'block', marginBottom: 3 }}>Worked as (sets pay rate):</label>
+                                <input
+                                  type="text"
+                                  list="sup-self-worker-type-list"
+                                  placeholder="e.g. Mason, Helper, Supervisor…"
+                                  value={supWs.workerType}
+                                  onChange={e => setSupSelfWorkerType(sup.id, e.target.value)}
+                                  style={{ width: '100%', padding: '5px 8px', border: `1px solid ${supWs.workerType ? '#a5b4fc' : '#fca5a5'}`, borderRadius: 6, fontSize: 12 }}
+                                />
+                                <datalist id="sup-self-worker-type-list">
+                                  <option value="Supervisor" />
+                                  <option value="Mason" />
+                                  <option value="Helper" />
+                                  <option value="Lead" />
+                                  <option value="Carpenter" />
+                                  <option value="Electrician" />
+                                  <option value="Painter" />
+                                  <option value="Plumber" />
+                                </datalist>
+                                {!supWs.workerType && <div style={{ fontSize: 10, color: '#ef4444', marginTop: 2 }}>Required — determines which rate is applied</div>}
+                              </div>
                               <div style={{ display: 'flex', gap: 6, marginBottom: supWs.type === 'partial' ? 8 : 0 }}>
                                 {[
                                   { key: 'full',    label: 'Full Day', color: '#10b981' },
@@ -11527,6 +11566,11 @@ const ConstructionAttendanceSiteLeadPage = () => {
                             />
                             <div style={{ flex: 1 }}>
                               <span style={{ fontWeight: 500, color: '#1e293b' }}>{w.name}</span>
+                              {w.notes === 'Self (gang lead)' && (
+                                <span style={{ fontSize: 10, fontWeight: 700, color: '#7c3aed', background: '#f3e8ff', padding: '1px 6px', borderRadius: 10, marginLeft: 6 }}>
+                                  {w.worker_type || 'Supervisor'}
+                                </span>
+                              )}
                               {w.mobile && <span style={{ fontSize: 11, color: '#94a3b8', marginLeft: 8 }}>{w.mobile}</span>}
                             </div>
                             {isVouchered && <span style={{ fontSize: 11, color: '#d97706', whiteSpace: 'nowrap' }}>Vouchered</span>}
@@ -11663,6 +11707,193 @@ const ConstructionAttendanceLogPage = () => {
 };
 
 // ── Dues & Voucher creation — Accounts ───────────────────────────────────────
+// ── Attendance History — calendar view ───────────────────────────────────────
+const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+
+const ConstructionHistoryPage = () => {
+  const { user, addToast } = useApp();
+  const now = new Date();
+  const [viewYear, setViewYear]       = useState(now.getFullYear());
+  const [viewMonth, setViewMonth]     = useState(now.getMonth()); // 0-indexed
+  const [markedDates, setMarkedDates] = useState(new Set());
+  const [selectedDate, setSelectedDate] = useState(null);
+  const [categories, setCategories]   = useState([]);
+  // editDate: when set, renders the marking form for that date instead of the read view
+  const [editDate, setEditDate]       = useState(null);
+
+  // Attendance data for selected date
+  const [dayRecords, setDayRecords]   = useState([]); // raw attendance rows
+  const [dayLoading, setDayLoading]   = useState(false);
+
+  const canEdit = user.role === 'staff_lead' || user.role === 'accounts' || user.role === 'admin' || user.isSuperAdmin;
+
+  // Load dots for current month
+  useEffect(() => {
+    constructionFetch(`/attendance-dates?year=${viewYear}&month=${viewMonth + 1}`)
+      .then(dates => setMarkedDates(new Set(dates)))
+      .catch(() => {});
+  }, [viewYear, viewMonth]);
+
+  useEffect(() => { constructionFetch('/categories').then(setCategories).catch(() => {}); }, []);
+
+  // Load all attendance records for the selected date
+  const loadDay = async (date) => {
+    setDayLoading(true);
+    try {
+      const data = await constructionFetch(`/attendance?date=${date}`);
+      setDayRecords(data);
+    } catch { addToast('Failed to load attendance', 'error'); }
+    setDayLoading(false);
+  };
+
+  const handleDateSelect = (dateStr) => {
+    if (dateStr > TODAY_DATE) return;
+    setSelectedDate(dateStr);
+    setEditDate(null);
+    loadDay(dateStr);
+  };
+
+  const prevMonth = () => {
+    if (viewMonth === 0) { setViewYear(y => y - 1); setViewMonth(11); }
+    else setViewMonth(m => m - 1);
+    setSelectedDate(null); setDayRecords([]);
+  };
+  const nextMonth = () => {
+    const nowDate = new Date();
+    if (viewYear === nowDate.getFullYear() && viewMonth === nowDate.getMonth()) return;
+    if (viewMonth === 11) { setViewYear(y => y + 1); setViewMonth(0); }
+    else setViewMonth(m => m + 1);
+    setSelectedDate(null); setDayRecords([]);
+  };
+
+  // Calendar grid values
+  const daysInMonth  = new Date(viewYear, viewMonth + 1, 0).getDate();
+  const firstWeekDay = new Date(viewYear, viewMonth, 1).getDay(); // 0=Sun
+  const padDate = (d) => `${viewYear}-${String(viewMonth + 1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+
+  // Group day records by category then supervisor
+  const grouped = dayRecords.reduce((acc, r) => {
+    const catKey = r.category_name || r.category_id;
+    if (!acc[catKey]) acc[catKey] = {};
+    const supKey = r.supervisor_name || r.supervisor_id;
+    if (!acc[catKey][supKey]) acc[catKey][supKey] = [];
+    acc[catKey][supKey].push(r);
+    return acc;
+  }, {});
+
+  const attLabel = v => v === 1 ? 'Full' : v === 0.5 ? 'Half' : `${+(v * 8).toFixed(1)}h`;
+
+  if (editDate) {
+    return <ConstructionAttendanceSiteLeadPage attendanceDate={editDate} onBack={() => { setEditDate(null); loadDay(selectedDate); }} />;
+  }
+
+  return (
+    <div style={{ maxWidth: 520, margin: '0 auto', padding: '1rem' }}>
+      {/* ── Month navigator ── */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+        <button onClick={prevMonth} style={{ background: 'none', border: '1px solid #e2e8f0', borderRadius: 8, padding: '6px 14px', cursor: 'pointer', fontWeight: 700, fontSize: 16, color: '#475569' }}>‹</button>
+        <div style={{ fontWeight: 700, fontSize: 16, color: '#1e293b' }}>{MONTH_NAMES[viewMonth]} {viewYear}</div>
+        <button onClick={nextMonth} disabled={viewYear === now.getFullYear() && viewMonth === now.getMonth()}
+          style={{ background: 'none', border: '1px solid #e2e8f0', borderRadius: 8, padding: '6px 14px', cursor: 'pointer', fontWeight: 700, fontSize: 16, color: '#475569', opacity: (viewYear === now.getFullYear() && viewMonth === now.getMonth()) ? 0.3 : 1 }}>›</button>
+      </div>
+
+      {/* ── Calendar grid ── */}
+      <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 12, overflow: 'hidden', marginBottom: 20 }}>
+        {/* Day-of-week headers */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
+          {['Su','Mo','Tu','We','Th','Fr','Sa'].map(d => (
+            <div key={d} style={{ textAlign: 'center', fontSize: 11, fontWeight: 700, color: '#94a3b8', padding: '6px 0' }}>{d}</div>
+          ))}
+        </div>
+        {/* Day cells */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', padding: '4px' }}>
+          {Array.from({ length: firstWeekDay }, (_, i) => <div key={`pad-${i}`} />)}
+          {Array.from({ length: daysInMonth }, (_, i) => {
+            const day = i + 1;
+            const dateStr = padDate(day);
+            const isFuture  = dateStr > TODAY_DATE;
+            const isToday   = dateStr === TODAY_DATE;
+            const isSelected = dateStr === selectedDate;
+            const hasDot    = markedDates.has(dateStr);
+            return (
+              <div key={day} onClick={() => !isFuture && handleDateSelect(dateStr)}
+                style={{ textAlign: 'center', padding: '6px 2px', margin: '1px', borderRadius: 8, cursor: isFuture ? 'default' : 'pointer', position: 'relative',
+                  background: isSelected ? '#4f46e5' : isToday ? '#eef2ff' : 'transparent',
+                  color: isSelected ? '#fff' : isFuture ? '#cbd5e1' : isToday ? '#4f46e5' : '#1e293b',
+                  fontWeight: isToday || isSelected ? 700 : 400, fontSize: 13 }}>
+                {day}
+                {hasDot && (
+                  <div style={{ width: 5, height: 5, borderRadius: '50%', background: isSelected ? 'rgba(255,255,255,0.8)' : '#10b981',
+                    position: 'absolute', bottom: 1, left: '50%', transform: 'translateX(-50%)' }} />
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* ── Day detail ── */}
+      {selectedDate && (
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+            <div style={{ fontWeight: 700, fontSize: 15, color: '#1e293b' }}>
+              📆 {new Date(selectedDate + 'T00:00:00').toLocaleDateString('en-IN', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' })}
+            </div>
+            {canEdit && (
+              <button onClick={() => setEditDate(selectedDate)}
+                style={{ background: '#4f46e5', color: '#fff', border: 'none', borderRadius: 8, padding: '6px 14px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
+                {dayRecords.length > 0 ? '✏️ Edit' : '+ Mark Attendance'}
+              </button>
+            )}
+          </div>
+          {dayLoading ? (
+            <div style={{ textAlign: 'center', padding: '2rem', color: '#64748b', fontSize: 13 }}>Loading…</div>
+          ) : dayRecords.length === 0 ? (
+            <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 12, padding: '2rem', textAlign: 'center', color: '#94a3b8', fontSize: 13 }}>
+              No attendance recorded for this date.
+              {canEdit && <div style={{ marginTop: 8, fontSize: 12 }}>Use <strong>Mark Attendance</strong> above to add records.</div>}
+            </div>
+          ) : (
+            Object.entries(grouped).map(([catName, supMap]) => (
+              <div key={catName} style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 12, overflow: 'hidden', marginBottom: 12 }}>
+                <div style={{ background: '#f8fafc', padding: '8px 14px', fontWeight: 700, fontSize: 13, color: '#1e293b', borderBottom: '1px solid #e2e8f0' }}>
+                  {CONSTRUCTION_CATEGORY_ICONS[catName] || '📋'} {catName}
+                </div>
+                {Object.entries(supMap).map(([supName, rows]) => (
+                  <div key={supName} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                    <div style={{ padding: '6px 14px', fontSize: 12, fontWeight: 600, color: '#475569', background: '#fafafa' }}>{supName}</div>
+                    {rows.map(r => (
+                      <div key={r.id} style={{ padding: '7px 14px 7px 26px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid #f8fafc' }}>
+                        <div>
+                          <span style={{ fontSize: 13, color: '#1e293b' }}>{r.worker_name}</span>
+                          {r.worker_type && <span style={{ fontSize: 10, color: '#7c3aed', background: '#f3e8ff', padding: '1px 6px', borderRadius: 10, marginLeft: 6, fontWeight: 600 }}>{r.worker_type}</span>}
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 12,
+                            background: r.attendance_value === 1 ? '#d1fae5' : r.attendance_value === 0.5 ? '#fef3c7' : '#e0e7ff',
+                            color:      r.attendance_value === 1 ? '#065f46' : r.attendance_value === 0.5 ? '#92400e' : '#3730a3' }}>
+                            {attLabel(r.attendance_value)}
+                          </span>
+                          {r.voucher_id && <span style={{ fontSize: 10, color: '#1d4ed8', background: '#dbeafe', padding: '1px 6px', borderRadius: 10, fontWeight: 600 }}>Vouchered</span>}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            ))
+          )}
+        </div>
+      )}
+      {!selectedDate && (
+        <div style={{ textAlign: 'center', padding: '2rem 0', color: '#94a3b8', fontSize: 13 }}>
+          Select a date to view attendance. Green dots = days with records.
+        </div>
+      )}
+    </div>
+  );
+};
+
 const ConstructionDuesPage = () => {
   const { user, addToast } = useApp();
   const [categories, setCategories]   = useState([]);
@@ -13178,7 +13409,7 @@ const App = () => {
   const renderPage = () => {
     if (user.role === 'auditor') return <VoucherList filter="completed" />;
     if (user.role === 'staff_lead') return <ConstructionAttendanceSiteLeadPage />;
-    switch(currentPage) { case 'dashboard': return <Dashboard />; case 'create': return (user.role === 'accounts' || user.isSuperAdmin) ? <CreateVoucher /> : <Dashboard />; case 'drafts': return (user.role === 'accounts' || user.isSuperAdmin) ? <VoucherList filter="draft" /> : <Dashboard />; case 'pending': return <VoucherList filter="pending" />; case 'approved': return <VoucherList filter="approved" />; case 'completed': return <VoucherList filter="completed" />; case 'awaiting_payment': return <VoucherList filter="awaiting_payment" />; case 'paid': return <VoucherList filter="paid" />; case 'all': return <VoucherList filter="all" />; case 'users': return user.isSuperAdmin ? <UsersManagement /> : <Dashboard />; case 'payees': return (user.role === 'accounts' || user.isSuperAdmin) ? <PayeesManagement /> : <Dashboard />; case 'accounts': return (user.role === 'accounts' || user.isSuperAdmin) ? <AccountsManagement /> : <Dashboard />; case 'pay-from-accounts': return (user.role === 'accounts' || user.isSuperAdmin) ? <PaymentAccountsManagement /> : <Dashboard />; case 'suspense': return <SuspenseVoucherList onViewDetail={(id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); }} />; case 'create-suspense': return (user.role === 'accounts' || user.isSuperAdmin) ? <SuspenseVoucherForm onCreated={() => { setCurrentPage('suspense'); }} onViewDetail={(id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); }} /> : <Dashboard />; case 'suspense-detail': return suspenseDetailId ? <SuspenseVoucherDetail suspenseId={suspenseDetailId} onBack={() => setCurrentPage('suspense')} /> : <SuspenseVoucherList onViewDetail={(id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); }} />; case 'reconcile': return (user.role === 'accounts' || user.isSuperAdmin) ? <ReconcileReceipts /> : <Dashboard />; case 'unassigned-receipts': return (user.role === 'accounts' || user.isSuperAdmin) ? <UnassignedReceiptsPage /> : <Dashboard />; case 'construction-attendance': return <ConstructionAttendanceSiteLeadPage />; case 'construction-log': return (user.role === 'accounts' || user.role === 'admin' || user.isSuperAdmin) ? <ConstructionAttendanceLogPage /> : <Dashboard />; case 'construction-dues': return (user.role === 'accounts' || user.isSuperAdmin) ? <ConstructionDuesPage /> : <Dashboard />; case 'construction-setup': return (user.role === 'accounts' || user.role === 'admin' || user.isSuperAdmin) ? <ConstructionSetupPage /> : <Dashboard />; case 'construction-rates': return (user.role === 'accounts' || user.role === 'admin' || user.isSuperAdmin) ? <ConstructionRateApprovalsPage /> : <Dashboard />; default: return <Dashboard />; } };
+    switch(currentPage) { case 'dashboard': return <Dashboard />; case 'create': return (user.role === 'accounts' || user.isSuperAdmin) ? <CreateVoucher /> : <Dashboard />; case 'drafts': return (user.role === 'accounts' || user.isSuperAdmin) ? <VoucherList filter="draft" /> : <Dashboard />; case 'pending': return <VoucherList filter="pending" />; case 'approved': return <VoucherList filter="approved" />; case 'completed': return <VoucherList filter="completed" />; case 'awaiting_payment': return <VoucherList filter="awaiting_payment" />; case 'paid': return <VoucherList filter="paid" />; case 'all': return <VoucherList filter="all" />; case 'users': return user.isSuperAdmin ? <UsersManagement /> : <Dashboard />; case 'payees': return (user.role === 'accounts' || user.isSuperAdmin) ? <PayeesManagement /> : <Dashboard />; case 'accounts': return (user.role === 'accounts' || user.isSuperAdmin) ? <AccountsManagement /> : <Dashboard />; case 'pay-from-accounts': return (user.role === 'accounts' || user.isSuperAdmin) ? <PaymentAccountsManagement /> : <Dashboard />; case 'suspense': return <SuspenseVoucherList onViewDetail={(id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); }} />; case 'create-suspense': return (user.role === 'accounts' || user.isSuperAdmin) ? <SuspenseVoucherForm onCreated={() => { setCurrentPage('suspense'); }} onViewDetail={(id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); }} /> : <Dashboard />; case 'suspense-detail': return suspenseDetailId ? <SuspenseVoucherDetail suspenseId={suspenseDetailId} onBack={() => setCurrentPage('suspense')} /> : <SuspenseVoucherList onViewDetail={(id) => { setSuspenseDetailId(id); setCurrentPage('suspense-detail'); }} />; case 'reconcile': return (user.role === 'accounts' || user.isSuperAdmin) ? <ReconcileReceipts /> : <Dashboard />; case 'unassigned-receipts': return (user.role === 'accounts' || user.isSuperAdmin) ? <UnassignedReceiptsPage /> : <Dashboard />; case 'construction-attendance': return <ConstructionAttendanceSiteLeadPage />; case 'construction-log': return <ConstructionHistoryPage />; case 'construction-log-legacy': return (user.role === 'accounts' || user.role === 'admin' || user.isSuperAdmin) ? <ConstructionAttendanceLogPage /> : <Dashboard />; case 'construction-dues': return (user.role === 'accounts' || user.isSuperAdmin) ? <ConstructionDuesPage /> : <Dashboard />; case 'construction-setup': return (user.role === 'accounts' || user.role === 'admin' || user.isSuperAdmin) ? <ConstructionSetupPage /> : <Dashboard />; case 'construction-rates': return (user.role === 'accounts' || user.role === 'admin' || user.isSuperAdmin) ? <ConstructionRateApprovalsPage /> : <Dashboard />; default: return <Dashboard />; } };
 
   React.useEffect(() => {
     // After React renders the new page, scroll main-content to top.
@@ -13326,7 +13557,7 @@ const App = () => {
             </div>}
             {user.isSuperAdmin && <div className="nav-section"><div className="nav-section-title">Admin Dashboard</div><div className={`nav-item ${currentPage === 'users' ? 'active' : ''}`} onClick={() => handleNavClick('users')}>{Icons.users} User Management</div></div>}
             {(user.role === 'accounts' || user.role === 'admin' || user.isSuperAdmin) && <div className="nav-section"><div className="nav-section-title">Construction</div>
-              <div className={`nav-item ${currentPage === 'construction-log' ? 'active' : ''}`} onClick={() => handleNavClick('construction-log')}>📋 Labour Log</div>
+              <div className={`nav-item ${currentPage === 'construction-log' ? 'active' : ''}`} onClick={() => handleNavClick('construction-log')}>📅 Attendance History</div>
               {(user.role === 'accounts' || user.isSuperAdmin) && <div className={`nav-item ${currentPage === 'construction-dues' ? 'active' : ''}`} onClick={() => handleNavClick('construction-dues')}>💰 Labour Dues</div>}
               {(user.role === 'accounts' || user.isSuperAdmin) && <div className={`nav-item ${currentPage === 'construction-setup' ? 'active' : ''}`} onClick={() => handleNavClick('construction-setup')}>⚙️ Labour Setup</div>}
               {(user.role === 'admin' || user.isSuperAdmin) && <div className={`nav-item ${currentPage === 'construction-rates' ? 'active' : ''}`} onClick={() => handleNavClick('construction-rates')}>📊 Rate Approvals</div>}
@@ -13403,7 +13634,7 @@ const App = () => {
                 </div>}
                 {user.isSuperAdmin && <div className="nav-section"><div className="nav-section-title">Admin Dashboard</div><div className={`nav-item ${currentPage === 'users' ? 'active' : ''}`} onClick={() => handleNavClick('users')}>{Icons.users} User Management</div></div>}
                 {(user.role === 'accounts' || user.role === 'admin' || user.isSuperAdmin) && <div className="nav-section"><div className="nav-section-title">Construction</div>
-                  <div className={`nav-item ${currentPage === 'construction-log' ? 'active' : ''}`} onClick={() => handleNavClick('construction-log')}>📋 Labour Log</div>
+                  <div className={`nav-item ${currentPage === 'construction-log' ? 'active' : ''}`} onClick={() => handleNavClick('construction-log')}>📅 Attendance History</div>
                   {(user.role === 'accounts' || user.isSuperAdmin) && <div className={`nav-item ${currentPage === 'construction-dues' ? 'active' : ''}`} onClick={() => handleNavClick('construction-dues')}>💰 Labour Dues</div>}
                   {(user.role === 'accounts' || user.isSuperAdmin) && <div className={`nav-item ${currentPage === 'construction-setup' ? 'active' : ''}`} onClick={() => handleNavClick('construction-setup')}>⚙️ Labour Setup</div>}
                   {(user.role === 'accounts' || user.role === 'admin' || user.isSuperAdmin) && <div className={`nav-item ${currentPage === 'construction-rates' ? 'active' : ''}`} onClick={() => handleNavClick('construction-rates')}>📊 Rate Approvals</div>}

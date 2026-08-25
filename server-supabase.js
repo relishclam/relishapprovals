@@ -7365,7 +7365,7 @@ app.get('/api/construction/attendance', async (req, res) => {
 
 // Attendance POST — upsert per-worker records
 app.post('/api/construction/attendance', async (req, res) => {
-  const { records, requestedBy } = req.body;
+  const { records, requestedBy, attendanceDate } = req.body;
   if (!records?.length) return res.status(400).json({ error: 'No records provided' });
   const actor = await getActorRole(requestedBy);
   if (!actor.role) return res.status(403).json({ error: 'Not authenticated' });
@@ -7374,12 +7374,15 @@ app.post('/api/construction/attendance', async (req, res) => {
     return res.status(403).json({ error: 'Not authorised' });
   }
   const today = new Date().toISOString().split('T')[0];
+  const dateToSave = (attendanceDate && /^\d{4}-\d{2}-\d{2}$/.test(attendanceDate)) ? attendanceDate : today;
+  if (dateToSave > today) return res.status(400).json({ error: 'Cannot mark attendance for future dates' });
   const upserts = records.map(r => ({
-    attendance_date:  today,
+    attendance_date:  dateToSave,
     category_id:      r.category_id,
     supervisor_id:    r.supervisor_id,
     worker_id:        r.worker_id,
     attendance_value: r.attendance_value,
+    worker_type:      r.worker_type || null,
     marked_by:        requestedBy,
     last_edited_by:   requestedBy,
     last_edited_at:   new Date().toISOString(),
@@ -7391,6 +7394,23 @@ app.post('/api/construction/attendance', async (req, res) => {
     .select('id, worker_id, attendance_value');
   if (error) return res.status(500).json({ error: error.message });
   res.json({ saved: data.length, records: data });
+});
+
+// Dates in a given month that have at least one attendance record (for calendar dots)
+app.get('/api/construction/attendance-dates', async (req, res) => {
+  const { year, month } = req.query;
+  if (!year || !month) return res.status(400).json({ error: 'year and month required' });
+  const mm = String(month).padStart(2, '0');
+  const lastDay = new Date(Number(year), Number(month), 0).getDate();
+  const from = `${year}-${mm}-01`;
+  const to   = `${year}-${mm}-${String(lastDay).padStart(2, '0')}`;
+  const { data, error } = await supabase
+    .from('construction_attendance')
+    .select('attendance_date')
+    .gte('attendance_date', from)
+    .lte('attendance_date', to);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json([...new Set(data.map(r => r.attendance_date))]);
 });
 
 // Unpaid dues per supervisor (aggregated from worker attendance)
@@ -7604,7 +7624,7 @@ app.post('/api/construction/assign', async (req, res) => {
 
 // Find-or-create a self-worker record so a supervisor can be marked in their own attendance list
 app.post('/api/construction/self-worker', async (req, res) => {
-  const { category_supervisor_id, supervisor_id, requestedBy } = req.body;
+  const { category_supervisor_id, supervisor_id, worker_type, requestedBy } = req.body;
   const actor = await getActorRole(requestedBy);
   const allowed = ['staff_lead', 'accounts', 'admin', 'super_admin'];
   if (!allowed.includes(actor.role) && !actor.is_super_admin) {
@@ -7622,7 +7642,7 @@ app.post('/api/construction/self-worker', async (req, res) => {
     .select('name, mobile').eq('id', supervisor_id).single();
   if (!sup) return res.status(404).json({ error: 'Supervisor not found' });
   const { data, error } = await supabase.from('construction_workers')
-    .insert({ category_supervisor_id, name: sup.name, mobile: sup.mobile || null, notes: 'Self (gang lead)', created_by: requestedBy })
+    .insert({ category_supervisor_id, name: sup.name, mobile: sup.mobile || null, notes: 'Self (gang lead)', worker_type: worker_type || 'Supervisor', created_by: requestedBy })
     .select('id, name, mobile').single();
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
