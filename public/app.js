@@ -11243,6 +11243,8 @@ const ConstructionAttendanceSiteLeadPage = () => {
   // workerState: worker_id → { type: 'full'|'half'|'partial', hours: string }
   const [workerState, setWorkerState] = useState({});
   const [existing, setExisting]       = useState({});  // worker_id → DB record
+  // supSelfState: supervisor_id → { type, hours } — for supervisors without a self-worker record
+  const [supSelfState, setSupSelfState] = useState({});
   const [loading, setLoading]         = useState(false);
   const [saving, setSaving]           = useState(false);
   const [submitted, setSubmitted]     = useState(false);
@@ -11277,6 +11279,7 @@ const ConstructionAttendanceSiteLeadPage = () => {
       attData.forEach(r => { existingMap[r.worker_id] = r; stateMap[r.worker_id] = valueToState(r.attendance_value); });
       setExisting(existingMap);
       setWorkerState(stateMap);
+      setSupSelfState({});
       if (attData.length > 0) setSubmitted(true);
     } catch (e) { addToast('Failed to load: ' + e.message, 'error'); }
     setLoading(false);
@@ -11311,6 +11314,26 @@ const ConstructionAttendanceSiteLeadPage = () => {
     setSubmitted(false);
   };
 
+  const toggleSupSelf = (supId, checked) => {
+    setSupSelfState(p => {
+      const next = { ...p };
+      if (checked) next[supId] = { type: 'full', hours: '' };
+      else delete next[supId];
+      return next;
+    });
+    setSubmitted(false);
+  };
+
+  const setSupSelfType = (supId, type) => {
+    setSupSelfState(p => ({ ...p, [supId]: { type, hours: p[supId]?.hours || '' } }));
+    setSubmitted(false);
+  };
+
+  const setSupSelfHours = (supId, hours) => {
+    setSupSelfState(p => ({ ...p, [supId]: { ...p[supId], hours } }));
+    setSubmitted(false);
+  };
+
   const handleSubmit = async () => {
     const records = [];
     let hasError = false;
@@ -11324,6 +11347,27 @@ const ConstructionAttendanceSiteLeadPage = () => {
       });
     });
     if (hasError) return;
+    // Resolve supervisor self-worker records before building the final attendance list
+    const selfEntries = Object.entries(supSelfState);
+    if (selfEntries.length) {
+      for (const [supId, ws] of selfEntries) {
+        const val = computeValue(ws);
+        if (val === null) {
+          const sup = supervisors.find(s => s.id === supId);
+          addToast(`Enter valid hours (0.5 – 7.5) for ${sup?.name || 'supervisor'}`, 'error');
+          return;
+        }
+        const sup = supervisors.find(s => s.id === supId);
+        if (!sup) continue;
+        try {
+          const worker = await constructionFetch('/self-worker', {
+            method: 'POST',
+            body: JSON.stringify({ category_supervisor_id: sup.category_supervisor_id, supervisor_id: sup.id, requestedBy: user.id }),
+          });
+          records.push({ category_id: selectedCat.id, supervisor_id: sup.id, worker_id: worker.id, attendance_value: val });
+        } catch (e) { addToast('Could not add supervisor as worker: ' + e.message, 'error'); return; }
+      }
+    }
     if (!records.length) { addToast('Select at least one worker before saving.', 'error'); return; }
     setSaving(true);
     try {
@@ -11335,9 +11379,17 @@ const ConstructionAttendanceSiteLeadPage = () => {
     setSaving(false);
   };
 
-  const totalWorkers = supervisors.reduce((s, sup) => s + (sup.workers || []).length, 0);
-  const markedCount  = supervisors.reduce((s, sup) => s + (sup.workers || []).filter(w => workerState[w.id] !== undefined).length, 0);
-  const hasNoWorkers = totalWorkers === 0 && supervisors.length > 0;
+  const totalWorkers = supervisors.reduce((s, sup) => {
+    const hasSelfWorker = (sup.workers || []).some(w => w.notes === 'Self (gang lead)');
+    return s + (sup.workers || []).length + (hasSelfWorker ? 0 : 1); // +1 for the supervisor-as-worker toggle
+  }, 0);
+  const markedCount  = supervisors.reduce((s, sup) => {
+    const workerMarked = (sup.workers || []).filter(w => workerState[w.id] !== undefined).length;
+    const selfMarked   = supSelfState[sup.id] ? 1 : 0;
+    return s + workerMarked + selfMarked;
+  }, 0);
+  // Always show the attendance grid when supervisors exist — each has the self-worker toggle
+  const hasNoWorkers = false;
 
   const DateBadge = () => (
     <div style={{ background: '#eef2ff', color: '#4338ca', fontSize: 12, fontWeight: 600, padding: '5px 12px', borderRadius: 20, display: 'inline-flex', alignItems: 'center', gap: 6, marginBottom: 16 }}>
@@ -11398,16 +11450,64 @@ const ConstructionAttendanceSiteLeadPage = () => {
             <div style={{ display: 'grid', gap: 16, marginBottom: 90 }}>
               {supervisors.map(sup => {
                 const workers = sup.workers || [];
-                if (!workers.length) return null;
+                const hasSelfWorker = workers.some(w => w.notes === 'Self (gang lead)');
+                const supWs = supSelfState[sup.id];
                 return (
                   <div key={sup.id} style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 12, overflow: 'hidden' }}>
                     {/* Supervisor header */}
-                    <div style={{ background: '#f8fafc', padding: '10px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #e2e8f0' }}>
-                      <div>
-                        <span style={{ fontWeight: 700, color: '#1e293b' }}>{sup.name}</span>
-                        <span style={{ fontSize: 11, color: '#94a3b8', marginLeft: 8 }}>{sup.mobile}</span>
+                    <div style={{ background: '#f8fafc', padding: '10px 14px', borderBottom: '1px solid #e2e8f0' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div>
+                          <span style={{ fontWeight: 700, color: '#1e293b' }}>{sup.name}</span>
+                          <span style={{ fontSize: 11, color: '#94a3b8', marginLeft: 8 }}>{sup.mobile}</span>
+                        </div>
+                        <span style={{ fontSize: 11, color: '#64748b' }}>{workers.filter(w => workerState[w.id] !== undefined).length + (supWs ? 1 : 0)}/{workers.length + (hasSelfWorker ? 0 : 1)} marked</span>
                       </div>
-                      <span style={{ fontSize: 11, color: '#64748b' }}>{workers.filter(w => workerState[w.id] !== undefined).length}/{workers.length} marked</span>
+                      {/* Supervisor-as-worker toggle — only shown when no permanent self-worker record exists */}
+                      {!hasSelfWorker && (
+                        <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px dashed #e2e8f0' }}>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', userSelect: 'none' }}>
+                            <input
+                              type="checkbox"
+                              checked={!!supWs}
+                              onChange={e => toggleSupSelf(sup.id, e.target.checked)}
+                              style={{ width: 16, height: 16, accentColor: '#7c3aed', flexShrink: 0 }}
+                            />
+                            <span style={{ fontSize: 12, fontWeight: 600, color: '#7c3aed' }}>Supervisor also worked today</span>
+                          </label>
+                          {supWs && (
+                            <div style={{ marginLeft: 24, marginTop: 8 }}>
+                              <div style={{ display: 'flex', gap: 6, marginBottom: supWs.type === 'partial' ? 8 : 0 }}>
+                                {[
+                                  { key: 'full',    label: 'Full Day', color: '#10b981' },
+                                  { key: 'half',    label: 'Half Day', color: '#f59e0b' },
+                                  { key: 'partial', label: 'Partial',  color: '#6366f1' },
+                                ].map(opt => (
+                                  <button key={opt.key} onClick={() => setSupSelfType(sup.id, opt.key)}
+                                    style={{ flex: 1, padding: '6px 4px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 11, fontWeight: 600,
+                                      background: supWs.type === opt.key ? opt.color : '#f1f5f9',
+                                      color: supWs.type === opt.key ? '#fff' : '#475569' }}>
+                                    {opt.label}
+                                  </button>
+                                ))}
+                              </div>
+                              {supWs.type === 'partial' && (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                  <label style={{ fontSize: 12, color: '#64748b', whiteSpace: 'nowrap' }}>Hours worked:</label>
+                                  <input
+                                    type="number" min="0.5" max="7.5" step="0.5"
+                                    value={supWs.hours}
+                                    placeholder="e.g. 3"
+                                    onChange={e => setSupSelfHours(sup.id, e.target.value)}
+                                    style={{ width: 72, padding: '4px 8px', border: '1px solid #cbd5e1', borderRadius: 6, fontSize: 13 }}
+                                  />
+                                  <span style={{ fontSize: 11, color: '#94a3b8' }}>/ 8 hrs</span>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                     {/* Workers */}
                     {workers.map(w => {

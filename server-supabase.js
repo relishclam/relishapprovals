@@ -7321,7 +7321,7 @@ app.get('/api/construction/categories/:categoryId/supervisors', async (req, res)
     .select(`
       id, approved_rate,
       construction_supervisors(id, name, mobile, upi_id),
-      construction_workers(id, name, mobile, is_active)
+      construction_workers(id, name, mobile, is_active, notes)
     `)
     .eq('category_id', req.params.categoryId)
     .eq('is_active', true);
@@ -7567,6 +7567,32 @@ app.post('/api/construction/assign', async (req, res) => {
     }
   }
   res.json({ ...data, selfWorkerCreated: !!addAsSelfWorker });
+});
+
+// Find-or-create a self-worker record so a supervisor can be marked in their own attendance list
+app.post('/api/construction/self-worker', async (req, res) => {
+  const { category_supervisor_id, supervisor_id, requestedBy } = req.body;
+  const actor = await getActorRole(requestedBy);
+  const allowed = ['staff_lead', 'accounts', 'admin', 'super_admin'];
+  if (!allowed.includes(actor.role) && !actor.is_super_admin) {
+    return res.status(403).json({ error: 'Not authorised' });
+  }
+  // Return existing self-worker if already present
+  const { data: existing } = await supabase.from('construction_workers')
+    .select('id, name, mobile')
+    .eq('category_supervisor_id', category_supervisor_id)
+    .eq('notes', 'Self (gang lead)')
+    .maybeSingle();
+  if (existing) return res.json(existing);
+  // Create the self-worker record
+  const { data: sup } = await supabase.from('construction_supervisors')
+    .select('name, mobile').eq('id', supervisor_id).single();
+  if (!sup) return res.status(404).json({ error: 'Supervisor not found' });
+  const { data, error } = await supabase.from('construction_workers')
+    .insert({ category_supervisor_id, name: sup.name, mobile: sup.mobile || null, notes: 'Self (gang lead)', created_by: requestedBy })
+    .select('id, name, mobile').single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
 });
 
 // All active category-supervisor assignments (for rate proposal dropdowns)
