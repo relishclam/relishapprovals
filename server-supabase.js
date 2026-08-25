@@ -7399,8 +7399,37 @@ app.get('/api/construction/dues', async (req, res) => {
   let query = supabase.from('v_unpaid_attendance').select('*');
   if (category_id) query = query.eq('category_id', category_id);
   const { data, error } = await query.order('supervisor_name');
-  if (error) return res.status(500).json({ error: error.message });
+  if (error) {
+    // View missing (migration not applied) — fall back to raw attendance count so UI can warn usefully
+    const fallbackMsg = error.message?.includes('does not exist')
+      ? 'DATABASE_VIEW_MISSING'
+      : error.message;
+    return res.status(500).json({ error: fallbackMsg });
+  }
   res.json(data);
+});
+
+// Raw attendance counts — used as a diagnostic when the dues view is broken or shows 0
+app.get('/api/construction/attendance-raw', async (req, res) => {
+  const { category_id } = req.query;
+  if (!category_id) return res.status(400).json({ error: 'category_id required' });
+  const { data, error } = await supabase
+    .from('construction_attendance')
+    .select('id, attendance_date, attendance_value, voucher_id, supervisor_id, worker_id, construction_supervisors(name), construction_workers(name)')
+    .eq('category_id', category_id)
+    .is('voucher_id', null)
+    .order('attendance_date', { ascending: false })
+    .limit(200);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data.map(r => ({
+    id: r.id,
+    attendance_date: r.attendance_date,
+    attendance_value: r.attendance_value,
+    supervisor_name: r.construction_supervisors?.name,
+    worker_name: r.construction_workers?.name,
+    supervisor_id: r.supervisor_id,
+    worker_id: r.worker_id,
+  })));
 });
 
 // Create payment voucher for selected supervisors

@@ -11673,14 +11673,30 @@ const ConstructionDuesPage = () => {
   const [creating, setCreating]       = useState(false);
   const [vouchers, setVouchers]       = useState([]);
   const [showVouchers, setShowVouchers] = useState(false);
+  // Fallback raw records shown when the v_unpaid_attendance view is missing/broken
+  const [rawRecords, setRawRecords]   = useState(null);
 
   useEffect(() => { constructionFetch('/categories').then(setCategories).catch(() => {}); }, []);
 
   const loadDues = useCallback(async () => {
     if (!selectedCat) return;
     setLoading(true); setSelected({});
-    try { setDues(await constructionFetch(`/dues?category_id=${selectedCat}`)); }
-    catch { addToast('Failed to load dues', 'error'); }
+    try {
+      const result = await constructionFetch(`/dues?category_id=${selectedCat}`);
+      setDues(result);
+      setRawRecords(null);
+    } catch (e) {
+      // If the view is missing (migration 044 not yet applied), fall back to raw records
+      if (e.message?.includes('DATABASE_VIEW_MISSING')) {
+        try {
+          const raw = await constructionFetch(`/attendance-raw?category_id=${selectedCat}`);
+          setRawRecords(raw);
+          setDues([]);
+        } catch { setRawRecords([]); }
+      } else {
+        addToast('Failed to load dues: ' + e.message, 'error');
+      }
+    }
     setLoading(false);
   }, [selectedCat]);
 
@@ -11726,9 +11742,41 @@ const ConstructionDuesPage = () => {
         <div style={{ textAlign: 'center', padding: '4rem 0', color: '#94a3b8', fontSize: 14 }}>Select a category to view unpaid dues.</div>
       ) : loading ? <div style={{ textAlign: 'center', padding: '3rem', color: '#64748b' }}>Loading…</div> : (
         <>
-          {dues.length === 0 ? (
+          {/* ── Fallback: view is missing — show raw records + migration banner ── */}
+          {rawRecords !== null && (
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ background: '#fef3c7', border: '1px solid #f59e0b', borderRadius: 10, padding: '12px 16px', marginBottom: 12 }}>
+                <div style={{ fontWeight: 700, color: '#92400e', marginBottom: 4 }}>⚠️ Database Setup Needed</div>
+                <div style={{ fontSize: 13, color: '#78350f' }}>
+                  The Labour Dues view is missing. Run migration <strong>044_fix_unpaid_attendance_view.sql</strong> in your Supabase SQL editor to fix this.
+                </div>
+              </div>
+              {rawRecords.length === 0 ? (
+                <div className="card" style={{ textAlign: 'center', padding: '2rem', color: '#94a3b8', fontSize: 14 }}>No attendance records found for this category.</div>
+              ) : (
+                <div className="card" style={{ overflow: 'hidden' }}>
+                  <div style={{ padding: '10px 16px', borderBottom: '1px solid #f1f5f9', fontWeight: 600, color: '#1e293b', fontSize: 14 }}>
+                    Raw Attendance — {rawRecords.length} unpaid record(s)
+                  </div>
+                  {rawRecords.map(r => (
+                    <div key={r.id} style={{ padding: '10px 16px', borderBottom: '1px solid #f8fafc', display: 'flex', justifyContent: 'space-between' }}>
+                      <div>
+                        <div style={{ fontSize: 13, fontWeight: 500, color: '#1e293b' }}>{r.worker_name}</div>
+                        <div style={{ fontSize: 11, color: '#94a3b8' }}>Under {r.supervisor_name}</div>
+                      </div>
+                      <div style={{ textAlign: 'right', fontSize: 12, color: '#64748b' }}>
+                        <div>{r.attendance_date}</div>
+                        <div>{r.attendance_value === 1 ? 'Full Day' : r.attendance_value === 0.5 ? 'Half Day' : `${+(r.attendance_value * 8).toFixed(1)} hrs`}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+          {rawRecords === null && dues.length === 0 ? (
             <div className="card" style={{ textAlign: 'center', padding: '3rem', color: '#94a3b8', fontSize: 14 }}>No unpaid dues for this category.</div>
-          ) : (
+          ) : rawRecords === null && dues.length > 0 ? (
             <div className="card" style={{ marginBottom: 16, overflow: 'hidden' }}>
               <div style={{ padding: '10px 16px', borderBottom: '1px solid #f1f5f9', display: 'flex', justifyContent: 'space-between' }}>
                 <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 14, fontWeight: 500 }}>
@@ -11738,16 +11786,27 @@ const ConstructionDuesPage = () => {
                 <span style={{ fontSize: 12, color: '#94a3b8' }}>Worker-days unpaid</span>
               </div>
               {dues.map(d => (
-                <div key={d.supervisor_id} onClick={() => toggle(d.supervisor_id)}
-                  style={{ padding: '14px 16px', borderBottom: '1px solid #f1f5f9', display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer', background: selected[d.supervisor_id] ? '#f8fafc' : '#fff' }}>
-                  <input type="checkbox" checked={!!selected[d.supervisor_id]} onChange={() => toggle(d.supervisor_id)} onClick={e => e.stopPropagation()} />
+                <div key={d.supervisor_id} onClick={() => !d.approved_rate ? null : toggle(d.supervisor_id)}
+                  style={{ padding: '14px 16px', borderBottom: '1px solid #f1f5f9', display: 'flex', alignItems: 'flex-start', gap: 12, cursor: d.approved_rate ? 'pointer' : 'default', background: selected[d.supervisor_id] ? '#f8fafc' : '#fff' }}>
+                  <input type="checkbox" checked={!!selected[d.supervisor_id]} disabled={!d.approved_rate}
+                    onChange={() => d.approved_rate && toggle(d.supervisor_id)} onClick={e => e.stopPropagation()}
+                    style={{ marginTop: 3 }} />
                   <div style={{ flex: 1 }}>
                     <div style={{ fontWeight: 600, color: '#1e293b' }}>{d.supervisor_name}</div>
-                    <div style={{ fontSize: 12, color: '#94a3b8' }}>{d.mobile} · UPI: {d.upi_id}</div>
+                    <div style={{ fontSize: 12, color: '#94a3b8' }}>{d.mobile} · UPI: {d.upi_id || '—'}</div>
+                    {!d.approved_rate && (
+                      <div style={{ marginTop: 4, fontSize: 12, color: '#b45309', background: '#fef3c7', padding: '3px 8px', borderRadius: 6, display: 'inline-block' }}>
+                        ⚠️ No rate set — go to Labour Setup → Assign Supervisor to set an approved rate before creating a voucher
+                      </div>
+                    )}
                   </div>
                   <div style={{ textAlign: 'right', fontSize: 13 }}>
-                    <div style={{ fontWeight: 600 }}>{formatRupees(d.total_dues)}</div>
-                    <div style={{ fontSize: 12, color: '#94a3b8' }}>{d.total_days} worker-days × {d.approved_rate ? formatRupees(d.approved_rate) : <span style={{ color: '#ef4444' }}>No rate!</span>}</div>
+                    <div style={{ fontWeight: 600, color: d.approved_rate ? '#1e293b' : '#94a3b8' }}>
+                      {d.approved_rate ? formatRupees(d.total_dues) : `${d.total_days} day(s) recorded`}
+                    </div>
+                    <div style={{ fontSize: 12, color: '#94a3b8' }}>
+                      {d.total_days} worker-days × {d.approved_rate ? formatRupees(d.approved_rate) : <span style={{ color: '#ef4444', fontWeight: 600 }}>Rate missing</span>}
+                    </div>
                     <div style={{ fontSize: 11, color: '#94a3b8' }}>{d.earliest_date} – {d.latest_date}</div>
                   </div>
                 </div>
@@ -11761,7 +11820,7 @@ const ConstructionDuesPage = () => {
                 </div>
               )}
             </div>
-          )}
+          ) : null}
           <div>
             <button onClick={() => { setShowVouchers(v => !v); if (!showVouchers) loadVouchers(); }}
               style={{ background: 'none', border: 'none', color: '#4f46e5', cursor: 'pointer', fontSize: 14, fontWeight: 500, marginBottom: 10 }}>
