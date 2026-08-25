@@ -12101,8 +12101,26 @@ const ConstructionDuesPage = () => {
                     <div style={{ fontWeight: 600, color: '#1e293b' }}>{d.supervisor_name}</div>
                     <div style={{ fontSize: 12, color: '#94a3b8' }}>{d.mobile} · UPI: {d.upi_id || '—'}</div>
                     {!rateOk && (
-                      <div style={{ marginTop: 4, fontSize: 12, color: '#b45309', background: '#fef3c7', padding: '3px 8px', borderRadius: 6, display: 'inline-block' }}>
-                        ⚠️ No rate configured — set a Worker Type Rate in Rate Approvals (e.g. Helper ₹1100/day for Civil)
+                      <div style={{ marginTop: 6 }}>
+                        <div style={{ fontSize: 12, color: '#b45309', background: '#fef3c7', padding: '3px 8px', borderRadius: 6, display: 'inline-block', marginBottom: 6 }}>
+                          ⚠️ No rate configured — set a Worker Type Rate in Rate Approvals
+                        </div>
+                        <br />
+                        <button onClick={async e => { e.stopPropagation();
+                          const amount = window.prompt(`Amount already paid to ${d.supervisor_name} (₹ — enter 0 if not paid):`, '0');
+                          if (amount === null) return;
+                          const notes = window.prompt('Notes (e.g. "Cash paid 25 Aug"):', 'Settled outside system') ?? 'Settled outside system';
+                          setCreating(true);
+                          try {
+                            const res = await constructionFetch('/vouchers/settle', { method: 'POST', body: JSON.stringify({ category_id: selectedCat, supervisor_ids: [d.supervisor_id], total_amount: amount, notes, requestedBy: user.id }) });
+                            addToast(`${res.cleared} record(s) cleared for ${d.supervisor_name}.`);
+                            loadDues(); loadVouchers();
+                          } catch (ex) { addToast('Failed: ' + ex.message, 'error'); }
+                          setCreating(false);
+                        }}
+                          style={{ padding: '4px 12px', borderRadius: 6, border: '1px solid #fca5a5', background: '#fff5f5', color: '#dc2626', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
+                          ✓ Settle this supervisor
+                        </button>
                       </div>
                     )}
                   </div>
@@ -12677,7 +12695,9 @@ const ConstructionSetupPage = () => {
                       </div>
                       <div style={{ display: 'flex', gap: 6, marginTop: 10, flexWrap: 'wrap' }}>
                         <button onClick={() => { setEditWorkerId(w.id); setEditWorkerData({ name: w.name, mobile: w.mobile || '', notes: w.notes || '', worker_type: w.worker_type || 'Helper' }); }} style={{ padding: '5px 12px', borderRadius: 6, border: '1px solid #c7d2fe', background: '#eef2ff', color: '#4338ca', fontSize: 12, cursor: 'pointer', fontWeight: 600 }}>Edit</button>
-                        <button onClick={() => toggleWorker(w)} style={{ padding: '5px 12px', borderRadius: 6, border: `1px solid ${w.is_active ? '#d1d5db' : '#6ee7b7'}`, background: 'none', color: w.is_active ? '#6b7280' : '#065f46', fontSize: 12, cursor: 'pointer' }}>{w.is_active ? 'Deactivate' : 'Reactivate'}</button>
+                        <button onClick={() => toggleWorker(w)} title={w.is_active ? 'Hide from daily attendance marking (keeps supervisor role & history intact)' : 'Show again in attendance'}
+                          style={{ padding: '5px 12px', borderRadius: 6, border: `1px solid ${w.is_active ? '#d1d5db' : '#6ee7b7'}`, background: 'none', color: w.is_active ? '#6b7280' : '#065f46', fontSize: 12, cursor: 'pointer' }}>
+                          {w.is_active ? 'Hide from Attendance' : 'Restore'}</button>
                         <button onClick={() => deleteWorker(w)} style={{ padding: '5px 12px', borderRadius: 6, border: '1px solid #fecaca', background: '#fff5f5', color: '#dc2626', fontSize: 12, cursor: 'pointer', fontWeight: 600 }}>Delete</button>
                       </div>
                     </div>
@@ -13821,7 +13841,7 @@ const App = () => {
               <div className={`nav-item ${currentPage === 'construction-log' ? 'active' : ''}`} onClick={() => handleNavClick('construction-log')}>📅 Attendance History</div>
               {(user.role === 'accounts' || user.role === 'admin' || user.isSuperAdmin) && <div className={`nav-item ${currentPage === 'construction-dues' ? 'active' : ''}`} onClick={() => handleNavClick('construction-dues')}>💰 Labour Dues</div>}
               {(user.role === 'accounts' || user.role === 'admin' || user.isSuperAdmin) && <div className={`nav-item ${currentPage === 'construction-setup' ? 'active' : ''}`} onClick={() => handleNavClick('construction-setup')}>⚙️ Labour Setup</div>}
-              {(user.role === 'admin' || user.isSuperAdmin) && <div className={`nav-item ${currentPage === 'construction-rates' ? 'active' : ''}`} onClick={() => handleNavClick('construction-rates')}>📊 Rate Approvals</div>}
+              {(user.role === 'accounts' || user.role === 'admin' || user.isSuperAdmin) && <div className={`nav-item ${currentPage === 'construction-rates' ? 'active' : ''}`} onClick={() => handleNavClick('construction-rates')}>📊 Rate Approvals</div>}
             </div>}
             </>)}
           </aside>
