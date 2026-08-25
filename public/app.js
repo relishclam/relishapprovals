@@ -12595,6 +12595,10 @@ const ConstructionRateApprovalsPage = () => {
   const [showPropose, setShowPropose] = useState(false);
   const [proposal, setProposal]   = useState({ category_id: '', worker_type: '', proposed_rate: '', notes: '' });
   const [saving, setSaving]       = useState(false);
+  // Inline edit state: id → { approved_rate, notes }
+  const [editingId, setEditingId] = useState(null);
+  const [editValues, setEditValues] = useState({ approved_rate: '', notes: '' });
+  const [deleting, setDeleting]   = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -12618,6 +12622,36 @@ const ConstructionRateApprovalsPage = () => {
     setProcessing(null);
   };
 
+  const startEdit = (r) => {
+    setEditingId(r.id);
+    setEditValues({ approved_rate: String(r.approved_rate ?? r.proposed_rate ?? ''), notes: r.notes || '' });
+  };
+
+  const saveEdit = async (r) => {
+    setSaving(true);
+    try {
+      await constructionFetch(`/worker-rates/${r.id}`, {
+        method: 'PUT',
+        body: JSON.stringify({ approved_rate: editValues.approved_rate, notes: editValues.notes, requestedBy: user.id }),
+      });
+      addToast(`Rate updated to ₹${editValues.approved_rate}/day.`);
+      setEditingId(null);
+      load();
+    } catch (e) { addToast('Error: ' + e.message, 'error'); }
+    setSaving(false);
+  };
+
+  const deleteRate = async (r) => {
+    if (!window.confirm(`Delete the ${r.worker_type} rate for ${r.construction_categories?.name}? This cannot be undone.`)) return;
+    setDeleting(r.id);
+    try {
+      await constructionFetch(`/worker-rates/${r.id}?requestedBy=${user.id}`, { method: 'DELETE' });
+      addToast(`${r.worker_type} rate deleted.`);
+      load();
+    } catch (e) { addToast('Error: ' + e.message, 'error'); }
+    setDeleting(null);
+  };
+
   const submitProposal = async () => {
     if (!proposal.category_id || !proposal.worker_type || !proposal.proposed_rate) { addToast('Category, Worker Type and Rate are required', 'error'); return; }
     setSaving(true);
@@ -12633,27 +12667,83 @@ const ConstructionRateApprovalsPage = () => {
   const rejected = rates.filter(r => r.status === 'rejected');
   const inputStyle = { width: '100%', padding: '8px 12px', border: '1px solid #e2e8f0', borderRadius: 8, fontSize: 14, boxSizing: 'border-box' };
 
-  const RateCard = ({ r, showActions }) => (
-    <div style={{ borderBottom: '1px solid #f1f5f9', padding: '12px 14px' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
-        <div>
-          <div style={{ fontWeight: 600, fontSize: 14 }}>{r.worker_type}</div>
-          <div style={{ fontSize: 12, color: '#7c3aed', marginTop: 1 }}>{r.construction_categories?.name}</div>
-          {r.notes && <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>{r.notes}</div>}
-        </div>
-        <div style={{ textAlign: 'right', flexShrink: 0 }}>
-          <div style={{ fontWeight: 700, fontSize: 16, color: '#0f172a' }}>₹{r.proposed_rate}<span style={{ fontSize: 11, fontWeight: 400, color: '#94a3b8' }}>/day</span></div>
-          {r.approved_rate && r.approved_rate !== r.proposed_rate && <div style={{ fontSize: 11, color: '#64748b' }}>approved: ₹{r.approved_rate}</div>}
-        </div>
+  const RateCard = ({ r, showActions }) => {
+    const isEditing = editingId === r.id;
+    return (
+      <div style={{ borderBottom: '1px solid #f1f5f9', padding: '12px 14px' }}>
+        {isEditing ? (
+          /* ── Inline edit form ── */
+          <div>
+            <div style={{ fontWeight: 600, fontSize: 13, color: '#1e293b', marginBottom: 8 }}>
+              {r.worker_type} · <span style={{ color: '#7c3aed' }}>{r.construction_categories?.name}</span>
+            </div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+              <div>
+                <label style={{ fontSize: 11, color: '#64748b', display: 'block', marginBottom: 3 }}>Rate (₹/day)</label>
+                <input type="number" min="1" value={editValues.approved_rate}
+                  onChange={e => setEditValues(p => ({ ...p, approved_rate: e.target.value }))}
+                  style={{ width: 110, padding: '6px 10px', border: '1px solid #a5b4fc', borderRadius: 7, fontSize: 14, fontWeight: 600 }}
+                  autoFocus />
+              </div>
+              <div style={{ flex: 1, minWidth: 140 }}>
+                <label style={{ fontSize: 11, color: '#64748b', display: 'block', marginBottom: 3 }}>Notes (optional)</label>
+                <input type="text" value={editValues.notes} placeholder="e.g. Revised Aug 2026"
+                  onChange={e => setEditValues(p => ({ ...p, notes: e.target.value }))}
+                  style={{ width: '100%', padding: '6px 10px', border: '1px solid #e2e8f0', borderRadius: 7, fontSize: 13 }} />
+              </div>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button onClick={() => saveEdit(r)} disabled={saving || !editValues.approved_rate}
+                  style={{ padding: '6px 14px', borderRadius: 7, border: 'none', background: '#4f46e5', color: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
+                  {saving ? '…' : 'Save'}
+                </button>
+                <button onClick={() => setEditingId(null)}
+                  style={{ padding: '6px 12px', borderRadius: 7, border: '1px solid #e2e8f0', background: '#fff', fontSize: 13, cursor: 'pointer' }}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : (
+          /* ── Normal display ── */
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+            <div>
+              <div style={{ fontWeight: 600, fontSize: 14 }}>{r.worker_type}</div>
+              <div style={{ fontSize: 12, color: '#7c3aed', marginTop: 1 }}>{r.construction_categories?.name}</div>
+              {r.notes && <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>{r.notes}</div>}
+            </div>
+            <div style={{ textAlign: 'right', flexShrink: 0 }}>
+              <div style={{ fontWeight: 700, fontSize: 16, color: '#0f172a' }}>
+                ₹{r.approved_rate ?? r.proposed_rate}<span style={{ fontSize: 11, fontWeight: 400, color: '#94a3b8' }}>/day</span>
+              </div>
+              {r.approved_rate && r.approved_rate !== r.proposed_rate && (
+                <div style={{ fontSize: 11, color: '#64748b' }}>proposed: ₹{r.proposed_rate}</div>
+              )}
+              {isAdmin && (
+                <div style={{ display: 'flex', gap: 6, marginTop: 6, justifyContent: 'flex-end' }}>
+                  {showActions && (
+                    <>
+                      <button onClick={() => decide(r, 'approve')} disabled={processing === r.id} className="btn btn-primary" style={{ fontSize: 12, padding: '4px 10px' }}>{processing === r.id ? '…' : '✓ Approve'}</button>
+                      <button onClick={() => decide(r, 'reject')} disabled={processing === r.id} style={{ padding: '4px 10px', borderRadius: 7, border: '1px solid #fecaca', background: '#fff5f5', color: '#dc2626', fontSize: 12, cursor: 'pointer', fontWeight: 600 }}>{processing === r.id ? '…' : 'Reject'}</button>
+                    </>
+                  )}
+                  {!showActions && (
+                    <button onClick={() => startEdit(r)}
+                      style={{ padding: '4px 10px', borderRadius: 7, border: '1px solid #c7d2fe', background: '#eef2ff', color: '#4338ca', fontSize: 12, cursor: 'pointer', fontWeight: 600 }}>
+                      ✏️ Edit
+                    </button>
+                  )}
+                  <button onClick={() => deleteRate(r)} disabled={deleting === r.id}
+                    style={{ padding: '4px 10px', borderRadius: 7, border: '1px solid #fecaca', background: '#fff5f5', color: '#dc2626', fontSize: 12, cursor: 'pointer', fontWeight: 600 }}>
+                    {deleting === r.id ? '…' : '🗑'}
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
-      {showActions && isAdmin && (
-        <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
-          <button onClick={() => decide(r, 'approve')} disabled={processing === r.id} className="btn btn-primary" style={{ fontSize: 13 }}>{processing === r.id ? '…' : '✓ Approve'}</button>
-          <button onClick={() => decide(r, 'reject')} disabled={processing === r.id} style={{ padding: '6px 14px', borderRadius: 8, border: '1px solid #fecaca', background: '#fff5f5', color: '#dc2626', fontSize: 13, cursor: 'pointer', fontWeight: 600 }}>{processing === r.id ? '…' : 'Reject'}</button>
-        </div>
-      )}
-    </div>
-  );
+    );
+  };
 
   return (
     <div>

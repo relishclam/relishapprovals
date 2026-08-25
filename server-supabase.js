@@ -7859,6 +7859,39 @@ app.post('/api/construction/worker-rates/:id/decide', async (req, res) => {
   res.json({ status: isApprove ? 'approved' : 'rejected' });
 });
 
+// Direct rate edit — admin updates approved_rate in place (no proposal cycle needed)
+app.put('/api/construction/worker-rates/:id', async (req, res) => {
+  const { approved_rate, notes, requestedBy } = req.body;
+  const actor = await getActorRole(requestedBy);
+  if (!['admin','super_admin'].includes(actor.role) && !actor.is_super_admin) {
+    return res.status(403).json({ error: 'Admin only' });
+  }
+  const rate = parseFloat(approved_rate);
+  if (isNaN(rate) || rate <= 0) return res.status(400).json({ error: 'Valid positive rate required' });
+  const { error } = await supabase.from('construction_worker_rates').update({
+    approved_rate: rate,
+    proposed_rate: rate,
+    notes: notes ?? undefined,
+    status: 'approved',
+    approved_by: requestedBy,
+    approved_at: new Date().toISOString(),
+  }).eq('id', req.params.id);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true });
+});
+
+// Delete a rate record entirely — admin only
+app.delete('/api/construction/worker-rates/:id', async (req, res) => {
+  const { requestedBy } = req.query;
+  const actor = await getActorRole(requestedBy);
+  if (!['admin','super_admin'].includes(actor.role) && !actor.is_super_admin) {
+    return res.status(403).json({ error: 'Admin only' });
+  }
+  const { error } = await supabase.from('construction_worker_rates').delete().eq('id', req.params.id);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true });
+});
+
 // Export the Express app for Vercel serverless deployment
 module.exports = app;
 module.exports._testHelpers = { extractVchNumbers, extractBatchRefs, parseDbSerialSeq, parseDbBatchSeq, alphanumOnly, _extractPdfText, _extractImageText, _parseVchCapture };
