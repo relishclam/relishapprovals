@@ -291,7 +291,7 @@ const api = {
   verifyUserMobile: (userId) => fetch(`${API_BASE}/users/${userId}/verify-mobile`, { method: 'POST' }).then(r => r.json()),
   login: (data) => fetch(`${API_BASE}/users/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
   switchCompany: (userId, companyId) => fetch(`${API_BASE}/users/${userId}/switch-company`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ companyId }) }).then(r => r.json()),
-  refreshSession: (userId) => fetch(`${API_BASE}/users/${userId}/session`).then(r => r.json()),
+  refreshSession: (userId, companyId) => fetch(`${API_BASE}/users/${userId}/session${companyId ? '?companyId=' + encodeURIComponent(companyId) : ''}`).then(r => r.json()),
   getCompanyUsers: (companyId) => fetch(`${API_BASE}/companies/${companyId}/users`).then(r => r.json()),
   onboardUser: (data) => fetch(`${API_BASE}/admin/onboard-user`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
   updateUser: (userId, data) => fetch(`${API_BASE}/users/${userId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
@@ -12775,7 +12775,7 @@ const App = () => {
     if (!stored) return;
     const storedUser = (() => { try { return JSON.parse(stored); } catch { return null; } })();
     if (!storedUser?.id) return;
-    api.refreshSession(storedUser.id).then(result => {
+    api.refreshSession(storedUser.id, storedUser.company?.id).then(result => {
       if (result.success) {
         try { localStorage.setItem('relish_session', JSON.stringify(result.user)); } catch {}
         setUser(result.user);

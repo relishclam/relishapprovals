@@ -842,6 +842,7 @@ app.delete('/api/users/:userId/pending-share-context', async (req, res) => {
 
 app.get('/api/users/:userId/session', async (req, res) => {
   const { userId } = req.params;
+  const { companyId } = req.query;
   try {
     const { data: user, error } = await supabase.from('users').select('*').eq('id', userId).single();
     if (error || !user) return res.status(404).json({ error: 'User not found' });
@@ -857,7 +858,10 @@ app.get('/api/users/:userId/session', async (req, res) => {
       if (legacyCompany) companies = [{ company_id: legacyCompany.id, role: user.role, is_primary: true, companies: legacyCompany }];
     }
 
-    const primaryOrFirst = companies.find(uc => uc.is_primary) || companies[0];
+    // Prefer the company the user last selected; fall back to the primary or first.
+    const primaryOrFirst = (companyId && companies.find(uc => uc.company_id === companyId))
+                        || companies.find(uc => uc.is_primary)
+                        || companies[0];
     if (!primaryOrFirst) return res.status(400).json({ error: 'No company access' });
 
     return res.json({
