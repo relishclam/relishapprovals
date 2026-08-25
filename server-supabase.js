@@ -7508,27 +7508,26 @@ app.post('/api/construction/vouchers', async (req, res) => {
   // ── 2. Per-worker breakdown (individual amounts for narration & lines) ───
   const { data: workerRows, error: wrErr } = await supabase
     .from('construction_attendance')
-    .select(`
-      worker_id, worker_type, supervisor_id, attendance_value,
-      construction_workers(id, name, worker_type, notes),
-      construction_category_supervisors!inner(id, approved_rate,
-        construction_worker_rates(approved_rate, worker_type))
-    `)
+    .select('worker_id, worker_type, supervisor_id, attendance_value, construction_workers(id, name, worker_type)')
     .eq('category_id', category_id)
     .in('supervisor_id', supervisor_ids)
     .is('voucher_id', null);
   if (wrErr) return res.status(500).json({ error: wrErr.message });
 
-  // Aggregate per worker: sum days, pick rate
-  const workerMap = new Map(); // worker_id → { name, type, supervisorId, days, rate }
+  // Fetch worker-type rates for this category separately (no FK between cs and worker_rates)
+  const { data: wtRates } = await supabase.from('construction_worker_rates')
+    .select('worker_type, approved_rate').eq('category_id', category_id).not('approved_rate', 'is', null);
+  const wtRateMap = Object.fromEntries((wtRates || []).map(r => [r.worker_type, parseFloat(r.approved_rate)]));
+  // Supervisor-level fallback rates
+  const supRateMap = Object.fromEntries(dues.map(d => [d.supervisor_id, parseFloat(d.approved_rate) || 0]));
+
+  // Aggregate per worker: sum days, pick rate (worker-type > supervisor fallback)
+  const workerMap = new Map();
   workerRows.forEach(row => {
     const wid = row.worker_id;
     const wName = row.construction_workers?.name || 'Unknown';
     const wType = row.worker_type || row.construction_workers?.worker_type || 'Helper';
-    const csRates = row.construction_category_supervisors?.construction_worker_rates || [];
-    const typeRate = csRates.find(r => r.worker_type === wType)?.approved_rate;
-    const fallbackRate = row.construction_category_supervisors?.approved_rate;
-    const rate = typeRate ?? fallbackRate ?? 0;
+    const rate = wtRateMap[wType] ?? supRateMap[row.supervisor_id] ?? 0;
     if (!workerMap.has(wid)) {
       workerMap.set(wid, { worker_id: wid, name: wName, worker_type: wType, supervisor_id: row.supervisor_id, days: 0, rate });
     }
@@ -7549,13 +7548,17 @@ app.post('/api/construction/vouchers', async (req, res) => {
     .select().single();
   if (vErr) return res.status(500).json({ error: vErr.message });
 
-  // ── 4. Create per-worker CLABV lines ─────────────────────────────────────
-  const lines = workerBreakdown.map(w => ({
-    voucher_id: clabv.id, supervisor_id: w.supervisor_id,
-    worker_id: w.worker_id, worker_name: w.name,
-    days_count: w.days, rate_applied: w.rate, amount: w.amount,
-    upi_id_snapshot: dues.find(d => d.supervisor_id === w.supervisor_id)?.upi_id || null,
-  }));
+  // ── 4. Create per-worker CLABV lines (worker_name/worker_id only if migration 047 applied) ──
+  const hasWorkerCols = await supabase.from('construction_voucher_lines').select('worker_name').limit(0).then(r => !r.error);
+  const lines = workerBreakdown.map(w => {
+    const line = {
+      voucher_id: clabv.id, supervisor_id: w.supervisor_id,
+      days_count: w.days, rate_applied: w.rate || 0, amount: w.amount,
+      upi_id_snapshot: dues.find(d => d.supervisor_id === w.supervisor_id)?.upi_id || null,
+    };
+    if (hasWorkerCols) { line.worker_id = w.worker_id; line.worker_name = w.name; }
+    return line;
+  });
   const { error: lErr } = await supabase.from('construction_voucher_lines').insert(lines);
   if (lErr) {
     // Clean up orphaned header so it doesn't appear in the list
@@ -7677,7 +7680,7 @@ app.get('/api/construction/vouchers', async (req, res) => {
   if (!category_id) return res.status(400).json({ error: 'category_id required' });
   const { data, error } = await supabase
     .from('construction_vouchers')
-    .select(`*, construction_voucher_lines(id, days_count, rate_applied, amount, worker_name, worker_type, construction_supervisors(name))`)
+    .select(`*, construction_voucher_lines(*, construction_supervisors(name))`)
     .eq('category_id', category_id)
     .order('created_at', { ascending: false }).limit(30);
   if (error) return res.status(500).json({ error: error.message });
