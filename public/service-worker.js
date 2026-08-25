@@ -1,7 +1,7 @@
 // BUMP RULE: increment only when urlsToCache changes (bundle/CSS version bumps).
 // Server-side-only changes must NOT bump this — doing so breaks Android share-target
 // registration and forces a manual PWA reinstall on every user's phone.
-const CACHE_NAME = 'relish-approvals-v70';
+const CACHE_NAME = 'relish-approvals-v71';
 const DYNAMIC_CACHE = 'relish-approvals-dynamic-v16';
 const urlsToCache = [
   '/',

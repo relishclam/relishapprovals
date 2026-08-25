@@ -7835,16 +7835,22 @@ app.post('/api/construction/assign', async (req, res) => {
 });
 
 // Remove a supervisor from a category (soft-delete preserves historical attendance)
+// Hard-delete a supervisor–category assignment — blocked only if unpaid attendance exists
 app.delete('/api/construction/category-assignment/:id', async (req, res) => {
   const { requestedBy } = req.body;
   const actor = await getActorRole(requestedBy);
   if (!['accounts', 'admin', 'super_admin'].includes(actor.role) && !actor.is_super_admin) {
     return res.status(403).json({ error: 'Not authorised' });
   }
-  const { error } = await supabase
-    .from('construction_category_supervisors')
-    .update({ is_active: false })
-    .eq('id', req.params.id);
+  // Get the assignment to know supervisor + category
+  const { data: cs } = await supabase.from('construction_category_supervisors')
+    .select('supervisor_id, category_id').eq('id', req.params.id).single();
+  if (!cs) return res.status(404).json({ error: 'Assignment not found' });
+  const { count: unpaid } = await supabase.from('construction_attendance')
+    .select('id', { count: 'exact', head: true })
+    .eq('supervisor_id', cs.supervisor_id).eq('category_id', cs.category_id).is('voucher_id', null);
+  if (unpaid > 0) return res.status(409).json({ error: `Cannot delete — ${unpaid} unpaid attendance record(s) exist. Settle dues first.` });
+  const { error } = await supabase.from('construction_category_supervisors').delete().eq('id', req.params.id);
   if (error) return res.status(500).json({ error: error.message });
   res.json({ removed: true });
 });
@@ -7947,16 +7953,19 @@ app.put('/api/construction/supervisors/:id', async (req, res) => {
   res.json(data);
 });
 
-// Delete a supervisor (guarded — blocked if attendance records exist)
+// Delete a supervisor — blocked only if unpaid attendance exists
 app.delete('/api/construction/supervisors/:id', async (req, res) => {
   const { requestedBy } = req.body;
   const actor = await getActorRole(requestedBy);
   if (!['admin','super_admin'].includes(actor.role) && !actor.is_super_admin) {
     return res.status(403).json({ error: 'Admin only' });
   }
-  const { count } = await supabase.from('construction_attendance')
-    .select('id', { count: 'exact', head: true }).eq('supervisor_id', req.params.id);
-  if (count > 0) return res.status(409).json({ error: `Cannot delete — ${count} attendance record(s) exist. Deactivate instead.` });
+  const { count: unpaid } = await supabase.from('construction_attendance')
+    .select('id', { count: 'exact', head: true })
+    .eq('supervisor_id', req.params.id).is('voucher_id', null);
+  if (unpaid > 0) return res.status(409).json({ error: `Cannot delete — ${unpaid} unpaid attendance record(s) exist. Settle dues first.` });
+  // Delete settled attendance records so the FK doesn't block
+  await supabase.from('construction_attendance').delete().eq('supervisor_id', req.params.id);
   const { error } = await supabase.from('construction_supervisors').delete().eq('id', req.params.id);
   if (error) return res.status(500).json({ error: error.message });
   res.json({ deleted: true });
@@ -7988,9 +7997,11 @@ app.delete('/api/construction/workers/:id', async (req, res) => {
   if (!['admin','super_admin'].includes(actor.role) && !actor.is_super_admin) {
     return res.status(403).json({ error: 'Admin only' });
   }
-  const { count } = await supabase.from('construction_attendance')
-    .select('id', { count: 'exact', head: true }).eq('worker_id', req.params.id);
-  if (count > 0) return res.status(409).json({ error: `Cannot delete — ${count} attendance record(s) exist. Deactivate instead.` });
+  const { count: unpaid } = await supabase.from('construction_attendance')
+    .select('id', { count: 'exact', head: true })
+    .eq('worker_id', req.params.id).is('voucher_id', null);
+  if (unpaid > 0) return res.status(409).json({ error: `Cannot delete — ${unpaid} unpaid attendance record(s) exist. Settle dues first.` });
+  await supabase.from('construction_attendance').delete().eq('worker_id', req.params.id);
   const { error } = await supabase.from('construction_workers').delete().eq('id', req.params.id);
   if (error) return res.status(500).json({ error: error.message });
   res.json({ deleted: true });
