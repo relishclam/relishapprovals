@@ -12466,6 +12466,27 @@ const ConstructionSetupPage = () => {
                     </div>
                     <span style={{ flexShrink: 0, background: s.is_active ? '#d1fae5' : '#f1f5f9', color: s.is_active ? '#065f46' : '#64748b', padding: '2px 8px', borderRadius: 20, fontSize: 11, fontWeight: 600 }}>{s.is_active ? 'Active' : 'Inactive'}</span>
                   </div>
+                  {/* Category assignments for this supervisor */}
+                  {catSups.filter(cs => cs.construction_supervisors?.name === s.name).length > 0 && (
+                    <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                      {catSups.filter(cs => cs.construction_supervisors?.name === s.name).map(cs => (
+                        <span key={cs.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: cs.is_active !== false ? '#eef2ff' : '#f1f5f9', border: `1px solid ${cs.is_active !== false ? '#c7d2fe' : '#e2e8f0'}`, borderRadius: 20, padding: '2px 10px 2px 8px', fontSize: 11 }}>
+                          <span style={{ color: cs.is_active !== false ? '#4338ca' : '#94a3b8', fontWeight: 600 }}>
+                            {CONSTRUCTION_CATEGORY_ICONS[cs.construction_categories?.name] || '📋'} {cs.construction_categories?.name}
+                          </span>
+                          {cs.is_active !== false ? (
+                            <button onClick={() => removeAssignment(cs.id, `${s.name} · ${cs.construction_categories?.name}`)}
+                              title="Remove from this category"
+                              style={{ marginLeft: 2, background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626', fontSize: 13, lineHeight: 1, padding: '0 1px', fontWeight: 700 }}>×</button>
+                          ) : (
+                            <button onClick={() => reactivateAssignment(cs.id)}
+                              title="Reactivate"
+                              style={{ marginLeft: 2, background: 'none', border: 'none', cursor: 'pointer', color: '#16a34a', fontSize: 11, lineHeight: 1, padding: '0 1px', fontWeight: 700 }}>↩</button>
+                          )}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                   <div style={{ display: 'flex', gap: 6, marginTop: 10, flexWrap: 'wrap' }}>
                     <button onClick={() => { setEditSupId(s.id); setEditSupData({ name: s.name, mobile: s.mobile, upi_id: s.upi_id, notes: s.notes || '' }); }} style={{ padding: '5px 12px', borderRadius: 6, border: '1px solid #c7d2fe', background: '#eef2ff', color: '#4338ca', fontSize: 12, cursor: 'pointer', fontWeight: 600 }}>Edit</button>
                     <button onClick={() => toggleSupervisor(s)} style={{ padding: '5px 12px', borderRadius: 6, border: `1px solid ${s.is_active ? '#d1d5db' : '#6ee7b7'}`, background: 'none', color: s.is_active ? '#6b7280' : '#065f46', fontSize: 12, cursor: 'pointer' }}>{s.is_active ? 'Deactivate' : 'Reactivate'}</button>
