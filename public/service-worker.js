@@ -1,17 +1,23 @@
 // BUMP RULE: increment only when urlsToCache changes (bundle/CSS version bumps).
 // Server-side-only changes must NOT bump this — doing so breaks Android share-target
 // registration and forces a manual PWA reinstall on every user's phone.
-const CACHE_NAME = 'relish-approvals-v71';
+const CACHE_NAME = 'relish-approvals-v72';
 const DYNAMIC_CACHE = 'relish-approvals-dynamic-v16';
+// Core app-shell URLs (same-origin, must be served on every deployment).
+// CDN/font URLs are intentionally excluded — a single CDN hiccup would abort
+// cache.addAll() and leave the old SW in control of every user's page.
 const urlsToCache = [
   '/',
   '/index.html',
   '/styles.css?v=17',
-  '/app.bundle.js?v=46',
+  '/app.bundle.js?v=53',
   '/logo.png',
   '/manifest.json',
   '/android-launchericon-192-192.png',
-  '/android-launchericon-512-512.png',
+  '/android-launchericon-512-512.png'
+];
+// Third-party resources cached best-effort — failures must not block SW install.
+const cdnUrlsToCache = [
   'https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Space+Mono:wght@400;700&display=swap',
   'https://unpkg.com/react@18/umd/react.production.min.js',
   'https://unpkg.com/react-dom@18/umd/react-dom.production.min.js'
@@ -24,7 +30,17 @@ self.addEventListener('install', (event) => {
     caches.open(CACHE_NAME)
       .then((cache) => {
         console.log('[Service Worker] Caching app shell');
-        return cache.addAll(urlsToCache);
+        // Core URLs: use addAll so a failed same-origin fetch still surfaces as an error.
+        // CDN URLs: cached individually with .catch() so a CDN failure never aborts the install.
+        return cache.addAll(urlsToCache).then(() =>
+          Promise.all(
+            cdnUrlsToCache.map(url =>
+              cache.add(url).catch(err =>
+                console.warn('[SW] Best-effort CDN cache miss (non-fatal):', url, err.message)
+              )
+            )
+          )
+        );
       })
       .then(() => self.skipWaiting())
   );

@@ -13095,7 +13095,7 @@ const App = () => {
   // writes a context to localStorage. If they then share a receipt back to the app, the
   // service worker routes it here instead of the generic reconcile flow.
   const [pendingShareForConfirmation, setPendingShareForConfirmation] = useState(null);
-  const [settlementToken] = useState(() => {
+  const [settlementToken, setSettlementToken] = useState(() => {
     const m = window.location.pathname.match(/^\/settlement\/([^/]+)/);
     if (m) return m[1];
     // PWA launched from home screen has start_url='/'; restore saved settlement token
@@ -13345,8 +13345,9 @@ const App = () => {
     // Staff users go directly to their settlement page — no app access
     if (userData.role === 'staff' && staffSettlementToken) {
       try { localStorage.setItem('relish_settlement_token', staffSettlementToken); } catch {}
-      try { localStorage.setItem('relish_session', JSON.stringify(userData)); } catch {}  // saved so isStaffLogin check works on reload
-      window.location.reload();  // reload so useState initializer picks up the token from localStorage
+      try { localStorage.setItem('relish_session', JSON.stringify(userData)); } catch {}
+      setUser(userData);
+      setSettlementToken(staffSettlementToken);
       return;
     }
     if (userData.role === 'staff') {
