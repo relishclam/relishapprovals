@@ -5647,7 +5647,6 @@ app.post('/api/receipts/auto-complete', async (req, res) => {
       console.warn('[auto-complete] Unassigned storage upload failed:', storeErr.message);
     }
 
-    const ocrPayload = decision.ocrData && Object.keys(decision.ocrData).length > 0 ? decision.ocrData : null;
     const queueUtr = ocrPayload?.utr_number || null;
     // C1: dedupe by UTR+company — refresh existing row rather than duplicating
     await _queueUpsert(queueCompanyId, queueUtr, {
