@@ -410,6 +410,7 @@ body {
   justify-content: flex-end;
   gap: 0.75rem;
   flex-shrink: 0;
+  flex-wrap: wrap;
   background: white;
 }
 
@@ -934,11 +935,24 @@ body {
 @media (max-width: 480px) {
   .modal-footer {
     flex-direction: column;
+    align-items: stretch;
   }
   
   .modal-footer .btn {
     width: 100%;
     min-width: 100%;
+  }
+
+  /* Nested button containers inside modal-footer should also stack */
+  .modal-footer > div {
+    flex-wrap: wrap;
+    width: 100%;
+  }
+
+  .modal-footer > div > .btn {
+    flex: 1;
+    min-width: calc(50% - 0.25rem);
+    width: auto;
   }
   
   .btn-group {

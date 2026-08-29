@@ -2580,9 +2580,9 @@ const CreateVoucher = () => {
                 user={user}
               />
             </div>
-            <div className="modal-footer" style={{display: 'flex', gap: '1rem', justifyContent: 'space-between'}}>
+            <div className="modal-footer" style={{display: 'flex', gap: '0.75rem', justifyContent: 'space-between', flexWrap: 'wrap'}}>
               <button className="btn btn-secondary" onClick={() => setShowPreview(false)}>← Back to Edit</button>
-              <div style={{display: 'flex', gap: '0.75rem'}}>
+              <div style={{display: 'flex', gap: '0.75rem', flexWrap: 'wrap'}}>
                 <button className="btn btn-secondary" onClick={() => { setShowPreview(false); handleSaveOrSubmit(true); }} disabled={loading}>
                   💾 Save as Draft
                 </button>
@@ -4060,11 +4060,11 @@ const VoucherList = ({ filter }) => {
             <div className="modal-footer"><button className="btn btn-danger" onClick={() => setShowRejectModal(true)}>{Icons.x} Reject</button><button className="btn btn-success" onClick={handleApprove} disabled={loading}>{loading && Icons.loader}{Icons.check} {selectedVoucher.is_suspense_settlement ? 'Approve' : 'Approve & Send Payee OTP'}</button></div>
           )}
           {selectedVoucher.status === 'draft' && selectedVoucher.prepared_by === user.id && (
-            <div className="modal-footer" style={{background: '#fef3c7'}}>
-              <div style={{flex: 1, fontSize: '0.85rem', color: '#92400e'}}>
+            <div className="modal-footer" style={{background: '#fef3c7', flexWrap: 'wrap', gap: '0.5rem'}}>
+              <div style={{flex: '1 1 100%', fontSize: '0.85rem', color: '#92400e'}}>
                 💡 This voucher is saved as a draft. Edit or submit when ready.
               </div>
-              <div style={{display: 'flex', gap: '0.5rem'}}>
+              <div style={{display: 'flex', gap: '0.5rem', flexWrap: 'wrap', width: '100%', justifyContent: 'flex-end'}}>
                 <button className="btn btn-secondary" onClick={() => handleEditDraft(selectedVoucher)} disabled={loading}>
                   ✏️ Edit Draft
                 </button>
@@ -4429,9 +4429,9 @@ const VoucherList = ({ filter }) => {
               companyId={user.company.id}
             />
           </div>
-          <div className="modal-footer" style={{display: 'flex', gap: '0.5rem', justifyContent: 'space-between'}}>
+          <div className="modal-footer" style={{display: 'flex', gap: '0.5rem', justifyContent: 'space-between', flexWrap: 'wrap'}}>
             <button className="btn btn-secondary" onClick={() => setShowEditModal(false)}>Cancel</button>
-            <div style={{display: 'flex', gap: '0.5rem'}}>
+            <div style={{display: 'flex', gap: '0.5rem', flexWrap: 'wrap'}}>
               <button className="btn btn-secondary" onClick={() => handleUpdateDraft(true)} disabled={loading}>
                 {loading && Icons.loader}💾 Save Draft
               </button>
