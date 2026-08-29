@@ -10,7 +10,7 @@ const urlsToCache = [
   '/',
   '/index.html',
   '/styles.css?v=17',
-  '/app.bundle.js?v=53',
+  '/app.bundle.js?v=54',
   '/logo.png',
   '/manifest.json',
   '/android-launchericon-192-192.png',

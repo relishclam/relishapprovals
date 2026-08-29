@@ -2697,14 +2697,16 @@ app.get('/api/companies/:companyId/payment-accounts', async (req, res) => {
 
 // Add a payment account
 app.post('/api/payment-accounts', async (req, res) => {
-  const { companyId, label } = req.body;
+  const { companyId, label, bankAccountNumber } = req.body;
   if (!companyId || !label?.trim()) {
     return res.status(400).json({ error: 'companyId and label are required' });
   }
   try {
+    const insert = { company_id: companyId, label: label.trim() };
+    if (bankAccountNumber?.trim()) insert.bank_account_number = bankAccountNumber.trim();
     const { data, error } = await supabase
       .from('company_payment_accounts')
-      .insert({ company_id: companyId, label: label.trim() })
+      .insert(insert)
       .select()
       .single();
     if (error) throw error;
@@ -5620,8 +5622,20 @@ app.post('/api/receipts/auto-complete', async (req, res) => {
     }
 
     // ── Queued path: save file to unassigned-receipts storage ────────────────
+    const ocrPayload = decision.ocrData && Object.keys(decision.ocrData).length > 0 ? decision.ocrData : null;
+
+    // Detect the correct company from the bank account on the receipt so it lands
+    // in the right queue even when the user is logged into a different company.
+    const allIds = [companyId, ...((allCompanyIds || []).filter(id => id && id !== companyId))];
+    const detectedQueueCompany = await _detectCompanyFromBankAccount(
+      ocrPayload?.initiator_account_number, allIds
+    ).catch(() => null);
+    const queueCompanyId = detectedQueueCompany || companyId;
+    if (detectedQueueCompany && detectedQueueCompany !== companyId)
+      console.log(`[auto-complete] bank account matched company ${detectedQueueCompany} — routing queue there`);
+
     const ext = receiptMimeType === 'application/pdf' ? 'pdf' : (receiptMimeType.split('/')[1] || 'jpg');
-    const unassignedPath = `${companyId}/unassigned-receipts/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+    const unassignedPath = `${queueCompanyId}/unassigned-receipts/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
     let fileUrl = null;
     const { error: storeErr } = await supabase.storage
       .from('voucher-bills')
@@ -5636,8 +5650,8 @@ app.post('/api/receipts/auto-complete', async (req, res) => {
     const ocrPayload = decision.ocrData && Object.keys(decision.ocrData).length > 0 ? decision.ocrData : null;
     const queueUtr = ocrPayload?.utr_number || null;
     // C1: dedupe by UTR+company — refresh existing row rather than duplicating
-    await _queueUpsert(companyId, queueUtr, {
-      company_id:     companyId,
+    await _queueUpsert(queueCompanyId, queueUtr, {
+      company_id:     queueCompanyId,
       storage_path:   unassignedPath,
       file_url:       fileUrl || '',
       mime_type:      receiptMimeType,
@@ -6201,6 +6215,33 @@ async function _queueUpsert(companyId, utr, payload) {
   }
   const { data: row } = await supabase.from('unassigned_receipts').insert(payload).select('id').single();
   return row?.id;
+}
+
+// C1b: Detect which company a receipt belongs to from OCR's initiator_account_number.
+// Matches exact → last-6-digit numeric suffix (handles masked numbers like XXXX1234).
+// candidateIds: array of company IDs to restrict the search; pass null to search all.
+async function _detectCompanyFromBankAccount(initiatorAcct, candidateIds) {
+  if (!initiatorAcct) return null;
+  const norm = String(initiatorAcct).replace(/\s+/g, '').toLowerCase();
+  let query = supabase.from('company_payment_accounts')
+    .select('company_id, bank_account_number')
+    .not('bank_account_number', 'is', null);
+  if (Array.isArray(candidateIds) && candidateIds.length > 0)
+    query = query.in('company_id', candidateIds);
+  const { data: accounts } = await query;
+  if (!accounts?.length) return null;
+  for (const a of accounts) {
+    if (String(a.bank_account_number).replace(/\s+/g, '').toLowerCase() === norm) return a.company_id;
+  }
+  // Suffix match — handles masked numbers (e.g. "XXXX1234" vs stored "123456781234")
+  const normSuffix = norm.replace(/[^0-9]/g, '').slice(-6);
+  if (normSuffix.length >= 4) {
+    for (const a of accounts) {
+      const stored = String(a.bank_account_number).replace(/[^0-9]/g, '').slice(-6);
+      if (stored && stored === normSuffix) return a.company_id;
+    }
+  }
+  return null;
 }
 
 // C2: Auto-resolve all pending_review queue rows that carry a given UTR.
@@ -7218,7 +7259,7 @@ app.post('/api/unassigned-receipts/:id/dismiss', async (req, res) => {
 // Called fire-and-forget from _runReconcile's error fallback so a shared
 // receipt is never droppable by closing the modal without assigning.
 app.post('/api/receipts/deposit-unassigned', async (req, res) => {
-  const { requestedBy, receiptData, receiptMimeType, companyId, extractedData } = req.body;
+  const { requestedBy, receiptData, receiptMimeType, companyId, extractedData, allCompanyIds } = req.body;
   if (!requestedBy || !receiptData || !receiptMimeType || !companyId)
     return res.status(400).json({ error: 'requestedBy, receiptData, receiptMimeType, companyId are required' });
 
@@ -7252,16 +7293,26 @@ app.post('/api/receipts/deposit-unassigned', async (req, res) => {
       console.log(`[deposit-unassigned] OCR found UTR ${fallbackUtr} — will dedupe by UTR`);
     }
   }
+
+  // Route to the company whose bank account matches the receipt's sender account.
+  const allIds = [companyId, ...((allCompanyIds || []).filter(id => id && id !== companyId))];
+  const detectedQueueCompany = await _detectCompanyFromBankAccount(
+    resolvedExtracted?.initiator_account_number, allIds
+  ).catch(() => null);
+  const queueCompanyId = detectedQueueCompany || companyId;
+  if (detectedQueueCompany && detectedQueueCompany !== companyId)
+    console.log(`[deposit-unassigned] bank account matched company ${detectedQueueCompany} — routing queue there`);
+
   const { data: record } = await (async () => {
     const payload = {
-      company_id:     companyId,
+      company_id:     queueCompanyId,
       storage_path:   unassignedPath,
       file_url:       fileUrl,
       mime_type:      receiptMimeType,
       extracted_data: resolvedExtracted,
       match_reason:   'Deposited via share-target fallback (auto-complete error)',
     };
-    const rowId = await _queueUpsert(companyId, fallbackUtr, payload);
+    const rowId = await _queueUpsert(queueCompanyId, fallbackUtr, payload);
     return { data: rowId ? { id: rowId } : null };
   })();
 

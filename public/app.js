@@ -6407,6 +6407,7 @@ const PaymentAccountsManagement = () => {
   const [accounts, setAccounts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [newLabel, setNewLabel] = useState('');
+  const [newBankAccountNumber, setNewBankAccountNumber] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
   const load = () => {
@@ -6423,8 +6424,8 @@ const PaymentAccountsManagement = () => {
     if (accounts.some(a => a.label.toLowerCase() === newLabel.trim().toLowerCase())) { addToast('Already exists', 'error'); return; }
     setSubmitting(true);
     try {
-      const result = await api.addPaymentAccount({ companyId: user.company.id, label: newLabel.trim() });
-      if (result.success) { addToast('Account added', 'success'); setNewLabel(''); load(); }
+      const result = await api.addPaymentAccount({ companyId: user.company.id, label: newLabel.trim(), bankAccountNumber: newBankAccountNumber.trim() || undefined });
+      if (result.success) { addToast('Account added', 'success'); setNewLabel(''); setNewBankAccountNumber(''); load(); }
       else addToast(result.error || 'Failed', 'error');
     } catch { addToast('Failed', 'error'); }
     setSubmitting(false);
@@ -6451,6 +6452,11 @@ const PaymentAccountsManagement = () => {
               <input type="text" className="form-input" placeholder="e.g., HDFC Current A/C, Director Ramesh Personal A/C" value={newLabel} onChange={(e) => setNewLabel(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleAdd()} />
               <div style={{fontSize:'0.78rem',color:'#888',marginTop:'0.35rem'}}>Use a clear, consistent name — this appears as an autocomplete suggestion when creating vouchers.</div>
             </div>
+            <div className="form-group" style={{flex:1,marginBottom:0}}>
+              <label className="form-label">Bank Account / UPI ID <span style={{fontWeight:400,color:'#888',fontSize:'0.82rem'}}>(for receipt routing)</span></label>
+              <input type="text" className="form-input" placeholder="e.g., 001234567890 or company@hdfc" value={newBankAccountNumber} onChange={(e) => setNewBankAccountNumber(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleAdd()} />
+              <div style={{fontSize:'0.78rem',color:'#888',marginTop:'0.35rem'}}>Account number or UPI ID shown on bank receipts — used to auto-route shared receipts to the correct company.</div>
+            </div>
             <button className="btn btn-primary" onClick={handleAdd} disabled={submitting || !newLabel.trim()} style={{flexShrink:0}}>{submitting && Icons.loader}Add</button>
           </div>
         </div>
@@ -6463,11 +6469,12 @@ const PaymentAccountsManagement = () => {
           ) : (
             <div className="table-container">
               <table className="table">
-                <thead><tr><th>Label</th><th>Added</th><th>Action</th></tr></thead>
+                <thead><tr><th>Label</th><th>Bank Account / UPI ID</th><th>Added</th><th>Action</th></tr></thead>
                 <tbody>
                   {accounts.map(a => (
                     <tr key={a.id}>
                       <td><strong>{a.label}</strong></td>
+                      <td style={{fontFamily:'monospace',fontSize:'0.85rem',color: a.bank_account_number ? '#374151' : '#aaa'}}>{a.bank_account_number || <em>not set</em>}</td>
                       <td style={{color:'#888',fontSize:'0.85rem'}}>{new Date(a.created_at).toLocaleDateString('en-IN')}</td>
                       <td><button className="btn btn-sm btn-danger" onClick={() => handleDelete(a.id, a.label)}>🗑️ Remove</button></td>
                     </tr>
@@ -11071,14 +11078,14 @@ const ReconcileReceipts = () => {
       });
       // No confident match — deposit to unassigned_receipts so it reaches the Review Queue
       if (!matchResult.matchedVoucherId && !matchResult.matchedBatchId) {
-        api.depositUnassigned({ requestedBy: user.id, receiptData, receiptMimeType: mimeType, companyId: user.company.id, extractedData: null })
+        api.depositUnassigned({ requestedBy: user.id, receiptData, receiptMimeType: mimeType, companyId: user.company.id, extractedData: null, allCompanyIds: (user.companies || []).map(c => c.id) })
           .then(dep => { if (dep?.id) setRows(prev => prev.map(r => r.id === rowId ? { ...r, unassignedId: dep.id } : r)); })
           .catch(() => {});
       }
       setRows(prev => prev.map(r => r.id === rowId ? { ...r, status: 'done', matchResult } : r));
     } catch (err) {
       // On error, still deposit so the receipt isn't lost
-      api.depositUnassigned({ requestedBy: user.id, receiptData, receiptMimeType: mimeType, companyId: user.company.id, extractedData: null })
+      api.depositUnassigned({ requestedBy: user.id, receiptData, receiptMimeType: mimeType, companyId: user.company.id, extractedData: null, allCompanyIds: (user.companies || []).map(c => c.id) })
         .then(dep => { if (dep?.id) setRows(prev => prev.map(r => r.id === rowId ? { ...r, unassignedId: dep.id } : r)); })
         .catch(() => {});
       setRows(prev => prev.map(r => r.id === rowId ? { ...r, status: 'done', matchResult: { error: true, confidence: 'none', extractedReference: null, candidateVouchers: [], errorMsg: err.message } } : r));
@@ -13171,11 +13178,14 @@ const App = () => {
         return outputArray;
       };
       
-      // Subscribe to push notifications
-      const subscription = await registration.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: urlBase64ToUint8Array(publicKey)
-      });
+      // Reuse existing subscription if present; otherwise create a new one
+      let subscription = await registration.pushManager.getSubscription();
+      if (!subscription) {
+        subscription = await registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(publicKey)
+        });
+      }
       
       // Send subscription to server
       if (user) {
